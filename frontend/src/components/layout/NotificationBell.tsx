@@ -5,7 +5,6 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
-  Clock,
   ArrowRight,
   Check,
   AtSign,
@@ -40,7 +39,6 @@ export function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("all");
   const [notifications, setNotifications] = useState<TaskNotification[]>([]);
-  const [newIds, setNewIds] = useState<Set<string>>(() => new Set());
   const [recentlyReadIds, setRecentlyReadIds] = useState<Set<string>>(() => new Set());
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -49,7 +47,6 @@ export function NotificationBell() {
   const [customStatusColors, setCustomStatusColors] = useState<Record<string, string>>({});
 
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const prevIsOpenRef = useRef(false);
 
   // Pre-load custom list status colors for tasks in notification list
   useEffect(() => {
@@ -107,16 +104,6 @@ export function NotificationBell() {
 
         const freshItems = res.notifications || [];
 
-        // Identify unread notifications to display under "New" with glowing border and blue dot
-        const freshUnread = freshItems.filter((n) => !n.isRead);
-        if (freshUnread.length > 0) {
-          setNewIds((prev) => {
-            const next = new Set(prev);
-            freshUnread.forEach((n) => next.add(n.id));
-            return next;
-          });
-        }
-
         if (pageNum === 1) {
           setNotifications(freshItems);
         } else {
@@ -159,32 +146,6 @@ export function NotificationBell() {
     };
   }, [isOpen]);
 
-  // Mark notifications as read ONLY AFTER closing the dropdown
-  useEffect(() => {
-    if (prevIsOpenRef.current && !isOpen) {
-      const unread = notifications.filter((n) => !n.isRead);
-      if (unread.length > 0 || unreadCount > 0) {
-        setUnreadCount(0);
-        setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-        notificationsApi.markAllAsRead().catch((e) => {
-          console.error("Failed to mark all as read on close", e);
-        });
-      }
-      setNewIds(new Set());
-    }
-    prevIsOpenRef.current = isOpen;
-  }, [isOpen, notifications, unreadCount, setUnreadCount]);
-
-  // Cleanup on unmount if user navigates while dropdown was open
-  useEffect(() => {
-    return () => {
-      if (prevIsOpenRef.current) {
-        useAppStore.getState().setUnreadNotifications(0);
-        notificationsApi.markAllAsRead().catch(() => {});
-      }
-    };
-  }, []);
-
   // Listen for real-time events to reload
   useEffect(() => {
     const handleActivity = () => {
@@ -205,7 +166,6 @@ export function NotificationBell() {
         setNotifications((prev) =>
           prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
         );
-        useAppStore.getState().decrementUnreadNotifications();
       }
     };
 
@@ -289,15 +249,17 @@ export function NotificationBell() {
     const idsToMark = childIds && childIds.length > 0 ? childIds : [id];
     try {
       for (const targetId of idsToMark) {
+        if (!targetId || targetId.startsWith("audit_") || targetId.startsWith("merged_")) continue;
         await notificationsApi.markAsRead(targetId);
       }
       setRecentlyReadIds((prev) => {
         const next = new Set(prev);
+        next.add(id);
         idsToMark.forEach((targetId) => next.add(targetId));
         return next;
       });
       setNotifications((prev) =>
-        prev.map((n) => (idsToMark.includes(n.id) ? { ...n, isRead: true } : n))
+        prev.map((n) => (idsToMark.includes(n.id) || n.id === id ? { ...n, isRead: true } : n))
       );
       setUnreadCount(Math.max(0, unreadCount - idsToMark.length));
     } catch (error) {
@@ -418,19 +380,15 @@ export function NotificationBell() {
   }, [notifications]);
 
   // Partition into:
-  // 1. Unread ("New") -> item is in newIds or !item.isRead (blue dot, glowing border)
-  // 2. Recently Read ("Recently Read") -> item is read (not in newIds) and today or recently marked
+  // 1. Unread ("New") -> !item.isRead (blue dot, glowing border)
+  // 2. Recently Read ("Recently Read") -> item is read and today or recently marked
   // 3. Old Information ("Yesterday", older dates) -> item is read, older than today (greyer side)
   const { unreadItems, recentlyReadItems, oldItemsGrouped } = useMemo(() => {
     const unread: (TaskNotification & { childIds?: string[] })[] = [];
     const read: (TaskNotification & { childIds?: string[] })[] = [];
 
     displayList.forEach((item) => {
-      const isNew =
-        newIds.has(item.id) ||
-        (item.childIds && item.childIds.some((cid) => newIds.has(cid))) ||
-        !item.isRead;
-      if (isNew) {
+      if (!item.isRead) {
         unread.push(item);
       } else {
         read.push(item);
@@ -466,7 +424,7 @@ export function NotificationBell() {
       recentlyReadItems: recent,
       oldItemsGrouped: oldGrouped,
     };
-  }, [displayList, newIds, recentlyReadIds]);
+  }, [displayList, recentlyReadIds]);
 
   const bellVariants = {
     ringing: {
@@ -489,16 +447,6 @@ export function NotificationBell() {
 
     if (nextOpen) {
       loadDrafts();
-      // Record any currently unread items as new for this session so glowing blue border and dot remain visible
-      const existingUnread = notifications.filter((n) => !n.isRead);
-      if (existingUnread.length > 0) {
-        setNewIds((prev) => {
-          const next = new Set(prev);
-          existingUnread.forEach((n) => next.add(n.id));
-          return next;
-        });
-      }
-
       loadNotifications(1, activeTab);
     }
   };

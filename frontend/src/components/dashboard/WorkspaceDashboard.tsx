@@ -119,16 +119,30 @@ export const isTaskClosed = (t: { status?: string | null; completed?: boolean } 
   return s === "CLOSED" || s === "DONE" || s === "COMPLETED" || s === "RESOLVED" || s === "CANCELLED";
 };
 
+export const AUDIT_ROLE_COLORS = [
+  "bg-purple-500",
+  "bg-red-500",
+  "bg-emerald-500",
+  "bg-blue-500",
+  "bg-amber-500",
+  "bg-pink-500",
+];
+
 export function getShortAuditLabel(rawText: string): string {
   const norm = normalizeAuditName(rawText);
-  if (norm === "design audit") return "Des Aud";
-  if (norm === "instructions audit" || norm === "instruction audit") return "Inst Aud";
-  if (norm === "ui ux audit") return "UI/UX Aud";
-  if (norm === "funnel audit") return "Funnel Aud";
-  if (/audit/i.test(rawText)) {
-    return rawText.replace(/audit/i, "Aud").trim();
+  if (norm === "funnel audit" || norm === "funnel") return "FA";
+  if (norm === "ui ux audit" || norm === "ui/ux audit" || norm === "ui ux" || norm === "ui/ux") return "UA";
+  if (norm === "instructions audit" || norm === "instruction audit" || norm === "instructions" || norm === "instruction") return "IA";
+  if (norm === "design audit" || norm === "design") return "DA";
+
+  const withoutAudit = rawText.replace(/audit/i, "").trim();
+  const words = withoutAudit.split(/[\s\/\-_]+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  } else if (words.length === 1 && words[0].length >= 1) {
+    return (words[0][0] + "A").toUpperCase();
   }
-  return `${rawText} Aud`;
+  return rawText.substring(0, 2).toUpperCase();
 }
 
 export function getFullAuditLabel(rawText: string): string {
@@ -758,7 +772,7 @@ function WorkspaceDashboardContent({
     tasksApi
       .getMyAudits()
       .then((res) => setMyAudits(
-        (res.audits || []).filter((a) => !(HIDE_DESIGN_AUDIT && normalizeAuditName(a.text) === "design audit")),
+        (res.audits || []).filter((a) => !(a as any).completed && !(HIDE_DESIGN_AUDIT && normalizeAuditName(a.text) === "design audit")),
       ))
       .catch((err) => console.error("Failed to load my audits:", err));
   }, [currentTab]);
@@ -839,11 +853,31 @@ function WorkspaceDashboardContent({
   }, [tasks]);
 
   const filteredMyAudits = useMemo(() => {
-    // Hide audits whose tasks are closed
+    // Hide audits whose tasks are closed or whose items are completed
     const openAudits = myAudits.filter((audit) => {
-      const known = tasksWithSubtasks.find((t) => t.id === audit.task.id);
+      if ((audit as any).completed) return false;
+      const isSub = Boolean(audit.subtask?.id);
+      const known = tasksWithSubtasks.find((t) =>
+        isSub ? t.id === audit.subtask!.id : t.id === audit.task.id
+      );
       const taskToCheck = known || audit.task;
-      return !isTaskClosed(taskToCheck as Task);
+      if (isTaskClosed(taskToCheck as Task)) return false;
+
+      // If known task/subtask has the audit checklist item marked completed, do not show it
+      if (known?.checklists) {
+        const auditCl = (known.checklists as any[]).find(
+          (c: any) => (c.name || "").trim().toLowerCase() === "audit"
+        );
+        if (auditCl?.items) {
+          const norm = normalizeAuditName(audit.text);
+          const item = (auditCl.items as any[]).find(
+            (i: any) => i.id === audit.id || normalizeAuditName(i.text) === norm
+          );
+          if (item?.completed) return false;
+        }
+      }
+
+      return true;
     });
 
     if (!searchQuery.trim()) return openAudits;
@@ -963,11 +997,48 @@ function WorkspaceDashboardContent({
         );
       }
 
+      // If an audit:completed event was emitted with auditText
+      if (payload?.auditText) {
+        const norm = normalizeAuditName(payload.auditText);
+        const targetTaskId = payload.taskId;
+        const itemId = payload.itemId;
+        setMyAudits((prev) =>
+          prev.filter(
+            (a) =>
+              a.id !== itemId &&
+              !(a.task?.id === targetTaskId && normalizeAuditName(a.text) === norm)
+          )
+        );
+      }
+
+      // If a task:updated event was emitted with updated checklists
+      if (payload?.task) {
+        const targetTask = payload.task;
+        const auditChecklists = (targetTask.checklists || []).filter((c: any) =>
+          (c.name || "").trim().toLowerCase() === "audit"
+        );
+        const completedAudits = new Set(
+          auditChecklists
+            .flatMap((c: any) => c.items || [])
+            .filter((i: any) => i.completed)
+            .map((i: any) => normalizeAuditName(i.text))
+        );
+        if (completedAudits.size > 0) {
+          setMyAudits((prev) =>
+            prev.filter(
+              (a) =>
+                !(a.task?.id === targetTask.id && completedAudits.has(normalizeAuditName(a.text)))
+            )
+          );
+        }
+      }
+
       if (myAuditsRefreshRef.current) clearTimeout(myAuditsRefreshRef.current);
       myAuditsRefreshRef.current = setTimeout(() => loadMyAuditsRef.current(), 300);
     };
 
     const auditEvents = [
+      "audit:completed",
       "task:checklist_item_created",
       "task:checklist_item_updated",
       "task:checklist_deleted",
@@ -2299,31 +2370,10 @@ function WorkspaceDashboardContent({
                             </span>
 
                             {/* Mobile-only audit badges */}
-                            <div className="flex sm:hidden items-center gap-1 flex-wrap ml-2">
-                              {group.audits.map((audit) => {
-                                const shortLabel = getShortAuditLabel(audit.text);
-                                const fullLabel = getFullAuditLabel(audit.text);
-                                return (
-                                  <button
-                                    key={audit.id}
-                                    type="button"
-                                    onClick={(e) => handleCompleteAudit(e, audit)}
-                                    className="group/badge inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/30 border border-emerald-500/30 hover:border-emerald-400/60 rounded px-1.5 py-0.5 transition-all cursor-pointer shadow-sm select-none"
-                                    title={`Click to mark ${fullLabel} as completed`}
-                                  >
-                                    <span>{shortLabel}</span>
-                                    <Check className="w-2.5 h-2.5 text-emerald-400/70 group-hover/badge:text-emerald-300 transition-all shrink-0" />
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1 relative z-10">
-                            <div className="hidden sm:flex items-center shrink-0 w-[320px]">
-                              {/* Desktop Audits Badges */}
-                              <div className="flex-1 flex items-center justify-center gap-1.5 flex-wrap px-2">
-                                {group.audits.map((audit) => {
+                            <div className="flex sm:hidden items-center ml-2">
+                              <div className="flex items-center">
+                                {group.audits.map((audit, i) => {
+                                  const bgColor = AUDIT_ROLE_COLORS[i % AUDIT_ROLE_COLORS.length];
                                   const shortLabel = getShortAuditLabel(audit.text);
                                   const fullLabel = getFullAuditLabel(audit.text);
                                   return (
@@ -2331,14 +2381,45 @@ function WorkspaceDashboardContent({
                                       key={audit.id}
                                       type="button"
                                       onClick={(e) => handleCompleteAudit(e, audit)}
-                                      className="group/badge inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/30 border border-emerald-500/30 hover:border-emerald-400/60 rounded px-2 py-0.5 transition-all cursor-pointer shadow-sm select-none"
+                                      className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${
+                                        i > 0 ? "-ml-2.5" : ""
+                                      } shadow-sm relative ${bgColor} hover:scale-110 hover:z-30 active:scale-95 transition-all cursor-pointer select-none`}
+                                      style={{ zIndex: 10 - i }}
                                       title={`Click to mark ${fullLabel} as completed`}
                                     >
-                                      <span className="truncate max-w-[130px]">{shortLabel}</span>
-                                      <Check className="w-3 h-3 text-emerald-400/70 group-hover/badge:text-emerald-300 group-hover/badge:scale-110 transition-all shrink-0" />
+                                      {shortLabel}
                                     </button>
                                   );
                                 })}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 relative z-10">
+                            <div className="hidden sm:flex items-center shrink-0 w-[320px]">
+                              {/* Desktop Audits Badges */}
+                              <div className="flex-1 flex items-center justify-center px-2">
+                                <div className="flex items-center">
+                                  {group.audits.map((audit, i) => {
+                                    const bgColor = AUDIT_ROLE_COLORS[i % AUDIT_ROLE_COLORS.length];
+                                    const shortLabel = getShortAuditLabel(audit.text);
+                                    const fullLabel = getFullAuditLabel(audit.text);
+                                    return (
+                                      <button
+                                        key={audit.id}
+                                        type="button"
+                                        onClick={(e) => handleCompleteAudit(e, audit)}
+                                        className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-card ${
+                                          i > 0 ? "-ml-2.5" : ""
+                                        } shadow-sm relative ${bgColor} hover:scale-110 hover:z-30 active:scale-95 transition-all cursor-pointer select-none`}
+                                        style={{ zIndex: 10 - i }}
+                                        title={`Click to mark ${fullLabel} as completed`}
+                                      >
+                                        {shortLabel}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
                               </div>
 
                               {/* Priority Pill */}

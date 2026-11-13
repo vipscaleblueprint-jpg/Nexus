@@ -7,6 +7,46 @@ export function normalizeStatusKey(status: string): string {
   return (status || '').toLowerCase().replace(/[\s\-_]+/g, '');
 }
 
+const CANONICAL_TASK_STATUS_MAP: Record<string, string> = {
+  kyc: 'KYC',
+  pinboard: 'PIN BOARD',
+  daily: 'DAILY',
+  weekly: 'WEEKLY',
+  monthly: 'MONTHLY',
+  pending: 'PENDING',
+  inprogress: 'IN PROGRESS',
+  revision: 'REVISION',
+  waiting: 'WAITING',
+  inreview: 'IN REVIEW',
+  toreview: 'IN REVIEW',
+  review: 'IN REVIEW',
+  checking: 'CHECKING',
+  inchecking: 'CHECKING',
+  crm: 'CRM',
+  closed: 'CLOSED',
+  done: 'CLOSED',
+  onhold: 'ON-HOLD',
+};
+
+/**
+ * Canonicalizes a main task status string to uniform uppercase Nexus format
+ * (e.g. "Waiting" -> "WAITING", "In progress" -> "IN PROGRESS").
+ */
+export function canonicalizeTaskStatus(status?: string | null): string {
+  const raw = (status || '').trim();
+  if (!raw) return '';
+  const key = normalizeStatusKey(raw);
+  return CANONICAL_TASK_STATUS_MAP[key] || raw.toUpperCase();
+}
+
+/**
+ * Compares two task statuses after canonical normalization so casing differences
+ * (e.g. "WAITING" vs "Waiting") do not trigger redundant status change logs.
+ */
+export function areStatusesEqual(a?: string | null, b?: string | null): boolean {
+  return normalizeStatusKey(canonicalizeTaskStatus(a)) === normalizeStatusKey(canonicalizeTaskStatus(b));
+}
+
 export type StatusRoleCategory = 'AUDITOR' | 'PM' | 'CRM' | null;
 
 export function getStatusRoleCategory(status: string): StatusRoleCategory {

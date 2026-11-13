@@ -10,6 +10,8 @@ import {
   extractAuditorRoles,
   AuditorRoleOption,
   isSessionProjectBased,
+  getDefaultTaskMapSubStatuses,
+  toCanonicalTaskStatus,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapSidebar } from './TaskMapSidebar';
@@ -113,6 +115,29 @@ export const TaskMapContainer: React.FC = () => {
 
   // Task Detail Modal
   const [selectedTaskModal, setSelectedTaskModal] = useState<any | null>(null);
+  const [selectedSubtaskTargetId, setSelectedSubtaskTargetId] = useState<string | undefined>(undefined);
+
+  const handleOpenTaskDetail = useCallback(
+    (item: any) => {
+      if (item?.isSubtask && item?.parentTaskId) {
+        const parentTask =
+          [...tasks, ...availablePool].find((t) => !t.isSubtask && t.id === item.parentTaskId) || {
+            id: item.parentTaskId,
+            title: item.parentTaskTitle || item.title,
+            listId: item.listId,
+            list: item.list,
+            status: 'IN PROGRESS',
+            priority: item.priority || 'NORMAL',
+          };
+        setSelectedSubtaskTargetId(item.subtaskId);
+        setSelectedTaskModal(parentTask);
+        return;
+      }
+      setSelectedSubtaskTargetId(undefined);
+      setSelectedTaskModal(item);
+    },
+    [tasks, availablePool]
+  );
   const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
     isOpen: boolean;
     task: TaskMapItem | null;
@@ -148,15 +173,15 @@ export const TaskMapContainer: React.FC = () => {
       });
 
       if (res.success) {
-        // Sanitize sub-statuses: strip CRM tag (CRM is main board status, not a substatus label)
+        // Sanitize sub-statuses: strip CRM tag (CRM is main board routing status, not a substatus label)
+        // and apply innate default sub-statuses (e.g. 'Available Task' for active Task Map tasks).
         const sanitizeStatuses = (statuses?: string[], taskStatus?: string): string[] => {
           if (!statuses || statuses.length === 0) {
-            return taskStatus?.toUpperCase().trim() === 'CRM' ? ['To send'] : [];
+            return getDefaultTaskMapSubStatuses(taskStatus);
           }
           const clean = statuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
           if (clean.length > 0) return clean.slice(0, 1);
-          if (taskStatus?.toUpperCase().trim() === 'CRM') return ['To send'];
-          return [];
+          return getDefaultTaskMapSubStatuses(taskStatus);
         };
 
         // Merge with local pending optimistic updates so background refreshes never flicker or uncheck
@@ -637,16 +662,25 @@ export const TaskMapContainer: React.FC = () => {
 
   // Handler for direct task property updates (e.g. main workflow status, priority)
   const handleTaskUpdate = async (taskId: string, fields: Partial<TaskMapItem>) => {
+    const normalizedFields: Partial<TaskMapItem> = { ...fields };
+    if (normalizedFields.status !== undefined) {
+      normalizedFields.status = toCanonicalTaskStatus(normalizedFields.status);
+    }
+
     const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
-    if (fields.status && currentTask && fields.status.toUpperCase() !== (currentTask.status || '').toUpperCase()) {
-      const transitionCheck = canTransitionTaskStatus(currentTask, fields.status);
+    if (
+      normalizedFields.status &&
+      currentTask &&
+      toCanonicalTaskStatus(normalizedFields.status) !== toCanonicalTaskStatus(currentTask.status)
+    ) {
+      const transitionCheck = canTransitionTaskStatus(currentTask, normalizedFields.status);
       if (!transitionCheck.allowed) {
         if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
           window.dispatchEvent(
             new CustomEvent('task:highlight-audits', {
               detail: {
                 taskId,
-                targetStatus: fields.status,
+                targetStatus: normalizedFields.status,
                 uncheckedAudits: transitionCheck.uncheckedAudits,
                 openSubtasks: transitionCheck.openSubtasks,
               },
@@ -656,31 +690,43 @@ export const TaskMapContainer: React.FC = () => {
         setBlockedAuditAlert({
           isOpen: true,
           task: currentTask,
-          targetStatus: fields.status,
+          targetStatus: normalizedFields.status,
           uncheckedAudits: transitionCheck.uncheckedAudits,
           openSubtasks: transitionCheck.openSubtasks,
         });
-        toast.error(transitionCheck.reason || `Cannot move task to ${fields.status}`);
+        toast.error(transitionCheck.reason || `Cannot move task to ${normalizedFields.status}`);
         return;
       }
     }
 
     // 1. Optimistically update local tasks & availablePool while tracking previous status for undo/misclick support
-    const nextStatusUp = (fields.status || '').toUpperCase().trim();
-    const isMovingToAvailable = fields.assigneeId === null || nextStatusUp === 'ON-HOLD' || nextStatusUp === 'ONHOLD';
-    const isMovingOutOfAvailable = nextStatusUp === 'IN REVIEW' || nextStatusUp === 'CHECKING' || nextStatusUp === 'WAITING' || (fields.assigneeId && fields.assigneeId !== null);
+    const nextStatusUp = toCanonicalTaskStatus(normalizedFields.status);
+    const isMovingToAvailable =
+      normalizedFields.assigneeId === null || nextStatusUp === 'ON-HOLD' || nextStatusUp === 'ONHOLD';
+    const isMovingOutOfAvailable =
+      nextStatusUp === 'IN REVIEW' ||
+      nextStatusUp === 'CHECKING' ||
+      nextStatusUp === 'WAITING' ||
+      (normalizedFields.assigneeId && normalizedFields.assigneeId !== null);
+
+    const resolvePrevStatus = (t: TaskMapItem) => {
+      if (
+        normalizedFields.status &&
+        toCanonicalTaskStatus(normalizedFields.status) !== toCanonicalTaskStatus(t.status)
+      ) {
+        return toCanonicalTaskStatus(t.status);
+      }
+      return (t as any)._previousStatus;
+    };
 
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
           ? {
             ...t,
-            ...fields,
+            ...normalizedFields,
             ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
-            _previousStatus:
-              fields.status && fields.status !== t.status
-                ? t.status
-                : (t as any)._previousStatus,
+            _previousStatus: resolvePrevStatus(t),
           }
           : t
       )
@@ -696,12 +742,9 @@ export const TaskMapContainer: React.FC = () => {
           t.id === taskId
             ? {
               ...t,
-              ...fields,
+              ...normalizedFields,
               ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
-              _previousStatus:
-                fields.status && fields.status !== t.status
-                  ? t.status
-                  : (t as any)._previousStatus,
+              _previousStatus: resolvePrevStatus(t),
             }
             : t
         );
@@ -711,24 +754,42 @@ export const TaskMapContainer: React.FC = () => {
           ...prev,
           {
             ...currentTask,
-            ...fields,
+            ...normalizedFields,
             assigneeId: null,
             assignee: null,
             assignees: [],
-            _previousStatus:
-              fields.status && fields.status !== currentTask.status
-                ? currentTask.status
-                : (currentTask as any)._previousStatus,
+            _previousStatus: resolvePrevStatus(currentTask),
           },
         ];
       }
       return prev;
     });
 
-    // 2. Persist to backend
+    // 2. Persist to backend (skip no-op status-only update when already exact canonical status)
+    const onlyStatusField =
+      normalizedFields.status !== undefined && Object.keys(normalizedFields).length === 1;
+    if (onlyStatusField && currentTask && normalizedFields.status === currentTask.status) {
+      return;
+    }
+
+    const isSubtaskTarget = Boolean(
+      (currentTask as any)?.isSubtask || taskId.startsWith('subtask:')
+    );
+    const resolvedSubtaskId =
+      (currentTask as any)?.subtaskId ||
+      (taskId.startsWith('subtask:') ? taskId.slice('subtask:'.length) : undefined);
+    const resolvedParentTaskId = (currentTask as any)?.parentTaskId;
+
     try {
-      await tasksApi.updateTask(taskId, fields as any);
-      window.dispatchEvent(new CustomEvent('task:updated', { detail: { id: taskId, ...fields } }));
+      if (isSubtaskTarget && resolvedParentTaskId && resolvedSubtaskId) {
+        await tasksApi.updateSubtask(resolvedParentTaskId, resolvedSubtaskId, normalizedFields as any);
+        window.dispatchEvent(
+          new CustomEvent('task:updated', { detail: { id: resolvedParentTaskId, subtaskId: resolvedSubtaskId, ...normalizedFields } })
+        );
+      } else {
+        await tasksApi.updateTask(taskId, normalizedFields as any);
+        window.dispatchEvent(new CustomEvent('task:updated', { detail: { id: taskId, ...normalizedFields } }));
+      }
     } catch (err: any) {
       toast.error(err?.message || 'Failed to update task');
       loadData(true);
@@ -1138,7 +1199,7 @@ export const TaskMapContainer: React.FC = () => {
               currentShift={currentShift}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
-              onOpenDetail={setSelectedTaskModal}
+              onOpenDetail={handleOpenTaskDetail}
               onDataRefresh={() => loadData(true)}
               showAdminTasks={showAdminTasks}
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
@@ -1150,14 +1211,14 @@ export const TaskMapContainer: React.FC = () => {
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
-              tasks={displayedTasks}
-              availablePool={displayedPool}
+              tasks={displayedTasks.filter((t) => !t.isSubtask)}
+              availablePool={displayedPool.filter((t) => !t.isSubtask)}
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
-              onOpenDetail={setSelectedTaskModal}
+              onOpenDetail={handleOpenTaskDetail}
               onDataRefresh={() => loadData(true)}
               onTaskUpdate={handleTaskUpdate}
               auditorTypeFilter={auditorTypeFilter}
@@ -1168,14 +1229,14 @@ export const TaskMapContainer: React.FC = () => {
             />
           ) : currentView === 'CRM' ? (
             <TaskMapCrmView
-              tasks={displayedTasks}
-              availablePool={displayedPool}
+              tasks={displayedTasks.filter((t) => !t.isSubtask)}
+              availablePool={displayedPool.filter((t) => !t.isSubtask)}
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
-              onOpenDetail={setSelectedTaskModal}
+              onOpenDetail={handleOpenTaskDetail}
               onDataRefresh={() => loadData(true)}
               onTaskUpdate={handleTaskUpdate}
               onSwitchToBoard={() => setCurrentView('BOARD')}
@@ -1186,8 +1247,8 @@ export const TaskMapContainer: React.FC = () => {
             />
           ) : (
             <TaskMapUpworkView
-              tasks={displayedTasks}
-              availablePool={displayedPool}
+              tasks={displayedTasks.filter((t) => !t.isSubtask)}
+              availablePool={displayedPool.filter((t) => !t.isSubtask)}
               activeUpworkSessions={activeUpworkSessions}
               allUsers={allUsers}
               onStatusChange={handleStatusChange}
@@ -1202,8 +1263,12 @@ export const TaskMapContainer: React.FC = () => {
       {selectedTaskModal && (
         <TaskDetailModal
           isOpen={!!selectedTaskModal}
-          onClose={() => setSelectedTaskModal(null)}
+          onClose={() => {
+            setSelectedTaskModal(null);
+            setSelectedSubtaskTargetId(undefined);
+          }}
           task={selectedTaskModal}
+          targetSubtaskId={selectedSubtaskTargetId}
           mode="full"
           onUpdateTask={() => loadData(true)}
         />

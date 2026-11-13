@@ -45,6 +45,8 @@ import {
   getChecklistCheckRecipients,
   isAuditItem,
   formatChecklistNotificationTitle,
+  canonicalizeTaskStatus,
+  areStatusesEqual,
 } from '../utils/roleNotification';
 import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
 import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
@@ -808,10 +810,11 @@ export async function updateTask(req: Request, res: Response) {
     const taskId = req.params.id;
     const authReq = req as any;
     const {
-      title, description, status, priority,
+      title, description, status: rawStatus, priority,
       listId, assigneeId, assigneeIds, teamId, dueDate, startDate, currentListId, userId,
       assigneeRoleRestrictions, teamAssignAccessRole, recurringConfig,
     } = req.body;
+    const status = rawStatus !== undefined ? canonicalizeTaskStatus(rawStatus) : undefined;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
 
     // Only Project Managers and Admins can set Team Role / Assignees (checked against the DB, not the token)
@@ -1102,7 +1105,7 @@ export async function updateTask(req: Request, res: Response) {
             });
           }
 
-          if (status && status !== currentTask.status) {
+          if (status && !areStatusesEqual(status, currentTask.status)) {
             const log = await prisma.auditLog.create({
               data: {
                 action: 'STATUS_CHANGE',
@@ -1377,7 +1380,8 @@ export async function deleteTask(req: Request, res: Response) {
 export async function moveTask(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { status, currentListId, userId } = req.body;
+    const { status: rawStatus, currentListId, userId } = req.body;
+    const status = rawStatus !== undefined ? canonicalizeTaskStatus(rawStatus) : undefined;
 
     const authReq = req as any;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
@@ -1552,7 +1556,7 @@ export async function moveTask(req: Request, res: Response) {
     });
 
     // Create AuditLog activity entry asynchronously so it doesn't block the API response
-    if (oldStatus !== status) {
+    if (status && !areStatusesEqual(oldStatus, status)) {
       const actingUserId = effectiveUser?.id || (userId ? userId : null);
       if (actingUserId) {
         prisma.user.findUnique({
@@ -2784,7 +2788,8 @@ export async function createSubtask(req: Request, res: Response) {
 export async function updateSubtask(req: Request, res: Response) {
   try {
     const { id: taskId, subtaskId } = req.params;
-    const { title, description, completed, assigneeIds, assigneeId, teamId, priority, dueDate, status, assigneeRoleRestrictions, teamAssignAccessRole } = req.body;
+    const { title, description, completed, assigneeIds, assigneeId, teamId, priority, dueDate, status: rawStatus, assigneeRoleRestrictions, teamAssignAccessRole } = req.body;
+    const status = rawStatus !== undefined ? canonicalizeTaskStatus(rawStatus) : undefined;
 
     // Only Project Managers and Admins can set Team Role / Assignees (checked against the DB, not the token)
     const changesAssignment = assigneeIds !== undefined || assigneeId !== undefined || assigneeRoleRestrictions !== undefined;
@@ -2965,7 +2970,7 @@ export async function updateSubtask(req: Request, res: Response) {
           });
         }
       }
-      if (status !== undefined) {
+      if (status !== undefined && !areStatusesEqual(oldSubtaskStatus, status)) {
         await prisma.auditLog.create({
           data: {
             action: 'STATUS_CHANGE',
@@ -3038,7 +3043,7 @@ export async function updateSubtask(req: Request, res: Response) {
     }
 
     let statusActivity: any = null;
-    await invalidateCache(`task:${taskId}`, `task:${subtaskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(() => {});
+    await invalidateCache(`task:${taskId}`, `task:${subtaskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all', 'task_map:all').catch(() => {});
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 
@@ -3070,7 +3075,7 @@ export async function updateSubtask(req: Request, res: Response) {
           io.emit('task_activity', { listId: task.listId, taskId, activity: act });
         }
         statusActivity = null;
-        if (status !== undefined) {
+        if (status !== undefined && !areStatusesEqual(oldSubtaskStatus, status)) {
           const act = {
             id: (Date.now() + 1).toString(),
             type: 'status_change',

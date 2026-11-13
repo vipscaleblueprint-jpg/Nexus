@@ -318,7 +318,20 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       s.emit('join_user', currentUser.id);
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
         if (typeof res.unreadCount === 'number') {
-          setUnreadNotifications(res.unreadCount);
+          const lastViewed =
+            typeof window !== 'undefined'
+              ? parseInt(localStorage.getItem('nexus_notif_last_viewed') || '0', 10)
+              : 0;
+          const latestNotif = res.notifications?.[0];
+          const hasUnseen =
+            latestNotif &&
+            !latestNotif.isRead &&
+            new Date(latestNotif.createdAt).getTime() > lastViewed;
+          if (hasUnseen) {
+            setUnreadNotifications(res.unreadCount);
+          } else {
+            setUnreadNotifications(0);
+          }
         }
       }).catch(() => { });
       taskMapApi.getUpworkActiveSessions().then((res) => {
@@ -421,7 +434,20 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task:comment_deleted', { detail: payload }));
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
         if (typeof res.unreadCount === 'number') {
-          setUnreadNotifications(res.unreadCount);
+          const lastViewed =
+            typeof window !== 'undefined'
+              ? parseInt(localStorage.getItem('nexus_notif_last_viewed') || '0', 10)
+              : 0;
+          const latestNotif = res.notifications?.[0];
+          const hasUnseen =
+            latestNotif &&
+            !latestNotif.isRead &&
+            new Date(latestNotif.createdAt).getTime() > lastViewed;
+          if (hasUnseen) {
+            setUnreadNotifications(res.unreadCount);
+          } else {
+            setUnreadNotifications(0);
+          }
         }
       }).catch(() => { });
     });

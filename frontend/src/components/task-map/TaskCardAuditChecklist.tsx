@@ -186,17 +186,17 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       if (isLevel1) {
         const dummyTask = { ...task, checklists: finalCls };
         if (areLevel1AuditsComplete(dummyTask)) {
-          task.status = 'Checking';
-          tasksApi.updateTask(task.id, { status: 'Checking' } as any).catch(console.error);
-          toast.success('✓ UI/UX and Design audits completed — task moved to Checking');
+          task.status = 'CHECKING';
+          tasksApi.updateTask(task.id, { status: 'CHECKING' } as any).catch(console.error);
+          toast.success('✓ UI/UX and Design audits completed — task moved to CHECKING');
         }
       }
     } else if (!nextCompleted && (taskStatusUpper === 'CHECKING' || taskStatusUpper === 'IN CHECKING')) {
       const isLevel1 = isUiUxAudit(itemDef.name) || isDesignAudit(itemDef.name);
       if (isLevel1 && hasUiUxOrDesignAudit(task)) {
-        task.status = 'In Review';
-        tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
-        toast.info('UI/UX or Design audit unchecked — task returned to In Review');
+        task.status = 'IN REVIEW';
+        tasksApi.updateTask(task.id, { status: 'IN REVIEW' } as any).catch(console.error);
+        toast.info('UI/UX or Design audit unchecked — task returned to IN REVIEW');
       }
     }
 

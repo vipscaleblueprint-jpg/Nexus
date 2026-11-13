@@ -377,6 +377,30 @@ export function getNextShift(currentShift: string): { nextShift: string; nextDay
   }
 }
 
+/**
+ * Resolves the target shiftDate for a shift transition without jumping to tomorrow
+ * when the NIGHT -> DAY rollover runs after midnight (e.g. 1:00 AM Manila).
+ */
+export function resolveNextShiftDate(currentShiftDate: Date, nextDay: boolean, now = new Date()): Date {
+  if (!nextDay) return currentShiftDate;
+  try {
+    const manilaHour = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        hour: 'numeric',
+        hour12: false,
+      }).format(now)
+    );
+    const targetDateStr =
+      manilaHour < 12
+        ? getManilaDateStr(now)
+        : getManilaDateStr(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+    return new Date(`${targetDateStr}T08:00:00+08:00`);
+  } catch {
+    return new Date(`${getManilaDateStr(now)}T08:00:00+08:00`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Upwork Client Management & Project-Based Support
 // ---------------------------------------------------------------------------
@@ -614,9 +638,9 @@ export function getManilaDateStr(date?: Date | string | null): string {
 }
 
 /**
- * Returns operational date in Asia/Manila where each new day begins at 6:00 AM (not midnight).
- * Between 12:00 AM and 5:59 AM, operational date belongs to yesterday's shift.
- * At 6:00 AM, it rolls over to today's date.
+ * Returns operational date in Asia/Manila where each new day begins at 5:00 AM (not midnight).
+ * Between 12:00 AM and 4:59 AM, operational date belongs to yesterday's shift.
+ * At 5:00 AM, it rolls over to today's date.
  */
 export function getTaskMapOperationalDateStr(date?: Date | string | null): string {
   const d = date ? (typeof date === 'string' ? new Date(date) : date) : new Date();
@@ -631,8 +655,8 @@ export function getTaskMapOperationalDateStr(date?: Date | string | null): strin
       }).format(d)
     );
 
-    // If before 6:00 AM Manila, operational date is yesterday
-    if (manilaHour < 6) {
+    // If before 5:00 AM Manila, operational date is yesterday
+    if (manilaHour < 5) {
       const yesterday = new Date(d.getTime() - 24 * 60 * 60 * 1000);
       return getManilaDateStr(yesterday);
     }
@@ -815,13 +839,16 @@ export async function getAvailableHistoryDates(): Promise<string[]> {
     if (shiftDateStr) set.add(shiftDateStr);
   }
 
-  // Always include today in Manila time
-  set.add(getManilaDateStr());
+  // Always include today in Manila time and never expose future dates from stale shiftDate/rollover entries
+  const todayManila = getManilaDateStr();
+  set.add(todayManila);
 
   // Also include the reference mock dates Nov 1-5, 2026 for seamless UI journal browsing
   ['2026-11-05', '2026-11-04', '2026-11-03', '2026-11-02', '2026-11-01'].forEach((d) => set.add(d));
 
-  return Array.from(set).sort((a, b) => b.localeCompare(a));
+  return Array.from(set)
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= todayManila)
+    .sort((a, b) => b.localeCompare(a));
 }
 
 export async function executeTaskMapDailyRollover(params?: {
@@ -836,7 +863,7 @@ export async function executeTaskMapDailyRollover(params?: {
   newDate: string;
   retainedTasksCount: number;
 }> {
-  // If fromDate is not passed, use yesterday relative to 6:00 AM new day
+  // If fromDate is not passed, use yesterday relative to 5:00 AM new day
   const fromDate = (params?.fromDate || getManilaDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000))).trim().split('T')[0];
 
   // Default toDate is today in Manila
@@ -879,7 +906,7 @@ export async function executeTaskMapDailyRollover(params?: {
   await captureTaskMapDailySnapshot(fromDate, snapshotData, params?.actorId || 'system');
   retainedTasksCount = snapshotData.tasks?.length || 0;
 
-  // 2. Roll over active workflow tasks for the new 6:00 AM Task Map page
+  // 2. Roll over active workflow tasks for the new 5:00 AM Task Map page
   // Unassign active workflow tasks to return them to Available tasks, with ZERO status changes.
   // The historical snapshot captures the previous date before rolling over for history purposes.
   // No status gets changed at all during daily rollover (DAILY, WEEKLY, MONTHLY, and workflow statuses stay intact).
@@ -910,8 +937,26 @@ export async function executeTaskMapDailyRollover(params?: {
 
   const rolledCount = typeof updateResult === 'number' ? updateResult : 0;
 
-  // Strip PM_ASSIGNMENT from rolled taskMapRecords so columns start clean and empty for the new day
+  // Strip PM_ASSIGNMENT and reset SUBTASK_STATE from rolled taskMapRecords so columns start clean and empty for the new day
   try {
+    const activeAssignedSubtasks = await prisma.subtask.findMany({
+      where: {
+        completed: false,
+        OR: [{ assigneeId: { not: null } }, { assignees: { some: {} } }],
+      },
+      select: { id: true, status: true },
+    });
+    for (const st of activeAssignedSubtasks) {
+      const upper = (st.status || '').toUpperCase().trim();
+      if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING'].includes(upper)) {
+        continue;
+      }
+      await prisma.subtask.update({
+        where: { id: st.id },
+        data: { assigneeId: null, assignees: { set: [] } },
+      });
+    }
+
     const activeRecords = await prisma.taskMapRecord.findMany({
       where: {
         pmReviews: { not: null as any },
@@ -926,8 +971,14 @@ export async function executeTaskMapDailyRollover(params?: {
       if (typeof revs === 'string') {
         try { revs = JSON.parse(revs); } catch { revs = []; }
       }
-      if (Array.isArray(revs) && revs.some((x: any) => x.type === 'PM_ASSIGNMENT')) {
-        const cleaned = revs.filter((x: any) => x.type !== 'PM_ASSIGNMENT');
+      if (Array.isArray(revs) && revs.some((x: any) => x.type === 'PM_ASSIGNMENT' || x.type === 'SUBTASK_STATE')) {
+        const cleaned = revs
+          .filter((x: any) => x.type !== 'PM_ASSIGNMENT')
+          .map((x: any) =>
+            x.type === 'SUBTASK_STATE'
+              ? { ...x, statuses: ['Available Task'], handedOver: false, updatedAt: new Date().toISOString() }
+              : x
+          );
         await prisma.$executeRawUnsafe(
           `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
           JSON.stringify(cleaned),
@@ -952,7 +1003,7 @@ export async function executeTaskMapDailyRollover(params?: {
         toDate,
         rolledCount,
         retainedTasksCount,
-        note: '6:00 AM daily rollover: previous date preserved in snapshot for history; active tasks rolled back to Available tasks with zero status changes',
+        note: '5:00 AM daily rollover: previous date preserved in snapshot for history; active tasks rolled back to Available tasks with zero status changes',
         timestamp: new Date().toISOString(),
       },
     },

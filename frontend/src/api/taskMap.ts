@@ -60,6 +60,10 @@ export interface TaskProgress {
 
 export interface TaskMapItem {
   id: string;
+  isSubtask?: boolean;
+  subtaskId?: string;
+  parentTaskId?: string;
+  parentTaskTitle?: string;
   title: string;
   description: string | null;
   priority: string;
@@ -173,7 +177,11 @@ export function hasPmAssignmentForUser(task?: TaskMapItem | null, userId?: strin
     }
   }
   if (!Array.isArray(reviewsList)) return false;
-  const pmAssign = reviewsList.find((r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo === userId);
+  const pmAssign = reviewsList.find((r: any) =>
+    r?.type === 'PM_ASSIGNMENT' &&
+    r?.assignedTo === userId &&
+    (task.isSubtask ? r?.subtaskId === task.subtaskId : !r?.subtaskId)
+  );
   return Boolean(pmAssign);
 }
 
@@ -671,4 +679,91 @@ export {
   isFunnelAudit,
 } from '@/lib/auditChecklist';
 export type { AuditPermissionCheck } from '@/lib/auditChecklist';
+
+// Re-export uniform status tokens and helpers
+export {
+  ALL_STATUSES,
+  STATUS_COLORS,
+  isClosedStatus,
+  sortStatusesWithClosedAndKycAtEnd,
+  CustomCircleDot,
+  CustomCircleDotted,
+} from '@/lib/taskTokens';
+
+/**
+ * Canonical sub-status hex colors aligned with main task STATUS_COLORS in taskTokens.tsx
+ * for every sub-status that transitions a task's main status.
+ */
+export const TASK_MAP_STATUS_COLORS = {
+  AVAILABLE_TASK: '#2563eb', // Workflow pool (no main status change)
+  HAND_OVER: '#a855f7',      // Retains IN PROGRESS
+  PAUSED: '#eab308',         // Retains IN PROGRESS
+  ASK_CLIENT: '#06b6d4',     // Retains IN PROGRESS / IN REVIEW
+  TO_REVIEW: '#D97B3A',      // -> IN REVIEW (Orange)
+  WAITING: '#D9534F',        // -> WAITING (Red)
+  SENT: '#D9534F',           // -> WAITING (Red)
+  ON_HOLD: '#8A8F98',        // -> ON-HOLD (Gray)
+  REVISION: '#5B6BD6',       // -> REVISION (Indigo)
+  TO_SEND: '#22A3AE',        // -> CRM (Teal)
+  FOLLOW_UP: '#38bdf8',      // Retains CRM (Sky)
+  CLOSED: '#2FA37A',         // -> CLOSED (Green)
+} as const;
+
+const CANONICAL_STATUS_MAP: Record<string, string> = {
+  KYC: 'KYC',
+  PINBOARD: 'PIN BOARD',
+  DAILY: 'DAILY',
+  WEEKLY: 'WEEKLY',
+  MONTHLY: 'MONTHLY',
+  PENDING: 'PENDING',
+  INPROGRESS: 'IN PROGRESS',
+  REVISION: 'REVISION',
+  WAITING: 'WAITING',
+  INREVIEW: 'IN REVIEW',
+  TOREVIEW: 'IN REVIEW',
+  REVIEW: 'IN REVIEW',
+  CHECKING: 'CHECKING',
+  INCHECKING: 'CHECKING',
+  CRM: 'CRM',
+  CLOSED: 'CLOSED',
+  DONE: 'CLOSED',
+  ONHOLD: 'ON-HOLD',
+};
+
+/**
+ * Normalizes any main task status string to canonical uppercase ALL_STATUSES format
+ * so case differences (e.g. "Waiting" vs "WAITING") never write inconsistent names
+ * or create redundant STATUS_CHANGE audit logs.
+ */
+export function toCanonicalTaskStatus(status?: string | null): string {
+  const raw = (status || '').trim();
+  if (!raw) return '';
+  const compact = raw.toUpperCase().replace(/[\s_-]+/g, '');
+  return CANONICAL_STATUS_MAP[compact] || raw.toUpperCase();
+}
+
+/**
+ * Returns innate default sub-statuses when a task has no explicit Task Map sub-status.
+ * Active Task Map tasks innately default to ['Available Task'], while Auditor queue
+ * (IN REVIEW / CHECKING) and closed tasks stay clean unless explicitly tagged.
+ */
+export function getDefaultTaskMapSubStatuses(taskStatus?: string | null): string[] {
+  const canonical = toCanonicalTaskStatus(taskStatus);
+  if (canonical === 'CRM') return ['To send'];
+  if (canonical === 'WAITING') return ['Waiting'];
+  if (canonical === 'ON-HOLD') return ['On-hold'];
+  if (
+    canonical === 'IN REVIEW' ||
+    canonical === 'CHECKING' ||
+    canonical === 'CLOSED' ||
+    canonical === 'COMPLETE' ||
+    canonical === 'COMPLETED' ||
+    canonical === 'RESOLVED' ||
+    canonical === 'CANCELLED'
+  ) {
+    return [];
+  }
+  return ['Available Task'];
+}
+
 

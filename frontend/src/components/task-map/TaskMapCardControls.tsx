@@ -1,14 +1,26 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from 'lucide-react';
-import { CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
+import { fetchListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
 import { TaskMapItem } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
+
+const getHexColor = (color: string) => {
+  const colors: Record<string, string> = {
+    slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
+    red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
+    green: '#22c55e', emerald: '#10b981', teal: '#14b8a6', cyan: '#06b6d4', sky: '#0ea5e9',
+    blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
+    pink: '#ec4899', rose: '#f43f5e',
+  };
+  return colors[color] || color;
+};
 
 
 export const getDotColor = (status?: string) => {
@@ -22,8 +34,8 @@ export const getDotColor = (status?: string) => {
     WAITING: '#D9534F',
     'IN REVIEW': '#D97B3A',
     IN_REVIEW: '#D97B3A',
-    'TO REVIEW': '#1d4ed8',
-    'TO_REVIEW': '#1d4ed8',
+    'TO REVIEW': '#D97B3A',
+    'TO_REVIEW': '#D97B3A',
     'DONE REVIEW': '#2dd4bf',
     CHECKING: '#A35DB8',
     CRM: '#22A3AE',
@@ -49,12 +61,107 @@ export const isTaskUrgent = (task: TaskMapItem) => {
   const p = (task.priority || '').toUpperCase();
   if (p === 'URGENT') return true;
   const customStatuses = task.taskMap?.statuses || [];
-  return customStatuses.some((cs) => cs.toUpperCase().includes('URGENT'));
+  if (customStatuses.some((cs) => cs.toUpperCase().includes('URGENT'))) return true;
+  const tags = (task as TaskMapItem & { tags?: Array<string | { name?: string }> }).tags || [];
+  if (tags.some((tag) => (typeof tag === 'string' ? tag : tag?.name || '').toUpperCase().includes('URGENT'))) return true;
+  if ((task.title || '').toUpperCase().includes('[URGENT]')) return true;
+  return false;
 };
 
 export const isTaskHigh = (task: TaskMapItem) => {
   const p = (task.priority || '').toUpperCase();
   return p === 'HIGH';
+};
+
+export const isTaskOnHold = (task: TaskMapItem) => {
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (s === 'ONHOLD' || s.includes('HOLD')) return true;
+  const customStatuses = task.taskMap?.statuses || [];
+  return customStatuses.some((cs: string) => {
+    const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    return up === 'ONHOLD' || up.includes('HOLD');
+  });
+};
+
+/**
+ * Sort Task Map items with all Urgent tasks strictly at the top,
+ * non-urgent On-hold tasks at the bottom, then High priority, optional In Progress, and newest first.
+ */
+export const sortTasksUrgentFirst = (
+  items: TaskMapItem[],
+  options?: { prioritizeInProgress?: boolean }
+) => {
+  const prioritizeInProgress = Boolean(options?.prioritizeInProgress);
+  return [...items].sort((a, b) => {
+    const urgentA = isTaskUrgent(a) ? 1 : 0;
+    const urgentB = isTaskUrgent(b) ? 1 : 0;
+    if (urgentA !== urgentB) return urgentB - urgentA;
+
+    const holdA = isTaskOnHold(a) ? 1 : 0;
+    const holdB = isTaskOnHold(b) ? 1 : 0;
+    if (holdA !== holdB) return holdA - holdB;
+
+    const highA = isTaskHigh(a) ? 1 : 0;
+    const highB = isTaskHigh(b) ? 1 : 0;
+    if (highA !== highB) return highB - highA;
+
+    if (prioritizeInProgress) {
+      const inProgA = isTaskInProgress(a) ? 1 : 0;
+      const inProgB = isTaskInProgress(b) ? 1 : 0;
+      if (inProgA !== inProgB) return inProgB - inProgA;
+    }
+
+    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return dateB - dateA;
+  });
+};
+
+export const sortAvailablePoolTasks = (items: TaskMapItem[]) =>
+  groupTasksWithSubtasks(sortTasksUrgentFirst(items, { prioritizeInProgress: true }));
+
+/**
+ * Places subtasks directly below their parent main task whenever both exist in the same column,
+ * while keeping separated subtasks (whose parent is absent) at their natural sorted positions.
+ */
+export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[] => {
+  const presentParentIds = new Set<string>();
+  for (const item of sortedItems) {
+    if (!item.isSubtask) presentParentIds.add(item.id);
+  }
+
+  const attachedByParent = new Map<string, TaskMapItem[]>();
+  for (const item of sortedItems) {
+    if (item.isSubtask && item.parentTaskId && presentParentIds.has(item.parentTaskId)) {
+      const list = attachedByParent.get(item.parentTaskId) || [];
+      list.push(item);
+      attachedByParent.set(item.parentTaskId, list);
+    }
+  }
+
+  // Sort attached subtasks under the same parent chronologically (oldest first) to match task detail ordering
+  attachedByParent.forEach((children) => {
+    children.sort((a, b) => {
+      const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return da - db;
+    });
+  });
+
+  const result: TaskMapItem[] = [];
+  for (const item of sortedItems) {
+    if (item.isSubtask && item.parentTaskId && presentParentIds.has(item.parentTaskId)) {
+      continue;
+    }
+    result.push(item);
+    if (!item.isSubtask) {
+      const children = attachedByParent.get(item.id);
+      if (children && children.length > 0) {
+        result.push(...children);
+      }
+    }
+  }
+  return result;
 };
 
 export const matchesPriorityFilter = (task: TaskMapItem, filter: string) => {
@@ -390,34 +497,49 @@ export const ColumnPriorityDropdown: React.FC<{
 export const CardStatusDropdown: React.FC<{
   taskId: string;
   currentStatus: string;
+  listId?: string;
+  listStatuses?: any[];
   onSelect: (newStatus: string) => void;
   excludeStatuses?: string[];
-}> = ({ taskId, currentStatus, onSelect, excludeStatuses = [] }) => {
+}> = ({ taskId, currentStatus, listId, listStatuses, onSelect, excludeStatuses = [] }) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [fetchedStatuses, setFetchedStatuses] = useState<any[]>(listStatuses || []);
 
-  const statusList = [
-    { label: 'In progress', color: '#D04A7C' },
-    { label: 'Pending', color: '#D29A2A' },
-    { label: 'To review', color: '#1d4ed8' },
-    { label: 'Revision', color: '#5B6BD6' },
-    { label: 'CRM', color: '#22A3AE' },
-    { label: 'Waiting', color: '#D9534F' },
-    { label: 'Done', color: '#166534' },
-    { label: 'Closed', color: '#10b981', isClosed: true },
-    { label: 'KYC', color: '#059669', isKyc: true },
-  ];
+  useEffect(() => {
+    if (listStatuses && listStatuses.length > 0) {
+      setFetchedStatuses(listStatuses);
+      return;
+    }
+    if (!listId) return;
+    let active = true;
+    fetchListStatuses(listId).then((res) => {
+      if (active && Array.isArray(res) && res.length > 0) {
+        setFetchedStatuses(res);
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [listId, listStatuses]);
 
-  const excludeSet = new Set(excludeStatuses.map((s) => s.toUpperCase().trim()));
-  const filteredStatusList = statusList.filter(
-    (item) => !excludeSet.has(item.label.toUpperCase().trim())
-  );
+  const orderedStatuses = useMemo(() => {
+    const raw = (fetchedStatuses && fetchedStatuses.length > 0)
+      ? fetchedStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+      : ALL_STATUSES;
+    const excludeSet = new Set(excludeStatuses.map((s) => s.toUpperCase().trim()));
+    const filtered = raw.filter((s: string) => !excludeSet.has(s.toUpperCase().trim()));
+    return sortStatusesWithClosedAndKycAtEnd(filtered);
+  }, [fetchedStatuses, excludeStatuses]);
+
+  const openStatuses = useMemo(() => orderedStatuses.filter((s: string) => !isClosedStatus(s)), [orderedStatuses]);
+  const closedStatuses = useMemo(() => orderedStatuses.filter((s: string) => isClosedStatus(s)), [orderedStatuses]);
 
   const calcPos = (rect: DOMRect) => {
-    const width = 160;
-    const height = 240;
+    const width = 192;
+    const height = 284;
     let top = rect.bottom + 4;
     if (top + height > window.innerHeight - 10) {
       top = Math.max(10, rect.top - height - 4);
@@ -476,8 +598,57 @@ export const CardStatusDropdown: React.FC<{
   }, [isOpen]);
 
   const clean = (currentStatus || 'In progress').trim();
-  const isClosed = clean.toUpperCase() === 'CLOSED' || clean.toUpperCase() === 'DONE';
+  const isClosed = isClosedStatus(clean);
   const isKyc = clean.toUpperCase() === 'KYC';
+  const activeCustomObj = fetchedStatuses?.find((ls: any) =>
+    (typeof ls === 'object') && (ls.name || ls.status || ls.title)?.toUpperCase() === clean.toUpperCase()
+  );
+  const triggerDotColor = activeCustomObj?.color ? getHexColor(activeCustomObj.color) : getDotColor(clean);
+
+  const renderItem = (s: string) => {
+    const isSelected = clean.toUpperCase() === s.toUpperCase();
+    const customObj = fetchedStatuses?.find((ls: any) =>
+      (typeof ls === 'object') && (ls.name || ls.status || ls.title)?.toUpperCase() === s.toUpperCase()
+    );
+    const isClosedItem = isClosedStatus(s);
+    const isKycItem = s.toUpperCase() === 'KYC';
+    const statusColorHex = STATUS_COLORS[s.toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
+    const itemColor = customObj?.color
+      ? getHexColor(customObj.color)
+      : (statusColorHex || getDotColor(s));
+
+    return (
+      <button
+        key={s}
+        type="button"
+        onClick={() => {
+          setIsOpen(false);
+          setCoords(null);
+          onSelect(s);
+        }}
+        className={`w-full shrink-0 flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+          isSelected
+            ? 'bg-blue-500/15 text-blue-400 font-semibold'
+            : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
+        }`}
+      >
+        <div className="flex items-center gap-2 truncate">
+          {isClosedItem ? (
+            <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" style={{ color: itemColor }} />
+          ) : isKycItem ? (
+            <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" style={{ color: itemColor }} />
+          ) : (
+            <CustomCircleDot
+              className="size-3.5 shrink-0"
+              style={{ color: itemColor }}
+            />
+          )}
+          <span className="truncate uppercase font-medium">{s}</span>
+        </div>
+        {isSelected && <Check className="size-3 text-blue-400 shrink-0" />}
+      </button>
+    );
+  };
 
   return (
     <div
@@ -493,13 +664,13 @@ export const CardStatusDropdown: React.FC<{
         title={`Status: ${clean} (click to change)`}
       >
         {isClosed ? (
-          <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
+          <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" style={{ color: triggerDotColor }} />
         ) : isKyc ? (
-          <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
+          <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" style={{ color: triggerDotColor }} />
         ) : (
           <CustomCircleDot
             className="size-3.5 shrink-0"
-            style={{ color: getDotColor(clean) }}
+            style={{ color: triggerDotColor }}
           />
         )}
       </button>
@@ -519,44 +690,23 @@ export const CardStatusDropdown: React.FC<{
               left: `${coords.left}px`,
               zIndex: 999999,
             }}
-            className="w-40 p-1.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col gap-0.5 text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
+            className="w-48 overflow-hidden bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
           >
-            <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-2 py-1">
+            <div className="px-2.5 pt-2 pb-1.5 border-b border-zinc-800/80 text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none shrink-0 bg-popover">
               Change Status
-            </span>
-            {filteredStatusList.map((item) => {
-              const isSelected = clean.toUpperCase() === item.label.toUpperCase();
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => {
-                    setIsOpen(false);
-                    setCoords(null);
-                    onSelect(item.label);
-                  }}
-                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${isSelected
-                      ? 'bg-zinc-800 text-white font-semibold'
-                      : 'text-zinc-300 hover:bg-zinc-800/60 hover:text-white'
-                    }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    {item.isClosed ? (
-                      <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
-                    ) : item.isKyc ? (
-                      <CustomCircleDotted className="size-3.5 text-emerald-600 shrink-0" />
-                    ) : (
-                      <CustomCircleDot
-                        className="size-3.5 shrink-0"
-                        style={{ color: item.color }}
-                      />
-                    )}
-                    <span className="truncate">{item.label}</span>
-                  </div>
-                  {isSelected && <Check className="size-3 text-blue-400 shrink-0" />}
-                </button>
-              );
-            })}
+            </div>
+            <div className="max-h-60 overflow-y-auto custom-scrollbar p-1.5 flex flex-col gap-0.5">
+              {openStatuses.map(renderItem)}
+              {closedStatuses.length > 0 && (
+                <>
+                  <div className="my-1 border-t border-zinc-700/60 shrink-0" />
+                  <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider px-2 py-0.5 select-none shrink-0">
+                    Closed
+                  </span>
+                  {closedStatuses.map(renderItem)}
+                </>
+              )}
+            </div>
           </div>,
           document.body
         )}

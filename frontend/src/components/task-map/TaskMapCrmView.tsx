@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { TaskMapItem, TaskMapOption } from '@/api/taskMap';
+import { TaskMapItem, TaskMapOption, TASK_MAP_STATUS_COLORS, toCanonicalTaskStatus } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -27,6 +27,7 @@ import {
   ColumnPriorityDropdown,
   matchesPriorityFilter,
   matchesSearchFilter,
+  sortTasksUrgentFirst,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -465,12 +466,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
         (s) => s.toUpperCase() !== 'CRM' && s.toUpperCase() !== 'TO SEND'
       );
       if (!updatedStatuses.includes('Sent')) updatedStatuses.push('Sent');
-      toast.success('Task marked Sent — status updated to Waiting');
+      toast.success('Task marked Sent — status updated to WAITING');
       onStatusChange(taskId, updatedStatuses);
       if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { status: 'Waiting' });
+        await onTaskUpdate(taskId, { status: 'WAITING' });
       } else {
-        await tasksApi.updateTask(taskId, { status: 'Waiting' } as any).catch(console.error);
+        await tasksApi.updateTask(taskId, { status: 'WAITING' } as any).catch(console.error);
         onDataRefresh();
       }
     } else if (targetColumnId === 'col-crm-closed' || targetColumnId === 'col-crm-completed') {
@@ -482,14 +483,14 @@ export const TaskMapCrmView: React.FC<Props> = ({
       }
 
       // 2. Status transition rulings: all subtasks closed, all required audits checked!
-      const transitionCheck = canTransitionTaskStatus(task, 'Closed');
+      const transitionCheck = canTransitionTaskStatus(task, 'CLOSED');
       if (!transitionCheck.allowed) {
         if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
           window.dispatchEvent(
             new CustomEvent('task:highlight-audits', {
               detail: {
                 taskId: task.id,
-                targetStatus: 'Closed',
+                targetStatus: 'CLOSED',
                 uncheckedAudits: transitionCheck.uncheckedAudits,
                 openSubtasks: transitionCheck.openSubtasks,
               },
@@ -499,21 +500,21 @@ export const TaskMapCrmView: React.FC<Props> = ({
         setBlockedAuditAlert({
           isOpen: true,
           task,
-          targetStatus: 'Closed',
+          targetStatus: 'CLOSED',
           uncheckedAudits: transitionCheck.uncheckedAudits,
           openSubtasks: transitionCheck.openSubtasks,
         });
-        toast.error(transitionCheck.reason || 'Cannot move task to Closed');
+        toast.error(transitionCheck.reason || 'Cannot move task to CLOSED');
         return;
       }
 
       if (!updatedStatuses.includes('Outreach Sent')) updatedStatuses.push('Outreach Sent');
-      toast.success('Task marked Closed');
+      toast.success('Task marked CLOSED');
       onStatusChange(taskId, updatedStatuses);
       if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { status: 'Closed' });
+        await onTaskUpdate(taskId, { status: 'CLOSED' });
       } else {
-        await tasksApi.updateTask(taskId, { status: 'Closed' } as any).catch(console.error);
+        await tasksApi.updateTask(taskId, { status: 'CLOSED' } as any).catch(console.error);
       }
     } else if (targetColumnId.startsWith('col-crm-member-')) {
       const memberId = targetColumnId.replace('col-crm-member-', '');
@@ -540,10 +541,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
   // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent', 'Follow up', 'Closed')
   const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => [
-    { id: 'opt-crm-tosend', label: 'To send', color: '#22A3AE', textColor: '#ffffff', order: 0 },
-    { id: 'opt-crm-sent', label: 'Sent', color: '#f59e0b', textColor: '#ffffff', order: 1 },
-    { id: 'opt-crm-followup', label: 'Follow up', color: '#38bdf8', textColor: '#ffffff', order: 2 },
-    { id: 'opt-crm-closed', label: 'Closed', color: '#10b981', textColor: '#ffffff', order: 3 },
+    { id: 'opt-crm-tosend', label: 'To send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 0 },
+    { id: 'opt-crm-sent', label: 'Sent', color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff', order: 1 },
+    { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
+    { id: 'opt-crm-closed', label: 'Closed', color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff', order: 3 },
   ];
 
   // Assemble full columns array
@@ -588,8 +589,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
       title: 'Sent',
       subtitle: 'Outreach sent — waiting for client response',
       badgeLabel: 'Waiting',
-      badgeClass: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800',
-      dotColor: 'bg-amber-500',
+      badgeClass: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/70 dark:text-red-300 dark:border-red-800',
+      dotColor: 'bg-[#D9534F]',
       tasks: sentTasks,
     },
     {
@@ -598,7 +599,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       subtitle: 'Closed & verified tasks',
       badgeLabel: 'Closed',
       badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800',
-      dotColor: 'bg-emerald-500',
+      dotColor: 'bg-[#2FA37A]',
       tasks: completedTasks,
     },
   ];
@@ -960,7 +961,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       </span>
                     </div>
                   ) : (
-                    visibleTasks.map((task) => {
+                    sortTasksUrgentFirst(visibleTasks).map((task) => {
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
                           <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group">
@@ -986,6 +987,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                 <CardStatusDropdown
                                   taskId={task.id}
                                   currentStatus={task.status || 'In progress'}
+                                  listId={task.listId || task.list?.id}
                                   onSelect={async (newStatus) => {
                                     const transitionCheck = canTransitionTaskStatus(task, newStatus);
                                     if (!transitionCheck.allowed) {
@@ -1110,7 +1112,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         }
                                       } else {
                                         // User clicked 'To send' AGAIN in CRM -> revert misclick back to last status
-                                        const revertStatus = (task as any)._previousStatus || (task.assigneeId ? 'In Review' : 'To review');
+                                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || 'IN REVIEW');
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: revertStatus });
@@ -1122,14 +1124,14 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                       }
                                     } else if (label === 'Sent') {
                                       if (isSelecting) {
-                                        const transitionCheck = canTransitionTaskStatus(task, 'Waiting');
+                                        const transitionCheck = canTransitionTaskStatus(task, 'WAITING');
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(
                                               new CustomEvent('task:highlight-audits', {
                                                 detail: {
                                                   taskId: task.id,
-                                                  targetStatus: 'Waiting',
+                                                  targetStatus: 'WAITING',
                                                   uncheckedAudits: transitionCheck.uncheckedAudits,
                                                   openSubtasks: transitionCheck.openSubtasks,
                                                 },
@@ -1139,22 +1141,22 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                           setBlockedAuditAlert({
                                             isOpen: true,
                                             task,
-                                            targetStatus: 'Waiting',
+                                            targetStatus: 'WAITING',
                                             uncheckedAudits: transitionCheck.uncheckedAudits,
                                             openSubtasks: transitionCheck.openSubtasks,
                                           });
-                                          toast.error(transitionCheck.reason || 'Cannot move task to Waiting');
+                                          toast.error(transitionCheck.reason || 'Cannot move task to WAITING');
                                           return;
                                         }
 
                                         onStatusChange(task.id, cleanNext);
                                         if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'Waiting' });
+                                          await onTaskUpdate(task.id, { status: 'WAITING' });
                                         } else {
-                                          await tasksApi.updateTask(task.id, { status: 'Waiting' } as any).catch(console.error);
+                                          await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.success('Task marked Sent — status updated to Waiting');
+                                        toast.success('Task marked Sent — status updated to WAITING');
                                       } else {
                                         // Toggled off Sent -> revert back to CRM
                                         onStatusChange(task.id, ['CRM']);
@@ -1168,14 +1170,14 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                       }
                                     } else if (label === 'Closed') {
                                       if (isSelecting) {
-                                        const transitionCheck = canTransitionTaskStatus(task, 'Closed');
+                                        const transitionCheck = canTransitionTaskStatus(task, 'CLOSED');
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(
                                               new CustomEvent('task:highlight-audits', {
                                                 detail: {
                                                   taskId: task.id,
-                                                  targetStatus: 'Closed',
+                                                  targetStatus: 'CLOSED',
                                                   uncheckedAudits: transitionCheck.uncheckedAudits,
                                                   openSubtasks: transitionCheck.openSubtasks,
                                                 },
@@ -1185,32 +1187,32 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                           setBlockedAuditAlert({
                                             isOpen: true,
                                             task,
-                                            targetStatus: 'Closed',
+                                            targetStatus: 'CLOSED',
                                             uncheckedAudits: transitionCheck.uncheckedAudits,
                                             openSubtasks: transitionCheck.openSubtasks,
                                           });
-                                          toast.error(transitionCheck.reason || 'Cannot move task to Closed');
+                                          toast.error(transitionCheck.reason || 'Cannot move task to CLOSED');
                                           return;
                                         }
 
                                         onStatusChange(task.id, cleanNext);
                                         if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'Closed' });
+                                          await onTaskUpdate(task.id, { status: 'CLOSED' });
                                         } else {
-                                          await tasksApi.updateTask(task.id, { status: 'Closed' } as any).catch(console.error);
+                                          await tasksApi.updateTask(task.id, { status: 'CLOSED' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.success('Task marked Closed');
+                                        toast.success('Task marked CLOSED');
                                       } else {
-                                        // Toggled off Closed -> revert back to Waiting
+                                        // Toggled off Closed -> revert back to WAITING
                                         onStatusChange(task.id, ['Sent']);
                                         if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'Waiting' });
+                                          await onTaskUpdate(task.id, { status: 'WAITING' });
                                         } else {
-                                          await tasksApi.updateTask(task.id, { status: 'Waiting' } as any).catch(console.error);
+                                          await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.info("Reverted 'Closed' — returned to Waiting");
+                                        toast.info("Reverted 'Closed' — returned to WAITING");
                                       }
                                     } else if (label === 'Follow up' && isSelecting) {
                                       onStatusChange(task.id, cleanNext);

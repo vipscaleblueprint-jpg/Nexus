@@ -47,6 +47,7 @@ export function NotificationBell() {
   const [customStatusColors, setCustomStatusColors] = useState<Record<string, string>>({});
 
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const prevIsOpenRef = useRef(false);
 
   // Pre-load custom list status colors for tasks in notification list
   useEffect(() => {
@@ -118,7 +119,14 @@ export function NotificationBell() {
         setPage(pageNum);
 
         if (typeof res.unreadCount === "number") {
-          setUnreadCount(res.unreadCount);
+          const lastViewed =
+            typeof window !== "undefined"
+              ? parseInt(localStorage.getItem("nexus_notif_last_viewed") || "0", 10)
+              : 0;
+          const freshNewCount = freshItems.filter(
+            (n) => !n.isRead && new Date(n.createdAt).getTime() > lastViewed
+          ).length;
+          setUnreadCount(freshNewCount);
         }
       } catch (error) {
         console.error("Failed to load notifications", error);
@@ -146,6 +154,36 @@ export function NotificationBell() {
     };
   }, [isOpen]);
 
+  // Clear the notification badge number upon closing the dropdown, but retain card unread highlights
+  useEffect(() => {
+    if (prevIsOpenRef.current && !isOpen) {
+      if (typeof window !== "undefined") {
+        const latestTime =
+          notifications.reduce((max, n) => {
+            const t = new Date(n.createdAt).getTime();
+            return t > max ? t : max;
+          }, 0) || Date.now();
+        localStorage.setItem("nexus_notif_last_viewed", String(latestTime));
+      }
+      if (unreadCount > 0) {
+        setUnreadCount(0);
+      }
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, notifications, unreadCount, setUnreadCount]);
+
+  // Cleanup on unmount if user navigates while dropdown was open
+  useEffect(() => {
+    return () => {
+      if (prevIsOpenRef.current) {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("nexus_notif_last_viewed", String(Date.now()));
+        }
+        useAppStore.getState().setUnreadNotifications(0);
+      }
+    };
+  }, []);
+
   // Listen for real-time events to reload
   useEffect(() => {
     const handleActivity = () => {
@@ -154,7 +192,18 @@ export function NotificationBell() {
       } else {
         notificationsApi.getNotifications({ tab: "primary", limit: 1 }).then((res) => {
           if (typeof res.unreadCount === "number") {
-            setUnreadCount(res.unreadCount);
+            const lastViewed =
+              typeof window !== "undefined"
+                ? parseInt(localStorage.getItem("nexus_notif_last_viewed") || "0", 10)
+                : 0;
+            const latestNotif = res.notifications?.[0];
+            const isTrulyNew =
+              latestNotif &&
+              !latestNotif.isRead &&
+              new Date(latestNotif.createdAt).getTime() > lastViewed;
+            if (isTrulyNew) {
+              setUnreadCount(res.unreadCount);
+            }
           }
         });
       }

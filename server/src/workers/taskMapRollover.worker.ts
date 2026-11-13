@@ -6,6 +6,7 @@ import {
   getShiftConfigs,
   getCurrentActiveShift,
   getNextShift,
+  resolveNextShiftDate,
   updateTaskMapRecord,
   TaskMapRecordData,
 } from '../services/taskMapService';
@@ -56,11 +57,8 @@ export async function executeTaskMapShiftRollover(fromShift?: string): Promise<{
       // 4. Tasks marked Revision DO roll over to MA's next shift if unfinished
       // (This naturally proceeds since we did not exclude Revision!)
 
-      // 5. Idempotency check:
-      // Avoid rolling over multiple times within the same hour if already on nextShift
-      const nextDate = nextDay
-        ? new Date(now.getTime() + 24 * 60 * 60 * 1000)
-        : rec.shiftDate;
+      // 5. Resolve target shiftDate safely across midnight boundaries
+      const nextDate = resolveNextShiftDate(rec.shiftDate, nextDay, now);
 
       const updated = await updateTaskMapRecord(rec.taskId, {
         shift: nextShift,

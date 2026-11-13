@@ -43,13 +43,25 @@ import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 const app = express();
 const server = http.createServer(app);
 
-// Initialize daily rollover cron job at 6:00 AM Manila Time (operational day turnover)
+// Initialize daily rollover cron job at 5:00 AM Manila Time (operational day turnover)
 (async () => {
+  try {
+    const existingRepeatables = await dailyRolloverQueue.getRepeatableJobs();
+    for (const job of existingRepeatables) {
+      if (job.name === 'checkRollovers' && job.pattern !== '0 5 * * *') {
+        await dailyRolloverQueue.removeRepeatableByKey(job.key);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to clean up stale daily rollover repeatable jobs');
+  }
+
   await dailyRolloverQueue.add('checkRollovers', {}, {
     repeat: {
-      pattern: '0 6 * * *', // Every day at 6:00 AM Manila Time
+      pattern: '0 5 * * *', // Every day at 5:00 AM Manila Time
       tz: 'Asia/Manila',
     },
+    jobId: 'daily-rollover-5am',
   });
 
   // Safety net for inactive MA shift duty end & inactivity handover (runs every 5 minutes)

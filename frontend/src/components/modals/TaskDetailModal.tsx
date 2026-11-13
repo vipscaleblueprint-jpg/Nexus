@@ -1691,41 +1691,40 @@ export function TaskDetailModalContent({
     const isSubtask = !!(task as any).parentTaskId;
     const targetId = isSubtask ? (task as any).parentTaskId : task.id;
     const subtaskId = isSubtask ? task.id : undefined;
-    const text = textToSubmit;
-    const tempId = `temp-reply-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const withReplies = (map: (replies: any[]) => any[]) => (prev: any[]) =>
-      prev.map(c => c.id === parentCommentId ? { ...c, replies: map(c.replies || []) } : c);
+      prev.map(c => {
+        if (c.id !== parentCommentId) return c;
+        const newReplies = map(c.replies || []);
+        return { ...c, replies: newReplies, replyCount: newReplies.length };
+      });
 
-    // Shown in the thread at once; the saved reply replaces it when the server answers
-    setRichComments(withReplies(replies => [...replies, {
-      id: tempId,
-      content: text,
-      createdAt: new Date().toISOString(),
-      userId: currentUser.id,
-      user: { id: currentUser.id, name: currentUser.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
-      parentCommentId,
-      reactions: [],
-    }]));
+    const res = await tasksApi.addComment(targetId, textToSubmit, currentUser.id, task?.listId, mentionIds || [], parentCommentId, subtaskId);
+    if (res?.comment) {
+      if (mentionIds && mentionIds.length > 0) {
+        mentionIds.forEach(id => {
+          const fullUser = workspaceUsersIndex[id];
+          if (fullUser) triggerMentionConfetti(fullUser);
+        });
+      }
+      setRichComments(withReplies(replies => (
+        replies.some(r => r.id === res.comment.id)
+          ? replies
+          : [...replies, res.comment]
+      )));
+      const cacheKey = isSubtask ? `subtask:${task.id}` : targetId;
+      const cached = activityCache.get(cacheKey);
+      if (cached?.comments) {
+        cached.comments = cached.comments.map((c: any) => {
+          if (c.id !== parentCommentId) return c;
+          const replies = c.replies || [];
+          if (replies.some((r: any) => r.id === res.comment.id)) return c;
+          const nextReplies = [...replies, res.comment];
+          return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+        });
+      }
+    }
     setReplyText('');
     setReplyingToId(null);
-    try {
-      const res = await tasksApi.addComment(targetId, text, currentUser.id, task?.listId, mentionIds || [], parentCommentId, subtaskId);
-      if (res?.comment) {
-        if (mentionIds && mentionIds.length > 0) {
-          mentionIds.forEach(id => {
-            const fullUser = workspaceUsersIndex[id];
-            if (fullUser) triggerMentionConfetti(fullUser);
-          });
-        }
-        setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
-          ? replies.filter(r => r.id !== tempId)
-          : replies.map(r => r.id === tempId ? { ...r, ...res.comment } : r)));
-      }
-    } catch (err: any) {
-      console.warn('Reply failed:', err);
-      setRichComments(withReplies(replies => replies.filter(r => r.id !== tempId)));
-      toast.error(err?.message || 'Failed to post reply');
-    }
   };
 
   const handleSaveEdit = async (commentId: string, updatedContent?: string) => {
@@ -1736,7 +1735,13 @@ export function TaskDetailModalContent({
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
-      setRichComments(prev => prev.map(c => c.id === commentId ? { ...c, content: contentToSave } : c));
+      setRichComments(prev => prev.map(c => {
+        if (c.id === commentId) return { ...c, content: contentToSave };
+        return {
+          ...c,
+          replies: c.replies?.map((r: any) => r.id === commentId ? { ...r, content: contentToSave } : r)
+        };
+      }));
       setEditingCommentId(null);
       setEditCommentText('');
       await tasksApi.updateComment(targetId, commentId, contentToSave);
@@ -1815,7 +1820,12 @@ export function TaskDetailModalContent({
     try {
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
-      setRichComments(prev => prev.filter(c => c.id !== commentId));
+      setRichComments(prev =>
+        prev.filter(c => c.id !== commentId).map(c => {
+          const nextReplies = c.replies?.filter((r: any) => r.id !== commentId);
+          return nextReplies ? { ...c, replies: nextReplies, replyCount: nextReplies.length } : c;
+        })
+      );
       await tasksApi.deleteComment(targetId, commentId);
     } catch (err) {
       console.warn('Delete failed:', err);
@@ -2088,6 +2098,17 @@ export function TaskDetailModalContent({
       setRichComments(prev => {
         // If it's a reply to a comment
         if (payload.comment.parentCommentId) {
+          const cacheKey = isSubtask ? `subtask:${currentTask.id}` : targetId;
+          const cached = activityCache.get(cacheKey);
+          if (cached?.comments) {
+            cached.comments = cached.comments.map((c: any) => {
+              if (c.id !== payload.comment.parentCommentId) return c;
+              const replies = c.replies || [];
+              if (replies.some((r: any) => r.id === payload.comment.id)) return c;
+              const nextReplies = [...replies, payload.comment];
+              return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+            });
+          }
           return prev.map(c => {
             if (c.id === payload.comment.parentCommentId) {
               const replies = c.replies || [];
@@ -2162,15 +2183,20 @@ export function TaskDetailModalContent({
       const targetId = (currentTask as any).parentTaskId || currentTask.id;
       if (payload.taskId !== targetId) return;
       setRichComments(prev =>
-        prev.filter(c => c.id !== payload.commentId).map(c => ({
-          ...c,
-          replies: c.replies?.filter((r: any) => r.id !== payload.commentId)
-        }))
+        prev.filter(c => c.id !== payload.commentId).map(c => {
+          const nextReplies = c.replies?.filter((r: any) => r.id !== payload.commentId);
+          return nextReplies ? { ...c, replies: nextReplies, replyCount: nextReplies.length } : c;
+        })
       );
       const cacheKey = (currentTask as any).parentTaskId ? `subtask:${currentTask.id}` : targetId;
       const cached = activityCache.get(cacheKey);
       if (cached?.comments) {
-        cached.comments = cached.comments.filter((c: any) => c.id !== payload.commentId);
+        cached.comments = cached.comments
+          .filter((c: any) => c.id !== payload.commentId)
+          .map((c: any) => {
+            const nextReplies = c.replies?.filter((r: any) => r.id !== payload.commentId);
+            return nextReplies ? { ...c, replies: nextReplies, replyCount: nextReplies.length } : c;
+          });
       }
     };
 
@@ -4854,6 +4880,7 @@ export function TaskDetailModalContent({
                         {/* Reply input */}
                         {!isReply && replyingToId === comment.id && (
                           <CommentReplyInput
+                            commentId={comment.id}
                             workspaceUsers={workspaceUsers}
                             currentUser={currentUser}
                             onSubmit={async (content, mentionIds) => {
@@ -6730,6 +6757,20 @@ export function SubtaskDetailView({
 
       setRichComments(prev => {
         if (payload.comment.parentCommentId) {
+          const currentSub = subtaskRef.current;
+          if (currentSub) {
+            const cacheKey = `subtask:${currentSub.id}`;
+            const cached = activityCache.get(cacheKey);
+            if (cached?.comments) {
+              cached.comments = cached.comments.map((c: any) => {
+                if (c.id !== payload.comment.parentCommentId) return c;
+                const replies = c.replies || [];
+                if (replies.some((r: any) => r.id === payload.comment.id)) return c;
+                const nextReplies = [...replies, payload.comment];
+                return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+              });
+            }
+          }
           return prev.map(c => {
             if (c.id === payload.comment.parentCommentId) {
               const replies = c.replies || [];
@@ -6804,17 +6845,22 @@ export function SubtaskDetailView({
       const currentParentTask = parentTaskRef.current;
       if (!currentParentTask || payload.taskId !== currentParentTask.id) return;
       setRichComments(prev =>
-        prev.filter(c => c.id !== payload.commentId).map(c => ({
-          ...c,
-          replies: c.replies?.filter((r: any) => r.id !== payload.commentId)
-        }))
+        prev.filter(c => c.id !== payload.commentId).map(c => {
+          const nextReplies = c.replies?.filter((r: any) => r.id !== payload.commentId);
+          return nextReplies ? { ...c, replies: nextReplies, replyCount: nextReplies.length } : c;
+        })
       );
       const currentSubtask = subtaskRef.current;
       if (currentSubtask) {
         const cacheKey = `subtask:${currentSubtask.id}`;
         const cached = activityCache.get(cacheKey);
         if (cached?.comments) {
-          cached.comments = cached.comments.filter((c: any) => c.id !== payload.commentId);
+          cached.comments = cached.comments
+            .filter((c: any) => c.id !== payload.commentId)
+            .map((c: any) => {
+              const nextReplies = c.replies?.filter((r: any) => r.id !== payload.commentId);
+              return nextReplies ? { ...c, replies: nextReplies, replyCount: nextReplies.length } : c;
+            });
         }
       }
     };
@@ -7764,10 +7810,10 @@ export function SubtaskDetailView({
     if (!parentTask?.id) return;
     try {
       setRichComments(prev =>
-        prev.filter(c => c.id !== commentId).map(c => ({
-          ...c,
-          replies: c.replies?.filter((r: any) => r.id !== commentId)
-        }))
+        prev.filter(c => c.id !== commentId).map(c => {
+          const nextReplies = c.replies?.filter((r: any) => r.id !== commentId);
+          return nextReplies ? { ...c, replies: nextReplies, replyCount: nextReplies.length } : c;
+        })
       );
       await tasksApi.deleteComment(parentTask.id, commentId);
     } catch (err) {
@@ -7795,8 +7841,6 @@ export function SubtaskDetailView({
   const handleSubmitReply = async (parentCommentId: string, replyContent?: string, mentionIds?: string[]) => {
     const textToSubmit = (replyContent !== undefined ? replyContent : replyText).trim();
     if (!textToSubmit || !parentTask?.id || !currentUser?.id) return;
-    const text = textToSubmit;
-    const tempId = `temp-reply-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const withReplies = (map: (replies: any[]) => any[]) => (prev: any[]) =>
       prev.map(c => {
         if (c.id !== parentCommentId) return c;
@@ -7804,31 +7848,34 @@ export function SubtaskDetailView({
         return { ...c, replies: newReplies, replyCount: newReplies.length };
       });
 
-    // Shown in the thread at once; the saved reply replaces it when the server answers
-    setRichComments(withReplies(replies => [...replies, {
-      id: tempId,
-      content: text,
-      createdAt: new Date().toISOString(),
-      userId: currentUser.id,
-      user: { id: currentUser.id, name: currentUser.name || 'You', avatarUrl: (currentUser as any)?.avatarUrl },
-      parentCommentId,
-      subtaskId: subtask.id,
-      reactions: [],
-    }]));
+    const res = await tasksApi.addComment(parentTask.id, textToSubmit, currentUser.id, parentTask.listId, mentionIds || [], parentCommentId, subtask.id);
+    if (res?.comment) {
+      if (mentionIds && mentionIds.length > 0) {
+        const usersIdx = useAppStore.getState().workspaceUsersIndex;
+        mentionIds.forEach(id => {
+          const fullUser = usersIdx[id] || (workspaceUsers || []).find((u) => u.id === id);
+          if (fullUser) triggerMentionConfetti(fullUser);
+        });
+      }
+      setRichComments(withReplies(replies => (
+        replies.some(r => r.id === res.comment.id)
+          ? replies
+          : [...replies, res.comment]
+      )));
+      const cacheKey = `subtask:${subtask.id}`;
+      const cached = activityCache.get(cacheKey);
+      if (cached?.comments) {
+        cached.comments = cached.comments.map((c: any) => {
+          if (c.id !== parentCommentId) return c;
+          const replies = c.replies || [];
+          if (replies.some((r: any) => r.id === res.comment.id)) return c;
+          const nextReplies = [...replies, res.comment];
+          return { ...c, replies: nextReplies, replyCount: nextReplies.length };
+        });
+      }
+    }
     setReplyText('');
     setReplyingToId(null);
-    try {
-      const res = await tasksApi.addComment(parentTask.id, text, currentUser.id, parentTask.listId, mentionIds || [], parentCommentId, subtask.id);
-      if (res?.comment) {
-        setRichComments(withReplies(replies => replies.some(r => r.id === res.comment.id)
-          ? replies.filter(r => r.id !== tempId)
-          : replies.map(r => r.id === tempId ? { ...r, ...res.comment } : r)));
-      }
-    } catch (err: any) {
-      console.warn('Reply failed:', err);
-      setRichComments(withReplies(replies => replies.filter(r => r.id !== tempId)));
-      toast.error(err?.message || 'Failed to post reply');
-    }
   };
 
   const handleTitleBlur = () => {
@@ -9232,6 +9279,7 @@ export function SubtaskDetailView({
                       {/* Reply input */}
                       {!isReply && replyingToId === c.id && (
                         <CommentReplyInput
+                          commentId={c.id}
                           workspaceUsers={workspaceUsers}
                           currentUser={currentUser}
                           onSubmit={async (content, mentionIds) => {
@@ -10281,7 +10329,6 @@ export function TaskDetailModal(props: Props) {
           '',
           url.pathname + url.search
         );
-        hasPushedHistoryRef.current = true;
       }
     }
 

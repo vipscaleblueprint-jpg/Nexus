@@ -116,10 +116,14 @@ export const TaskMapContainer: React.FC = () => {
   // Task Detail Modal
   const [selectedTaskModal, setSelectedTaskModal] = useState<any | null>(null);
   const [selectedSubtaskTargetId, setSelectedSubtaskTargetId] = useState<string | undefined>(undefined);
+  const closedTaskIdRef = useRef<string | null>(null);
+  const lastUrlTaskIdRef = useRef<string | null>(null);
 
   const handleOpenTaskDetail = useCallback(
     (item: any) => {
       if (item?.isSubtask && item?.parentTaskId) {
+        closedTaskIdRef.current = null;
+        lastUrlTaskIdRef.current = item.parentTaskId;
         const parentTask =
           [...tasks, ...availablePool].find((t) => !t.isSubtask && t.id === item.parentTaskId) || {
             id: item.parentTaskId,
@@ -133,11 +137,108 @@ export const TaskMapContainer: React.FC = () => {
         setSelectedTaskModal(parentTask);
         return;
       }
+      closedTaskIdRef.current = null;
+      lastUrlTaskIdRef.current = item?.id ?? null;
       setSelectedSubtaskTargetId(undefined);
       setSelectedTaskModal(item);
     },
     [tasks, availablePool]
   );
+
+  // Restore opened task modal from ?task=<id>&subtask=<id> on initial load / reload and popstate
+  useEffect(() => {
+    const syncTaskFromUrl = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlTaskParam = params.get('task');
+      const urlSubtaskParam = params.get('subtask') || undefined;
+
+      if (!urlTaskParam) {
+        closedTaskIdRef.current = null;
+        lastUrlTaskIdRef.current = null;
+        setSelectedTaskModal((prev: any) => (prev ? null : prev));
+        setSelectedSubtaskTargetId(undefined);
+        return;
+      }
+
+      if (urlTaskParam === closedTaskIdRef.current) {
+        return;
+      }
+
+      const rawTaskId = urlTaskParam.startsWith('subtask:')
+        ? urlTaskParam.slice('subtask:'.length)
+        : urlTaskParam;
+
+      if (
+        lastUrlTaskIdRef.current === rawTaskId &&
+        selectedTaskModal &&
+        (selectedTaskModal.id === rawTaskId || selectedTaskModal.id === urlTaskParam)
+      ) {
+        return;
+      }
+
+      const localMatch = [...tasks, ...availablePool].find(
+        (t) =>
+          (!t.isSubtask && t.id === rawTaskId) ||
+          (t.isSubtask && (t.id === urlTaskParam || t.subtaskId === rawTaskId))
+      );
+
+      if (localMatch) {
+        if (localMatch.isSubtask && localMatch.parentTaskId) {
+          const parentMatch = [...tasks, ...availablePool].find(
+            (t) => !t.isSubtask && t.id === localMatch.parentTaskId
+          );
+          lastUrlTaskIdRef.current = localMatch.parentTaskId;
+          setSelectedSubtaskTargetId(urlSubtaskParam || localMatch.subtaskId);
+          setSelectedTaskModal(
+            parentMatch || {
+              id: localMatch.parentTaskId,
+              title: localMatch.parentTaskTitle || localMatch.title,
+              listId: localMatch.listId,
+              list: localMatch.list,
+              status: 'IN PROGRESS',
+              priority: localMatch.priority || 'NORMAL',
+            }
+          );
+        } else {
+          lastUrlTaskIdRef.current = localMatch.id;
+          setSelectedSubtaskTargetId(urlSubtaskParam);
+          setSelectedTaskModal(localMatch);
+        }
+        return;
+      }
+
+      lastUrlTaskIdRef.current = rawTaskId;
+      try {
+        const res = await tasksApi.getTask(rawTaskId);
+        if (res?.task) {
+          if (closedTaskIdRef.current === urlTaskParam || closedTaskIdRef.current === res.task.id) {
+            return;
+          }
+          lastUrlTaskIdRef.current = res.task.id;
+          setSelectedSubtaskTargetId(urlSubtaskParam || res.subtask?.id || undefined);
+          setSelectedTaskModal(res.task);
+        }
+      } catch {
+        lastUrlTaskIdRef.current = null;
+        toast.error('Task not found');
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('task');
+        cleanUrl.searchParams.delete('subtask');
+        window.history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}`);
+      }
+    };
+
+    syncTaskFromUrl();
+
+    const handlePopState = () => {
+      closedTaskIdRef.current = null;
+      syncTaskFromUrl();
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+    // Intentionally re-check when tasks/availablePool populate only if selectedTaskModal is not yet open
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks.length, availablePool.length]);
   const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
     isOpen: boolean;
     task: TaskMapItem | null;
@@ -1252,7 +1353,7 @@ export const TaskMapContainer: React.FC = () => {
               activeUpworkSessions={activeUpworkSessions}
               allUsers={allUsers}
               onStatusChange={handleStatusChange}
-              onOpenDetail={setSelectedTaskModal}
+              onOpenDetail={handleOpenTaskDetail}
               onRefresh={() => loadData(true)}
             />
           )}
@@ -1264,8 +1365,14 @@ export const TaskMapContainer: React.FC = () => {
         <TaskDetailModal
           isOpen={!!selectedTaskModal}
           onClose={() => {
+            closedTaskIdRef.current = selectedTaskModal?.id ?? null;
+            lastUrlTaskIdRef.current = null;
             setSelectedTaskModal(null);
             setSelectedSubtaskTargetId(undefined);
+            const url = new URL(window.location.href);
+            url.searchParams.delete('task');
+            url.searchParams.delete('subtask');
+            window.history.replaceState({}, '', `${url.pathname}${url.search}`);
           }}
           task={selectedTaskModal}
           targetSubtaskId={selectedSubtaskTargetId}
@@ -1284,7 +1391,7 @@ export const TaskMapContainer: React.FC = () => {
         openSubtasks={blockedAuditAlert.openSubtasks}
         onReviewAudits={() => {
           if (blockedAuditAlert.task) {
-            setSelectedTaskModal(blockedAuditAlert.task);
+            handleOpenTaskDetail(blockedAuditAlert.task);
             if (blockedAuditAlert.uncheckedAudits && blockedAuditAlert.uncheckedAudits.length > 0) {
               const pendingHighlight = {
                 taskId: blockedAuditAlert.task.id,

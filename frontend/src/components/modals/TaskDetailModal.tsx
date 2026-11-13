@@ -755,7 +755,7 @@ export function TaskDetailModalContent({
         const url = new URL(window.location.href);
         if (url.searchParams.has('subtask')) {
           url.searchParams.delete('subtask');
-          window.history.replaceState(null, '', url.pathname + url.search);
+          window.history.replaceState(window.history.state, '', url.pathname + url.search);
         }
       }
     } else {
@@ -812,23 +812,23 @@ export function TaskDetailModalContent({
 
   // Keep URL query param in sync with activeSubtask
   useEffect(() => {
-    if (typeof window === 'undefined' || !task) return;
+    if (typeof window === 'undefined' || !task?.id) return;
     const url = new URL(window.location.href);
-    if (activeSubtask) {
+    if (activeSubtask?.id) {
       hadActiveSubtaskRef.current = true;
       if (url.searchParams.get('subtask') !== activeSubtask.id) {
         url.searchParams.set('subtask', activeSubtask.id);
-        window.history.replaceState(null, '', url.pathname + url.search);
+        window.history.replaceState(window.history.state, '', url.pathname + url.search);
       }
     } else if (hadActiveSubtaskRef.current) {
       // ONLY clear ?subtask= when user explicitly closes an active subtask!
       initialSubtaskIdRef.current = null;
       if (url.searchParams.has('subtask')) {
         url.searchParams.delete('subtask');
-        window.history.replaceState(null, '', url.pathname + url.search);
+        window.history.replaceState(window.history.state, '', url.pathname + url.search);
       }
     }
-  }, [activeSubtask, task]);
+  }, [activeSubtask?.id, task?.id]);
 
   const setModalTitle = useAppStore(state => state.setModalTitle);
   useEffect(() => {
@@ -10040,6 +10040,22 @@ export function SubtaskDetailView({
   );
 }
 
+let pendingModalHistoryBack = false;
+let pendingModalHistoryBackTimer: ReturnType<typeof setTimeout> | null = null;
+
+function markPendingModalHistoryBack() {
+  pendingModalHistoryBack = true;
+  if (pendingModalHistoryBackTimer) clearTimeout(pendingModalHistoryBackTimer);
+  pendingModalHistoryBackTimer = setTimeout(() => {
+    pendingModalHistoryBack = false;
+    pendingModalHistoryBackTimer = null;
+  }, 200);
+}
+
+export function isModalHistoryBackPending(): boolean {
+  return pendingModalHistoryBack;
+}
+
 export function TaskDetailModal(props: Props) {
   const [mounted, setMounted] = useState(false);
   const [fullTask, setFullTask] = useState<Task | null>(props.task ?? null);
@@ -10049,7 +10065,10 @@ export function TaskDetailModal(props: Props) {
   // overwrite them, or the edit appears to revert.
   const locallyEditedKeysRef = useRef<Set<string>>(new Set());
   const hasPushedHistoryRef = useRef(false);
+  const syncedHistoryTaskIdRef = useRef<string | null>(null);
   const isHandlingPopStateRef = useRef(false);
+  const onCloseRef = useRef(props.onClose);
+  onCloseRef.current = props.onClose;
 
   useEffect(() => {
     setMounted(true);
@@ -10294,6 +10313,7 @@ export function TaskDetailModal(props: Props) {
         else url.searchParams.delete('subtask');
         window.history.pushState({ nexusTaskModal: taskId }, '', url.pathname + url.search);
         hasPushedHistoryRef.current = true;
+        syncedHistoryTaskIdRef.current = taskId;
       }
     };
     window.addEventListener('open-task-detail', handleOpenTaskDetail);
@@ -10304,6 +10324,7 @@ export function TaskDetailModal(props: Props) {
   useEffect(() => {
     if (!props.isOpen || !fullTask?.id || typeof window === 'undefined') {
       hasPushedHistoryRef.current = false;
+      syncedHistoryTaskIdRef.current = null;
       return;
     }
 
@@ -10312,31 +10333,59 @@ export function TaskDetailModal(props: Props) {
       return;
     }
 
-    if (!hasPushedHistoryRef.current) {
+    const currentTaskId = fullTask.id;
+
+    if (syncedHistoryTaskIdRef.current !== currentTaskId) {
+      syncedHistoryTaskIdRef.current = currentTaskId;
       const url = new URL(window.location.href);
       const existingTaskParam = url.searchParams.get('task');
-      if (existingTaskParam !== fullTask.id) {
-        url.searchParams.set('task', fullTask.id);
+      if (existingTaskParam !== currentTaskId) {
+        url.searchParams.set('task', currentTaskId);
         window.history.pushState(
-          { nexusTaskModal: fullTask.id },
+          { nexusTaskModal: currentTaskId },
           '',
           url.pathname + url.search
         );
         hasPushedHistoryRef.current = true;
       } else {
-        window.history.replaceState(
-          { nexusTaskModal: fullTask.id },
-          '',
-          url.pathname + url.search
-        );
+        hasPushedHistoryRef.current = false;
+        if (window.history.state?.nexusTaskModal !== currentTaskId) {
+          window.history.replaceState(
+            { ...(window.history.state || {}), nexusTaskModal: currentTaskId },
+            '',
+            url.pathname + url.search
+          );
+        }
       }
     }
 
     const handlePopState = () => {
+      // Absorb stale popstate from an asynchronous history.back() triggered by closing
+      // the previous modal moments before the user rapidly opened this new task.
+      if (pendingModalHistoryBack) {
+        pendingModalHistoryBack = false;
+        if (pendingModalHistoryBackTimer) {
+          clearTimeout(pendingModalHistoryBackTimer);
+          pendingModalHistoryBackTimer = null;
+        }
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('task') !== currentTaskId) {
+          url.searchParams.set('task', currentTaskId);
+          window.history.pushState(
+            { nexusTaskModal: currentTaskId },
+            '',
+            url.pathname + url.search
+          );
+          hasPushedHistoryRef.current = true;
+        }
+        return;
+      }
+
       if (hasPushedHistoryRef.current) {
         hasPushedHistoryRef.current = false;
+        syncedHistoryTaskIdRef.current = null;
         isHandlingPopStateRef.current = true;
-        props.onClose();
+        onCloseRef.current();
         setTimeout(() => {
           isHandlingPopStateRef.current = false;
         }, 120);
@@ -10347,17 +10396,19 @@ export function TaskDetailModal(props: Props) {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [props.isOpen, fullTask?.id, props.onClose]);
+  }, [props.isOpen, fullTask?.id]);
 
   const handleSafeClose = useCallback(() => {
+    syncedHistoryTaskIdRef.current = null;
     if (hasPushedHistoryRef.current && !isHandlingPopStateRef.current) {
       hasPushedHistoryRef.current = false;
       if (typeof window !== 'undefined') {
+        markPendingModalHistoryBack();
         window.history.back();
       }
     }
-    props.onClose();
-  }, [props.onClose]);
+    onCloseRef.current();
+  }, []);
 
   useEffect(() => {
     if (props.mode === 'modal' && props.isOpen) {

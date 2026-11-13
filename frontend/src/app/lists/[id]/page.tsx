@@ -28,7 +28,7 @@ import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { arrayMove } from '@dnd-kit/sortable';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
-import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
 import { STATUS_COLORS, isClosedStatus } from '@/lib/taskTokens';
 import { motion } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
@@ -50,7 +50,7 @@ function getListCache(id: string) {
   try { const r = localStorage.getItem(`nexus_list_cache_${id}`); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 function setListCache(id: string, data: any) {
-  try { localStorage.setItem(`nexus_list_cache_${id}`, JSON.stringify(data)); } catch {}
+  try { localStorage.setItem(`nexus_list_cache_${id}`, JSON.stringify(data)); } catch { }
 }
 
 /**
@@ -316,24 +316,57 @@ export default function BoardPage() {
   }, [id]);
 
   const lastUrlTaskId = useRef<string | null>(null);
+  const closedTaskIdRef = useRef<string | null>(null);
+
+  const handleOpenTaskModal = useCallback((task: any) => {
+    closedTaskIdRef.current = null;
+    if (task?.id) {
+      lastUrlTaskId.current = task.id;
+    }
+    setSelectedTask(task);
+  }, []);
+
+  const handleCloseTaskModal = useCallback(() => {
+    setSelectedTask((prev: any) => {
+      closedTaskIdRef.current = prev?.id || lastUrlTaskId.current;
+      return null;
+    });
+    lastUrlTaskId.current = null;
+    if (typeof window !== 'undefined' && !isModalHistoryBackPending()) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('task') || url.searchParams.has('subtask')) {
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(window.history.state, '', url.pathname + url.search);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!loading && list?.tasks) {
       const taskIdParam = searchParams.get('task');
       const actualTaskId = taskIdParam ? taskIdParam.split('/')[0] : null;
 
+      if (!actualTaskId) {
+        closedTaskIdRef.current = null;
+        lastUrlTaskId.current = null;
+        return;
+      }
+
+      if (actualTaskId === closedTaskIdRef.current) {
+        return;
+      }
+
       if (actualTaskId !== lastUrlTaskId.current) {
         lastUrlTaskId.current = actualTaskId;
-        if (actualTaskId) {
-          let taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
-          if (!taskToOpen) {
-            taskToOpen = list.tasks.find((t: any) => (t.subtasks || []).some((st: any) => st.id === actualTaskId));
-          }
-          if (taskToOpen) {
-            setSelectedTask(taskToOpen);
-          }
+        let taskToOpen = list.tasks.find((t: any) => t.id === actualTaskId);
+        if (!taskToOpen) {
+          taskToOpen = list.tasks.find((t: any) => (t.subtasks || []).some((st: any) => st.id === actualTaskId));
         }
-      } else if (actualTaskId) {
+        if (taskToOpen) {
+          setSelectedTask(taskToOpen);
+        }
+      } else {
         // If task in list.tasks has an updated status, keep selectedTask in sync
         let matching = list.tasks.find((t: any) => t.id === actualTaskId);
         if (!matching) {
@@ -359,10 +392,14 @@ export default function BoardPage() {
       const url = new URL(window.location.href);
       if (selectedTask) {
         hadSelectedTask.current = true;
-      } else if (hadSelectedTask.current && url.searchParams.has('task')) {
+        closedTaskIdRef.current = null;
+        if (selectedTask.id) {
+          lastUrlTaskId.current = selectedTask.id;
+        }
+      } else if (hadSelectedTask.current && !isModalHistoryBackPending() && url.searchParams.has('task')) {
         url.searchParams.delete('task');
         url.searchParams.delete('subtask');
-        window.history.replaceState(null, '', url.pathname + url.search);
+        window.history.replaceState(window.history.state, '', url.pathname + url.search);
       }
     }
   }, [selectedTask]);
@@ -410,7 +447,7 @@ export default function BoardPage() {
         if (!prev || !prev.tasks) {
           return prev;
         }
-        
+
         let found = false;
         const newTasks = prev.tasks.map((t: any) => {
           if (t.id === updatedTask.id) {
@@ -462,7 +499,7 @@ export default function BoardPage() {
         if (!prev || !prev.tasks) return prev;
         return {
           ...prev,
-          tasks: prev.tasks.map((t: any) => 
+          tasks: prev.tasks.map((t: any) =>
             t.id === data.taskId ? { ...t, status: data.status } : t
           ),
         };
@@ -518,7 +555,7 @@ export default function BoardPage() {
                 if (st.id === payload.subtaskId) {
                   let found = false;
                   const updatedChecklists = (st.checklists || []).map((c: any) => {
-                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                       found = true;
                       const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                       if (hasItem) {
@@ -535,7 +572,7 @@ export default function BoardPage() {
                     return c;
                   });
                   if (!found) {
-                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
                     const newChecklist = {
                       id: payload.checklistId,
                       taskId: t.id,
@@ -557,7 +594,7 @@ export default function BoardPage() {
           } else if (t.id === payload.taskId) {
             let found = false;
             const updatedChecklists = (t.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                 found = true;
                 const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                 if (hasItem) {
@@ -574,7 +611,7 @@ export default function BoardPage() {
               return c;
             });
             if (!found) {
-              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
               const newChecklist = {
                 id: payload.checklistId,
                 taskId: t.id,
@@ -616,7 +653,7 @@ export default function BoardPage() {
                 if (st.id === payload.subtaskId) {
                   let found = false;
                   const updatedChecklists = (st.checklists || []).map((c: any) => {
-                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                       found = true;
                       if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                       const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -630,7 +667,7 @@ export default function BoardPage() {
                     return c;
                   });
                   if (!found) {
-                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
                     const newChecklist = {
                       id: payload.checklistId,
                       taskId: t.id,
@@ -652,7 +689,7 @@ export default function BoardPage() {
           } else if (t.id === payload.taskId) {
             let found = false;
             const updatedChecklists = (t.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                 found = true;
                 if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                 const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -666,7 +703,7 @@ export default function BoardPage() {
               return c;
             });
             if (!found) {
-              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
               const newChecklist = {
                 id: payload.checklistId,
                 taskId: t.id,
@@ -782,7 +819,7 @@ export default function BoardPage() {
         if (!prev || !prev.statuses) return prev;
         return {
           ...prev,
-          statuses: prev.statuses.map((s: any) => 
+          statuses: prev.statuses.map((s: any) =>
             s.groupName === group ? { ...s, groupName: null } : s
           )
         };
@@ -795,7 +832,7 @@ export default function BoardPage() {
         if (!prev || !prev.statuses) return prev;
         return {
           ...prev,
-          statuses: prev.statuses.map((s: any) => 
+          statuses: prev.statuses.map((s: any) =>
             s.groupName === data.oldName ? { ...s, groupName: data.newName } : s
           )
         };
@@ -870,7 +907,7 @@ export default function BoardPage() {
     ...statusOrder.filter((s) => tasksByStatus[s]),
     ...Object.keys(tasksByStatus).filter((s) => !statusOrder.includes(s)),
   ];
-  
+
 
 
   const breadcrumb = [
@@ -958,7 +995,7 @@ export default function BoardPage() {
     const tempId = `temp-${Date.now()}`;
     const targetListId = task.listId || id;
     const isCurrentBoard = targetListId === id;
-    
+
     const newTask = { ...task, id: tempId, listId: targetListId, creatorId: currentUser?.id, createdAt: new Date().toISOString() };
 
     if (isCurrentBoard) {
@@ -970,7 +1007,7 @@ export default function BoardPage() {
 
     try {
       const res = await tasksApi.createTask({ ...task, listId: targetListId, creatorId: currentUser?.id });
-      
+
       if (isCurrentBoard) {
         // Replace temp task with real task
         setList((prev: any) => ({
@@ -997,7 +1034,7 @@ export default function BoardPage() {
       {selectedTask && (
         <TaskDetailModal
           isOpen={true}
-          onClose={() => setSelectedTask(null)}
+          onClose={handleCloseTaskModal}
           task={selectedTask}
           mode="full"
           socket={socket}
@@ -1038,7 +1075,7 @@ export default function BoardPage() {
           }}
         />
       )}
-      
+
       {loading ? (
         <ListSkeleton />
       ) : error ? (
@@ -1162,8 +1199,8 @@ export default function BoardPage() {
             <button
               onClick={() => setActiveTab('board')}
               className={`flex items-center gap-2 pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'board'
-                  ? 'border-indigo-500 text-indigo-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                ? 'border-indigo-500 text-indigo-400'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
                 }`}
             >
               <KanbanSquare className="w-4 h-4" />
@@ -1225,7 +1262,7 @@ export default function BoardPage() {
                   setTaskModalStatus(status);
                   setIsTaskModalOpen(true);
                 }}
-                onTaskClick={setSelectedTask}
+                onTaskClick={handleOpenTaskModal}
                 customGroups={customGroups}
                 listStatuses={list?.statuses || []}
                 onStatusChange={async (statusName, data) => {
@@ -1317,12 +1354,12 @@ export default function BoardPage() {
                     const newGroups = customGroups.filter(g => g !== groupToDelete);
                     setCustomGroups(newGroups);
                     socket?.emit('delete_group', { listId: id, group: groupToDelete });
-                    
+
                     setList((prev: any) => {
                       if (!prev || !prev.statuses) return prev;
                       return {
                         ...prev,
-                        statuses: prev.statuses.map((s: any) => 
+                        statuses: prev.statuses.map((s: any) =>
                           s.groupName === groupToDelete ? { ...s, groupName: null } : s
                         )
                       };
@@ -1350,12 +1387,12 @@ export default function BoardPage() {
                     const newGroups = customGroups.map(g => g === oldName ? newName : g);
                     setCustomGroups(newGroups);
                     socket?.emit('rename_group', { listId: id, oldName, newName });
-                    
+
                     setList((prev: any) => {
                       if (!prev || !prev.statuses) return prev;
                       return {
                         ...prev,
-                        statuses: prev.statuses.map((s: any) => 
+                        statuses: prev.statuses.map((s: any) =>
                           s.groupName === oldName ? { ...s, groupName: newName } : s
                         )
                       };
@@ -1404,7 +1441,7 @@ export default function BoardPage() {
                   // KanbanBoard fully owns the drag logic and passes the final ordered array here.
                   setList((prev: any) => {
                     if (!prev?.statuses) return prev;
-                    
+
                     const orderedStatusIds = newStatuses.map((s: any) => s.id).filter(Boolean);
 
                     // Fire API fire-and-forget — do NOT await
@@ -1460,7 +1497,7 @@ export default function BoardPage() {
                     {tasksByStatus[status].map((task: any) => (
                       <div
                         key={task.id}
-                        onClick={() => setSelectedTask(task)}
+                        onClick={() => handleOpenTaskModal(task)}
                         className="grid grid-cols-[1fr_140px_120px_100px] px-4 py-2.5 border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30 transition-colors group cursor-pointer"
                       >
                         {/* Name */}

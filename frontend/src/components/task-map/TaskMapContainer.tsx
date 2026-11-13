@@ -20,7 +20,7 @@ import { TaskMapBoardView } from './TaskMapBoardView';
 import { TaskMapAuditingView } from './TaskMapAuditingView';
 import { TaskMapCrmView } from './TaskMapCrmView';
 import { TaskMapUpworkView } from './TaskMapUpworkView';
-import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -1389,10 +1389,12 @@ export const TaskMapContainer: React.FC = () => {
             setRestoringUrlTask(false);
             setSelectedTaskModal(null);
             setSelectedSubtaskTargetId(undefined);
-            const url = new URL(window.location.href);
-            url.searchParams.delete('task');
-            url.searchParams.delete('subtask');
-            window.history.replaceState({}, '', `${url.pathname}${url.search}`);
+            if (!isModalHistoryBackPending()) {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('task');
+              url.searchParams.delete('subtask');
+              window.history.replaceState(window.history.state || {}, '', `${url.pathname}${url.search}`);
+            }
           }}
           task={selectedTaskModal}
           targetSubtaskId={selectedSubtaskTargetId}

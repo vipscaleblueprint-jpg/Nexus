@@ -29,7 +29,7 @@ import {
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns';
 import { draftsApi, TaskDraft } from '@/api/drafts';
 import { openTaskInNewTab } from '@/lib/taskNavigation';
-import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
 import { toast } from '@/lib/toast';
@@ -2035,13 +2035,13 @@ function ActivityFeedContent() {
             setSelectedTask(null);
             setTargetCommentInfo(null);
             setOpenSubtaskId(null);
-            if (typeof window !== 'undefined') {
+            if (typeof window !== 'undefined' && !isModalHistoryBackPending()) {
               const url = new URL(window.location.href);
               url.searchParams.delete('task');
               url.searchParams.delete('subtask');
               url.searchParams.delete('comment');
               url.searchParams.delete('commentText');
-              window.history.replaceState(null, '', url.pathname + (url.search || ''));
+              window.history.replaceState(window.history.state, '', url.pathname + (url.search || ''));
             }
           }}
           task={selectedTask}

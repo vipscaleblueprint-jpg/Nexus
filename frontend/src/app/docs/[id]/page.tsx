@@ -10,7 +10,7 @@ import { tasksApi } from '@/api/tasks';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { Task } from '@/lib/types';
-import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
 import { parseNexusTaskLink } from '@/lib/links';
 import { openTaskInNewTab } from '@/lib/taskNavigation';
 import { getTaskSnapshot } from '@/lib/nexusLinkPaste';
@@ -3794,11 +3794,11 @@ export default function DocPage({ docId }: { docId?: string }) {
         onClose={() => {
           setIsTaskModalOpen(false);
           setSelectedTaskForModal(null);
-          if (typeof window !== 'undefined') {
+          if (typeof window !== 'undefined' && !isModalHistoryBackPending()) {
             const url = new URL(window.location.href);
             url.searchParams.delete('task');
             url.searchParams.delete('subtask');
-            window.history.replaceState(null, '', url.toString());
+            window.history.replaceState(window.history.state, '', url.toString());
           }
         }}
         task={selectedTaskForModal || null}

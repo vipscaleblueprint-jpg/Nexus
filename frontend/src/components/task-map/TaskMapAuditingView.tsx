@@ -7,8 +7,14 @@ import {
   taskMapApi,
   hasUiUxOrDesignAudit,
   canPerformAudit,
+  getEffectiveTaskMapHandlerId,
+  isTaskHandedOver,
+  countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
   toCanonicalTaskStatus,
+  matchesMarketingNameSearch,
+  subscribeTaskMapSaving,
+  isTaskSavingToDb,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -24,6 +30,7 @@ import {
   User,
   Infinity as InfinityIcon,
   RotateCcw,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isAuditorUser, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
@@ -67,6 +74,8 @@ interface Props {
   onDataRefresh: () => void;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
   auditorTypeFilter?: string;
+  currentShift?: string;
+  selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count?: number }>;
   showAdminTasks?: boolean;
   onToggleAdminTasks?: () => void;
@@ -85,18 +94,35 @@ const DraggableTaskCard: React.FC<{
     disabled,
   });
 
+  const [isSaving, setIsSaving] = useState<boolean>(() => isTaskSavingToDb(task.id));
+  useEffect(() => {
+    setIsSaving(isTaskSavingToDb(task.id));
+    return subscribeTaskMapSaving(() => {
+      setIsSaving(isTaskSavingToDb(task.id));
+    });
+  }, [task.id]);
+
   return (
     <div
       ref={setNodeRef}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`touch-none transition-all duration-200 ease-out ${isDragging
+      className={`relative touch-none transition-all duration-200 ease-out ${isDragging
           ? 'opacity-25 scale-[0.98] border border-dashed border-amber-600 rounded-xl bg-zinc-900/40 pointer-events-none'
           : disabled
             ? 'cursor-default'
             : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
         }`}
     >
+      {isSaving && (
+        <div
+          className="absolute top-2 right-2 z-20 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[9px] font-bold shadow-md pointer-events-none backdrop-blur-xs"
+          title="Saving changes to database..."
+        >
+          <Loader2 className="size-2.5 animate-spin text-amber-400" />
+          <span>Saving...</span>
+        </div>
+      )}
       {children}
     </div>
   );
@@ -266,6 +292,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   onDataRefresh,
   onTaskUpdate,
   auditorTypeFilter = 'ALL',
+  currentShift = 'ALL',
+  selectedCustomMAs = [],
   clients = [],
   showAdminTasks = false,
   onToggleAdminTasks,
@@ -297,9 +325,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   const cleanSearch = (search || '').trim().toLowerCase();
   const isAuditorSearchMatch = (u: any) => {
     if (!cleanSearch || !u) return false;
-    const name = (u.name || '').trim().toLowerCase();
-    const email = (u.email || '').trim().toLowerCase();
-    return name.includes(cleanSearch) || email.includes(cleanSearch);
+    return matchesMarketingNameSearch(u, cleanSearch);
   };
 
   useEffect(() => {
@@ -398,25 +424,47 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     useSensor(KeyboardSensor)
   );
 
-  // 1. Discover all users with an Audit/Auditor role
+  // 1. Discover users with an Audit/Auditor role, respecting selected shift or custom member filter
   const auditorUsers = React.useMemo(() => {
     const map = new Map<string, any>();
-    const candidates = [
-      ...(currentUser ? [currentUser] : []),
-      ...(shiftUsers || []),
-      ...(allUsers || []),
-    ];
+    const isAllShifts =
+      !currentShift ||
+      currentShift === 'ALL' ||
+      currentShift
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .includes('ALL');
+    const isCustomShift = currentShift === 'CUSTOM';
+
+    let candidates: any[];
+    if (isCustomShift && selectedCustomMAs.length > 0) {
+      const pool = [...(allUsers || []), ...(shiftUsers || [])];
+      candidates = pool.filter((u) => u && selectedCustomMAs.includes(u.id));
+    } else if (!isAllShifts && !isCustomShift) {
+      candidates = [...(shiftUsers || [])];
+    } else {
+      candidates = [
+        ...(currentUser ? [currentUser] : []),
+        ...(shiftUsers || []),
+        ...(allUsers || []),
+      ];
+    }
+
     for (const u of candidates) {
       if (!u || !u.id) continue;
       if (map.has(u.id)) continue;
-      if (isAuditorUser(u) || (currentUser?.id === u.id)) {
+      if (
+        isAuditorUser(u) ||
+        (isCustomShift && selectedCustomMAs.includes(u.id)) ||
+        (isAllShifts && currentUser?.id === u.id)
+      ) {
         map.set(u.id, u);
       }
     }
     const list = Array.from(map.values());
     // Sort auditors alphabetically by first name
     return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [allUsers, shiftUsers, currentUser]);
+  }, [allUsers, shiftUsers, currentUser, currentShift, selectedCustomMAs]);
 
   // Filter auditors by selected auditor type (based on real team roles from DB)
   const filteredAuditorUsers = React.useMemo(() => {
@@ -500,36 +548,39 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     );
   };
 
-  // Check if a task is assigned to a specific auditor
+  // Check if a task is assigned to a specific auditor (latest assignee only; never duplicate across assignees[])
   const isTaskAssignedToAuditor = (task: TaskMapItem, auditor: any) => {
-    // 1. Check taskMap.statuses for tag matching (e.g. initials CHE, PAU, HAN or auditor name)
+    if (isTaskHandedOver(task)) return false;
+
+    const effectiveHandlerId = getEffectiveTaskMapHandlerId(task);
+    if (effectiveHandlerId) {
+      const hasPmTag = (task.taskMap?.statuses || []).some((s) => s.startsWith('PM_ASSIGNMENT:'));
+      return effectiveHandlerId === auditor.id && (isReviewStatus(task) || hasPmTag);
+    }
+
+    // Legacy fallback: check taskMap.statuses for auditor name/initials tag when no assigneeId/PM_ASSIGNMENT is set
     const mapStatuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
     const audNameUpper = (auditor.name || '').toUpperCase().trim();
     const firstName = audNameUpper.split(' ')[0];
     const shortInitials = audNameUpper.substring(0, 3);
 
-    const hasAuditorTag =
+    return Boolean(
       mapStatuses.includes(audNameUpper) ||
       (firstName && mapStatuses.includes(firstName)) ||
       (shortInitials && mapStatuses.includes(shortInitials)) ||
-      mapStatuses.includes(auditor.id.toUpperCase());
-
-    if (hasAuditorTag) return true;
-
-    // 2. Direct assignee check: ONLY if the task has a review-related status!
-    const isDirectAssignee =
-      task.assignee?.id === auditor.id ||
-      (task.assignees || []).some((u) => u.id === auditor.id);
-
-    if (isDirectAssignee && isReviewStatus(task)) return true;
-
-    return false;
+      mapStatuses.includes(auditor.id.toUpperCase())
+    );
   };
 
-  // General "To Review" queue: tasks needing review that are not yet assigned to an auditor
+  // General "To Review" queue: tasks needing review that are not yet assigned to an auditor (across shifts)
   const isGeneralToReview = (t: TaskMapItem) => {
-    // If it's already assigned to any discovered auditor, not general queue
-    if (auditorUsers.some((a) => isTaskAssignedToAuditor(t, a))) return false;
+    // If it's already assigned to any auditor (active shift or another shift), not general queue
+    if (
+      auditorUsers.some((a) => isTaskAssignedToAuditor(t, a)) ||
+      (allUsers || []).some((a) => isAuditorUser(a) && isTaskAssignedToAuditor(t, a))
+    ) {
+      return false;
+    }
 
     const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
@@ -645,10 +696,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     { id: 'opt-audit-uiux', label: 'UI UX Audit', color: '#06b6d4', textColor: '#ffffff', order: 2 },
     { id: 'opt-audit-instruction', label: 'Instruction Audit', color: '#10b981', textColor: '#ffffff', order: 3 },
     { id: 'opt-audit-funnel', label: 'Funnel Audit', color: '#f59e0b', textColor: '#ffffff', order: 4 },
-    { id: 'opt-audit-waiting', label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#ffffff', order: 5 },
-    { id: 'opt-audit-tosend', label: 'To Send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 6 },
-    { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 7 },
-    { id: 'opt-audit-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 8 },
+    { id: 'opt-audit-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 5 },
+    { id: 'opt-audit-waiting', label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#ffffff', order: 6 },
+    { id: 'opt-audit-tosend', label: 'To Send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 7 },
+    { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 8 },
+    { id: 'opt-audit-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 9 },
   ];
 
   // Assemble full columns array
@@ -709,7 +761,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   const toReviewCol = allColumns.find((c) => c.id === 'col-to-review') || allColumns[0];
   const auditorCols = allColumns.filter((c) => c.isAuditor);
 
-  const sortedAuditorCols = [...auditorCols].sort((colA, colB) => {
+  const sortedAuditorCols = [...auditorCols]
+    .filter((col) => {
+      if (!cleanSearch) return true;
+      return isAuditorSearchMatch(col.auditorUser);
+    })
+    .sort((colA, colB) => {
     const matchA = isAuditorSearchMatch(colA.auditorUser);
     const matchB = isAuditorSearchMatch(colB.auditorUser);
 
@@ -811,7 +868,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                   <span className={`size-2.5 rounded-full ${col.dotColor} mb-2 shrink-0`} />
 
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-4">
-                    {col.tasks.length}
+                    {countNonOnHoldTasks(col.tasks)}
                   </span>
 
                   <span
@@ -872,7 +929,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                       className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
                         }`}
                     >
-                      {col.tasks.length}
+                      {countNonOnHoldTasks(col.tasks)}
                     </span>
                   </div>
 
@@ -1241,6 +1298,20 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                           onDataRefresh();
                                         }
                                         toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
+                                      }
+                                    } else if (norm === 'hand-over' || norm === 'handover' || norm.includes('hand-over')) {
+                                      onStatusChange(task.id, cleanNext);
+                                      if (isSelecting) {
+                                        const preservedReviewStatus = toCanonicalTaskStatus(
+                                          task.status || (hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING')
+                                        );
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { assigneeId: null, status: preservedReviewStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { assigneeId: null } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info('Task handed over — returned to To Review queue');
                                       }
                                     } else {
                                       // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit

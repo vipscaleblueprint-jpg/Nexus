@@ -11,7 +11,11 @@ import {
   AuditorRoleOption,
   isSessionProjectBased,
   getDefaultTaskMapSubStatuses,
+  isTaskMapItemOnHold,
   toCanonicalTaskStatus,
+  applyOptimisticTaskMapAssignment,
+  syncTaskPmReviewsWithAssignee,
+  markTaskSavingToDb,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapSidebar } from './TaskMapSidebar';
@@ -45,6 +49,7 @@ export const TaskMapContainer: React.FC = () => {
   const [availablePool, setAvailablePool] = useState<TaskMapItem[]>([]);
   const [options, setOptions] = useState<TaskMapOption[]>([]);
   const [shifts, setShifts] = useState<TaskMapShift[]>([]);
+  const [activeShift, setActiveShift] = useState<string>('');
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [shiftUsers, setShiftUsers] = useState<any[]>([]);
   const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>(() => useAppStore.getState().activeUpworkSessions || []);
@@ -82,11 +87,28 @@ export const TaskMapContainer: React.FC = () => {
     Map<string, { statuses: string[]; timer?: NodeJS.Timeout | null; timestamp: number }>
   >(new Map());
 
-  // User manual selection tracker: ensures automatic latest-date navigation only applies on initial open
+  // User manual selection tracker: ensures automatic latest-date navigation & initial active-shift sync only apply before manual change
   const userSelectedDateRef = useRef<boolean>(false);
+  const hasManuallySelectedShiftRef = useRef<boolean>(false);
 
-  // Shift, Date, Client & View mode state (defaults to today Manila, or ?date= URL param if supplied)
-  const [currentShift, setCurrentShift] = useState<string>('DAY');
+  // Shift, Date, Client & View mode state (defaults to live Audit Shift from Manila Time unless ?shift= is passed)
+  const [currentShift, setCurrentShift] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const qShift = new URLSearchParams(window.location.search).get('shift');
+        if (qShift) {
+          hasManuallySelectedShiftRef.current = true;
+          return qShift.trim().toUpperCase();
+        }
+      } catch { }
+    }
+    return '';
+  });
+
+  const handleShiftChange = useCallback((nextShift: string) => {
+    hasManuallySelectedShiftRef.current = true;
+    setCurrentShift(nextShift);
+  }, []);
   const [currentDate, setCurrentDate] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -266,24 +288,27 @@ export const TaskMapContainer: React.FC = () => {
     openSubtasks: [],
   });
 
+  // Track pending optimistic drag-and-drop assignments so background refreshes never snap cards back
+  const pendingAssignRef = useRef<Map<string, { task: TaskMapItem; targetUserId: string | null; timestamp: number }>>(new Map());
+
   // Fetch data
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const shiftTokens = (currentShift || 'ALL')
+      const shiftTokens = (currentShift || '')
         .split(',')
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean);
       const isCustomOnly = shiftTokens.length === 1 && shiftTokens[0] === 'CUSTOM';
-      const apiShift = isCustomOnly
+      const apiShift = shiftTokens.length === 0
+        ? undefined
+        : isCustomOnly
         ? 'ALL'
         : shiftTokens.filter((s) => s !== 'CUSTOM').join(',') || 'ALL';
 
       const res = await taskMapApi.getData({
-        shift: apiShift,
+        ...(apiShift ? { shift: apiShift } : {}),
         date: currentDate,
-        search,
-        client: Array.isArray(selectedClients) && selectedClients.length === 1 ? selectedClients[0] : undefined,
       });
 
       if (res.success) {
@@ -302,6 +327,10 @@ export const TaskMapContainer: React.FC = () => {
         setTasks(() => {
           const serverTasks = res.tasks || [];
           return serverTasks.map((st) => {
+            const pendingAssign = pendingAssignRef.current.get(st.id);
+            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
+              return pendingAssign.task;
+            }
             const pending = pendingUpdatesRef.current.get(st.id);
             const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
             return {
@@ -316,7 +345,18 @@ export const TaskMapContainer: React.FC = () => {
 
         setAvailablePool(() => {
           const serverPool = res.availablePool || [];
-          return serverPool.map((st) => {
+          const filteredServerPool = serverPool.filter((st) => {
+            const pendingAssign = pendingAssignRef.current.get(st.id);
+            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500 && pendingAssign.targetUserId !== null) {
+              return false;
+            }
+            return true;
+          });
+          return filteredServerPool.map((st) => {
+            const pendingAssign = pendingAssignRef.current.get(st.id);
+            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
+              return pendingAssign.task;
+            }
             const pending = pendingUpdatesRef.current.get(st.id);
             const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
             return {
@@ -365,7 +405,10 @@ export const TaskMapContainer: React.FC = () => {
         if (res.allClients) {
           setAllDbClients(res.allClients);
         }
-        if (!currentShift && res.activeShift) {
+        if (res.activeShift) {
+          setActiveShift(res.activeShift);
+        }
+        if (!hasManuallySelectedShiftRef.current && res.activeShift && res.activeShift !== currentShift) {
           setCurrentShift(res.activeShift);
         }
         setIsHistoryView(Boolean(res.isHistory));
@@ -376,7 +419,7 @@ export const TaskMapContainer: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [currentShift, currentDate, search, selectedClients]);
+  }, [currentShift, currentDate]);
 
   // Initial load & when shift or date changes
   useEffect(() => {
@@ -483,7 +526,13 @@ export const TaskMapContainer: React.FC = () => {
         return;
       }
 
+      // If an assignment or handover occurred and a full re-bucket may be needed, trigger a silent sync
+      if (data.assigneeId !== undefined || data.handedOver !== undefined) {
+        scheduleReload();
+      }
+
       const nextStatuses = statuses !== undefined ? statuses : taskMap?.statuses;
+      const nextHandedOver = data.handedOver !== undefined ? data.handedOver : taskMap?.handedOver;
 
       setTasks((prev) =>
         prev.map((t) => {
@@ -492,13 +541,14 @@ export const TaskMapContainer: React.FC = () => {
             ...t,
             assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
             assignee: data.assignee !== undefined ? data.assignee : t.assignee,
-            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : []) : t.assignees,
+            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : t.assignees) : t.assignees,
             upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
             upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
             progress: data.progress !== undefined ? data.progress : t.progress,
             taskMap: {
               ...t.taskMap,
               ...(taskMap || {}),
+              ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
               statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
             },
           };
@@ -512,13 +562,14 @@ export const TaskMapContainer: React.FC = () => {
             ...t,
             assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
             assignee: data.assignee !== undefined ? data.assignee : t.assignee,
-            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : []) : t.assignees,
+            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : t.assignees) : t.assignees,
             upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
             upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
             progress: data.progress !== undefined ? data.progress : t.progress,
             taskMap: {
               ...t.taskMap,
               ...(taskMap || {}),
+              ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
               statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
             },
           };
@@ -577,8 +628,14 @@ export const TaskMapContainer: React.FC = () => {
       }
     };
 
+    const handleShiftsUpdated = () => {
+      scheduleReload();
+    };
+
     window.addEventListener('task:updated', handleTaskUpdated);
     window.addEventListener('task_map:updated', handleTaskMapUpdated);
+    window.addEventListener('task_map:shifts_updated', handleShiftsUpdated);
+    window.addEventListener('audit_shifts:updated', handleShiftsUpdated);
     window.addEventListener('task:progress_updated', handleProgressUpdated);
     window.addEventListener('task_activity', handleTaskUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
@@ -588,6 +645,8 @@ export const TaskMapContainer: React.FC = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
       window.removeEventListener('task:updated', handleTaskUpdated);
       window.removeEventListener('task_map:updated', handleTaskMapUpdated);
+      window.removeEventListener('task_map:shifts_updated', handleShiftsUpdated);
+      window.removeEventListener('audit_shifts:updated', handleShiftsUpdated);
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
       window.removeEventListener('task_activity', handleTaskUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
@@ -624,29 +683,41 @@ export const TaskMapContainer: React.FC = () => {
       };
     }
 
+    const upStatuses = finalStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
+    const isHandoverSelected = upStatuses.includes('HANDOVER') || upStatuses.includes('AVAILABLETASK');
+
     // 1. Update Frontend First on both tasks and availablePool immediately
     setTasks((prev) =>
       prev.map((t) =>
         t.id === taskId
           ? {
             ...t,
+            ...(isHandoverSelected ? { assigneeId: null, assignee: null } : {}),
             upworkStartedAt: optimisticStartedAt,
             upworkSession: optimisticSession,
-            taskMap: { ...t.taskMap, statuses: finalStatuses },
+            taskMap: {
+              ...t.taskMap,
+              ...(isHandoverSelected ? { handedOver: true } : {}),
+              statuses: finalStatuses,
+            },
           }
           : t
       )
     );
 
     // Available Tasks pool holds Pending, Revision, Hand-over, and On-hold tasks.
-    // Exclude Waiting (routed to CRM Map) and recurring, daily, weekly, monthly tasks.
+    // Exclude Review/Checking/Waiting/CRM and recurring, daily, weekly, monthly tasks.
     const s = (existingTask?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-    const upStatuses = finalStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
     const isExcluded =
       s === 'WAITING' ||
       s.includes('WAITING') ||
       s === 'CRM' ||
       s.includes('CRM') ||
+      s === 'INREVIEW' ||
+      s === 'TOREVIEW' ||
+      s === 'REVIEW' ||
+      s === 'CHECKING' ||
+      s === 'INCHECKING' ||
       s === 'DAILY' ||
       s.includes('DAILY') ||
       s === 'WEEKLY' ||
@@ -658,7 +729,7 @@ export const TaskMapContainer: React.FC = () => {
       !!(existingTask as any)?.recurringConfig ||
       upStatuses.some(
         (st) =>
-          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
           st.includes('WAITING') ||
           st.includes('CRM') ||
           st.includes('DAILY') ||
@@ -669,19 +740,9 @@ export const TaskMapContainer: React.FC = () => {
 
     const isNowAvailable =
       !isExcluded &&
-      (s === 'PENDING' ||
-        s === 'REVISION' ||
-        s === 'ONHOLD' ||
-        s.includes('HOLD') ||
-        !existingTask?.assigneeId ||
-        upStatuses.includes('AVAILABLETASK') ||
-        upStatuses.some((st) => st.includes('AVAILABLE')) ||
-        upStatuses.includes('HANDOVER') ||
-        upStatuses.includes('HAND-OVER') ||
-        upStatuses.includes('ONHOLD') ||
-        upStatuses.includes('ON-HOLD') ||
-        upStatuses.includes('PENDING') ||
-        upStatuses.includes('REVISION'));
+      (!existingTask?.assigneeId ||
+        isHandoverSelected ||
+        upStatuses.some((st) => st.includes('AVAILABLE')));
 
     setAvailablePool((prev) => {
       const exists = prev.some((t) => t.id === taskId);
@@ -821,7 +882,8 @@ export const TaskMapContainer: React.FC = () => {
       nextStatusUp === 'IN REVIEW' ||
       nextStatusUp === 'CHECKING' ||
       nextStatusUp === 'WAITING' ||
-      (normalizedFields.assigneeId && normalizedFields.assigneeId !== null);
+      nextStatusUp === 'CRM' ||
+      Boolean(normalizedFields.assigneeId && normalizedFields.assigneeId !== null);
 
     const resolvePrevStatus = (t: TaskMapItem) => {
       if (
@@ -833,17 +895,55 @@ export const TaskMapContainer: React.FC = () => {
       return (t as any)._previousStatus;
     };
 
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
+    const nextHandedOverState = isMovingToAvailable
+      ? true
+      : normalizedFields.assigneeId
+      ? false
+      : undefined;
+
+    const matchedTargetUser =
+      normalizedFields.assigneeId
+        ? [...allUsers, ...shiftUsers].find((u) => u && u.id === normalizedFields.assigneeId)
+        : null;
+
+    const buildUpdatedTaskItem = (t: TaskMapItem): TaskMapItem => {
+      const syncedTaskMap =
+        normalizedFields.assigneeId !== undefined
+          ? syncTaskPmReviewsWithAssignee(t, normalizedFields.assigneeId, matchedTargetUser?.name)
+          : t.taskMap;
+
+      return {
+        ...t,
+        ...normalizedFields,
+        ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
+        ...(matchedTargetUser
           ? {
-            ...t,
-            ...normalizedFields,
-            ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
-            _previousStatus: resolvePrevStatus(t),
-          }
-          : t
-      )
+              assigneeId: matchedTargetUser.id,
+              assignee: matchedTargetUser,
+              assignees: [
+                matchedTargetUser,
+                ...(t.assignees || []).filter((u: any) => u && u.id !== matchedTargetUser.id),
+              ],
+            }
+          : {}),
+        taskMap: {
+          ...syncedTaskMap,
+          ...(nextHandedOverState !== undefined ? { handedOver: nextHandedOverState } : {}),
+        },
+        _previousStatus: resolvePrevStatus(t),
+      } as TaskMapItem;
+    };
+
+    if (currentTask) {
+      pendingAssignRef.current.set(taskId, {
+        task: buildUpdatedTaskItem(currentTask),
+        targetUserId: normalizedFields.assigneeId !== undefined ? normalizedFields.assigneeId : currentTask.assigneeId || null,
+        timestamp: Date.now(),
+      });
+    }
+
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? buildUpdatedTaskItem(t) : t))
     );
 
     setAvailablePool((prev) => {
@@ -852,29 +952,10 @@ export const TaskMapContainer: React.FC = () => {
       }
       const exists = prev.some((t) => t.id === taskId);
       if (exists) {
-        return prev.map((t) =>
-          t.id === taskId
-            ? {
-              ...t,
-              ...normalizedFields,
-              ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
-              _previousStatus: resolvePrevStatus(t),
-            }
-            : t
-        );
+        return prev.map((t) => (t.id === taskId ? buildUpdatedTaskItem(t) : t));
       }
       if (isMovingToAvailable && currentTask) {
-        return [
-          ...prev,
-          {
-            ...currentTask,
-            ...normalizedFields,
-            assigneeId: null,
-            assignee: null,
-            assignees: [],
-            _previousStatus: resolvePrevStatus(currentTask),
-          },
-        ];
+        return [...prev, buildUpdatedTaskItem(currentTask)];
       }
       return prev;
     });
@@ -894,6 +975,7 @@ export const TaskMapContainer: React.FC = () => {
       (taskId.startsWith('subtask:') ? taskId.slice('subtask:'.length) : undefined);
     const resolvedParentTaskId = (currentTask as any)?.parentTaskId;
 
+    markTaskSavingToDb(taskId, true);
     try {
       if (isSubtaskTarget && resolvedParentTaskId && resolvedSubtaskId) {
         await tasksApi.updateSubtask(resolvedParentTaskId, resolvedSubtaskId, normalizedFields as any);
@@ -904,9 +986,101 @@ export const TaskMapContainer: React.FC = () => {
         await tasksApi.updateTask(taskId, normalizedFields as any);
         window.dispatchEvent(new CustomEvent('task:updated', { detail: { id: taskId, ...normalizedFields } }));
       }
+      setTimeout(() => {
+        pendingAssignRef.current.delete(taskId);
+      }, 1800);
     } catch (err: any) {
+      pendingAssignRef.current.delete(taskId);
       toast.error(err?.message || 'Failed to update task');
       loadData(true);
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
+  };
+
+  // Handler for optimistic drag-and-drop task assignment on Task Map Board View
+  const handleAssignTask = async (
+    taskId: string,
+    targetUserId: string | null,
+    mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
+  ) => {
+    const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    if (!currentTask) return;
+
+    const targetUser = targetUserId
+      ? [...allUsers, ...shiftUsers].find((u) => u && u.id === targetUserId) || {
+          id: targetUserId,
+          name: 'Team Member',
+        }
+      : null;
+
+    const optimisticTask = applyOptimisticTaskMapAssignment(currentTask, targetUser, mode);
+    pendingAssignRef.current.set(taskId, {
+      task: optimisticTask,
+      targetUserId,
+      timestamp: Date.now(),
+    });
+
+    // Helper: if dropping into IN_PROGRESS slot for targetUserId, demote any previous IN_PROGRESS task of that user to QUEUE
+    const demoteDisplacedInProgress = (item: TaskMapItem): TaskMapItem => {
+      if (mode !== 'IN_PROGRESS' || !targetUserId || item.id === taskId) return item;
+      const itemStatusNorm = (item.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const itemMapStatuses = (item.taskMap?.statuses || []).map((s) =>
+        s.trim().toUpperCase().replace(/[\s_-]+/g, '')
+      );
+      const isCadence =
+        ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(itemStatusNorm) ||
+        Boolean((item as any).recurringConfig);
+      if (isCadence) return item;
+      const isSameUser =
+        item.assigneeId === targetUserId ||
+        item.assignee?.id === targetUserId ||
+        (item.progress?.maName || '').trim().toLowerCase() === (targetUser?.name || '').trim().toLowerCase();
+      const isCurrentlyInProgress =
+        itemStatusNorm === 'INPROGRESS' ||
+        itemMapStatuses.includes('INPROGRESS') ||
+        Boolean(item.progress?.timeIn && !item.progress?.timeOut);
+      if (!isSameUser || !isCurrentlyInProgress) return item;
+
+      return applyOptimisticTaskMapAssignment(item, targetUser, 'QUEUE');
+    };
+
+    // 1. Instant 0ms frontend state update across tasks and availablePool
+    setTasks((prev) => {
+      const exists = prev.some((t) => t.id === taskId);
+      const mapped = prev.map((t) => {
+        if (t.id === taskId) return optimisticTask;
+        return demoteDisplacedInProgress(t);
+      });
+      if (!exists && targetUserId !== null) {
+        return [optimisticTask, ...mapped];
+      }
+      return mapped;
+    });
+
+    setAvailablePool((prev) => {
+      if (targetUserId !== null) {
+        return prev.filter((t) => t.id !== taskId);
+      }
+      const exists = prev.some((t) => t.id === taskId);
+      if (exists) {
+        return prev.map((t) => (t.id === taskId ? optimisticTask : t));
+      }
+      return [optimisticTask, ...prev];
+    });
+
+    // 2. Persist to backend via taskMapApi.assignTask (which automatically tracks saving state in taskMap.ts)
+    try {
+      await taskMapApi.assignTask(taskId, targetUserId, mode);
+      setTimeout(() => {
+        pendingAssignRef.current.delete(taskId);
+      }, 2000);
+      loadData(true);
+    } catch (err: any) {
+      pendingAssignRef.current.delete(taskId);
+      toast.error(err?.message || 'Failed to update task assignment');
+      loadData(true);
+      throw err;
     }
   };
 
@@ -988,7 +1162,8 @@ export const TaskMapContainer: React.FC = () => {
       if (seenTaskIds.has(t.id)) continue;
       seenTaskIds.add(t.id);
 
-      // Skip admin tasks from regular client task count
+      // Do not count On-Hold or Admin tasks in client task number indicators
+      if (isTaskMapItemOnHold(t)) continue;
       if (isTaskUnderAdmin(t)) continue;
 
       const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
@@ -1050,6 +1225,7 @@ export const TaskMapContainer: React.FC = () => {
       if (seenTaskIds.has(t.id)) continue;
       seenTaskIds.add(t.id);
 
+      if (isTaskMapItemOnHold(t)) continue;
       if (isTaskUnderAdmin(t)) {
         totalAdminCount++;
         const listId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
@@ -1129,7 +1305,7 @@ export const TaskMapContainer: React.FC = () => {
     for (const t of allPoolAndTasks) {
       if (seenIds.has(t.id)) continue;
       seenIds.add(t.id);
-      if (t.isClosed) continue;
+      if (t.isClosed || isTaskMapItemOnHold(t)) continue;
       const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
       const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
         x.toUpperCase().replace(/[\s_-]+/g, '')
@@ -1277,7 +1453,8 @@ export const TaskMapContainer: React.FC = () => {
         <TaskMapHeader
           currentDate={currentDate}
           currentShift={currentShift}
-          onShiftChange={setCurrentShift}
+          activeShift={activeShift}
+          onShiftChange={handleShiftChange}
           shifts={shifts}
           search={search}
           onSearchChange={setSearch}
@@ -1302,6 +1479,7 @@ export const TaskMapContainer: React.FC = () => {
           auditorRoles={auditorRoles}
           auditorTypeFilter={auditorTypeFilter}
           onAuditorTypeFilterChange={setAuditorTypeFilter}
+          isFilterLoading={loading}
         />
 
         {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
@@ -1323,6 +1501,7 @@ export const TaskMapContainer: React.FC = () => {
               selectedCustomMAs={selectedCustomMAs}
               clients={clients}
               onTaskUpdate={handleTaskUpdate}
+              onAssignTask={handleAssignTask}
               isHistory={isHistoryView}
               search={search}
             />
@@ -1333,6 +1512,8 @@ export const TaskMapContainer: React.FC = () => {
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
+              currentShift={currentShift}
+              selectedCustomMAs={selectedCustomMAs}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
               onOpenDetail={handleOpenTaskDetail}
@@ -1351,6 +1532,8 @@ export const TaskMapContainer: React.FC = () => {
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
+              currentShift={currentShift}
+              selectedCustomMAs={selectedCustomMAs}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
               onOpenDetail={handleOpenTaskDetail}

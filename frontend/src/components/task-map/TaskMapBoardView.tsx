@@ -8,9 +8,14 @@ import {
   hasUiUxOrDesignAudit,
   isProjectBasedUpwork,
   hasPmAssignmentForUser,
+  getEffectiveTaskMapHandlerId,
+  countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
   getDefaultTaskMapSubStatuses,
   toCanonicalTaskStatus,
+  matchesMarketingNameSearch,
+  subscribeTaskMapSaving,
+  isTaskSavingToDb,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -45,7 +50,7 @@ export function doesProgressMatchUser(progMaName?: string | null, userName?: str
   return false;
 }
 
-import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw } from 'lucide-react';
+import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { getPriorityConfig } from '@/lib/priority';
 import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
@@ -84,6 +89,7 @@ interface Props {
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
+  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE') => Promise<void> | void;
   isHistory?: boolean;
   search?: string;
 }
@@ -214,8 +220,9 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
   // 0. Active synthetic assumption block strictly takes the In Progress slot
   if (task.isAssumptionBlock) return true;
 
-  // 1. Worker isolation: check if user clocked in to this task and has not clocked out (and not stale)
+  // On-hold tasks belong at the bottom of Queue unless live clocked in right now
   if (isTaskLiveWorking(task, userName)) return true;
+  if (isTaskOnHold(task)) return false;
 
   // 2. Task status or custom status is In progress
   // Guard: if this task holds an unclosed session for this user that is STALE, it cannot act as active in progress
@@ -242,20 +249,20 @@ const sortColumnTasks = (items: TaskMapItem[], userName?: string) => {
     const isLiveB = isTaskLiveWorking(b, userName) ? 1 : 0;
     if (isLiveA !== isLiveB) return isLiveB - isLiveA;
 
-    // 2. Active in-progress task next (extracted into the top In Progress dropzone)
+    // 2. All On-Hold tasks strictly at the most bottom (even if Urgent or previously In Progress)
+    const holdA = isTaskOnHold(a) ? 1 : 0;
+    const holdB = isTaskOnHold(b) ? 1 : 0;
+    if (holdA !== holdB) return holdA - holdB;
+
+    // 3. Active in-progress task next (extracted into the top In Progress dropzone)
     const inProgA = isTaskActiveInProgress(a, userName) ? 1 : 0;
     const inProgB = isTaskActiveInProgress(b, userName) ? 1 : 0;
     if (inProgA !== inProgB) return inProgB - inProgA;
 
-    // 3. ALWAYS prioritize urgent tasks at the top of the user's queue
+    // 4. Always prioritize urgent tasks at the top among remaining active tasks
     const urgentA = isTaskUrgent(a) ? 1 : 0;
     const urgentB = isTaskUrgent(b) ? 1 : 0;
     if (urgentA !== urgentB) return urgentB - urgentA;
-
-    // 4. Non-urgent On-hold tasks go to the bottom
-    const holdA = isTaskOnHold(a) ? 1 : 0;
-    const holdB = isTaskOnHold(b) ? 1 : 0;
-    if (holdA !== holdB) return holdA - holdB;
 
     // 5. High priority
     const highA = isTaskHigh(a) ? 1 : 0;
@@ -289,18 +296,34 @@ const DraggableTaskCard: React.FC<{
     disabled,
   });
 
+  const [isSaving, setIsSaving] = useState<boolean>(() => isTaskSavingToDb(task.id));
+  useEffect(() => {
+    return subscribeTaskMapSaving((savingIds) => {
+      setIsSaving(savingIds.has(task.id));
+    });
+  }, [task.id]);
+
   return (
     <div
       ref={setNodeRef}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`touch-none transition-all duration-200 ease-out ${isDragging
+      className={`relative touch-none transition-all duration-200 ease-out ${isDragging
         ? 'opacity-25 scale-[0.98] border border-dashed border-zinc-700 rounded-xl bg-zinc-900/40 pointer-events-none'
         : disabled
           ? 'cursor-default'
           : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
         }`}
     >
+      {isSaving && !isDragging && (
+        <div
+          className="absolute top-1.5 right-1.5 z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-950/95 border border-blue-500/50 text-blue-200 text-[10px] font-semibold shadow-md pointer-events-none animate-in fade-in duration-100"
+          title="Saving changes to database..."
+        >
+          <Loader2 className="size-2.5 animate-spin text-blue-400 shrink-0" />
+          <span>Saving...</span>
+        </div>
+      )}
       {children}
     </div>
   );
@@ -743,6 +766,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   selectedCustomMAs = [],
   clients = [],
   onTaskUpdate,
+  onAssignTask,
   isHistory = false,
   search = '',
 }) => {
@@ -924,10 +948,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
-      const isAvailableSubStatus = mapStatuses.some((st: string) =>
-        st.includes('AVAILABLE') || st.includes('HANDOVER') || st.includes('HAND-OVER')
-      );
-      const isUnassigned = !t.assigneeId || t.assigneeId === 'unassigned';
+
+      // Exclude from available pool if routed to a specific handler via PM assignment or direct latest assignee (unless handed over)
+      if (getEffectiveTaskMapHandlerId(t)) return false;
 
       // Exclude from available pool if task is actively live working right now on a user column
       const hasActiveWorker = Boolean(
@@ -951,6 +974,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
         s.includes('WAITING') ||
         s === 'CRM' ||
         s.includes('CRM') ||
+        s === 'INREVIEW' ||
+        s === 'TOREVIEW' ||
+        s === 'REVIEW' ||
+        s === 'CHECKING' ||
+        s === 'INCHECKING' ||
         s === 'DAILY' ||
         s.includes('DAILY') ||
         s === 'WEEKLY' ||
@@ -1054,7 +1082,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
     };
 
+    const isOtherBoardWorkflow =
+      s === 'INREVIEW' ||
+      s === 'TOREVIEW' ||
+      s === 'REVIEW' ||
+      s === 'CHECKING' ||
+      s === 'INCHECKING' ||
+      s === 'WAITING' ||
+      s === 'CRM';
+
     return (
+      isOtherBoardWorkflow ||
       isExcludedStatus(s) ||
       !!(task as any)?.recurringConfig ||
       mapStatuses.some((st: string) => isExcludedStatus(st))
@@ -1150,9 +1188,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const cleanSearch = (search || '').trim().toLowerCase();
   const isUserSearchMatch = (u: any) => {
     if (!cleanSearch || !u) return false;
-    const name = (u.name || '').trim().toLowerCase();
-    const email = (u.email || '').trim().toLowerCase();
-    return name.includes(cleanSearch) || email.includes(cleanSearch);
+    return matchesMarketingNameSearch(u, cleanSearch);
   };
 
   // If search matches a user in allUsers, ensure they are present in userColumnsMap so their column appears
@@ -1168,7 +1204,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     });
   }
 
-  // Tasks in availablePool that an active assistant is currently live working on, or that a PM explicitly queued,
+  // Tasks in availablePool that an active assistant is currently live working on, or routed to a user column,
   // are attached to their respective user column; all other availablePool tasks belong strictly in poolIds!
   const poolIds = new Set(
     availablePool
@@ -1180,33 +1216,30 @@ export const TaskMapBoardView: React.FC<Props> = ({
             (col) => doesProgressMatchUser(p.progress?.maName, col.user.name) && isTaskLiveWorking(p, col.user.name, currentTime)
           )
         );
-        const isQueuedOnCol = Object.keys(userColumnsMap).some((uid) => hasPmAssignmentForUser(p, uid));
-        return !isLiveWorkingOnCol && !isQueuedOnCol;
+        const handlerId = getEffectiveTaskMapHandlerId(p);
+        const isAssignedToCol = Boolean(handlerId && userColumnsMap[handlerId]);
+        return !isLiveWorkingOnCol && !isAssignedToCol;
       })
       .map((p) => p.id)
   );
 
-  // 2. Add non-closed, non-excluded tasks strictly to user columns when:
-  //    a) The task was explicitly queued/assigned to this user by a PM on Task Map (hasPmAssignmentForUser), or
-  //    b) It is in historical view mode where assignments were already frozen into the snapshot, or
+  // 2. Add non-closed, non-excluded tasks to user columns when:
+  //    a) Routed to this user by PM assignment or direct latest assignee (and not handed over), or
+  //    b) It is in historical view mode where assignments were frozen into the snapshot, or
   //    c) An assistant is actively live working on it (live clock-in / in-progress)
-  // Direct Assignment based purely on database assignee is REMOVED so user columns start clean & empty!
-  tasks.forEach((task) => {
+  const attachTaskToUserColumns = (task: TaskMapItem) => {
     if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
     if (poolIds.has(task.id)) return;
     const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
     if (!hasProgress && (isClosedTask(task) || isExcludedForUser(task))) return;
 
-    const u = task.assignee || (task.assignees && task.assignees[0]);
-    const userId = u?.id;
+    const effectiveHandlerId = isHistory
+      ? (task.assignee?.id || task.assigneeId || getEffectiveTaskMapHandlerId(task))
+      : getEffectiveTaskMapHandlerId(task);
 
-    // Only queue task in user's column if a PM explicitly assigned/queued it on Task Map
-    // (or in historical view where daily snapshot froze the day's assignments)
-    const isPmQueuedForUser = Boolean(userId && userId !== 'unassigned' && (isHistory || hasPmAssignmentForUser(task, userId)));
-
-    if (isPmQueuedForUser && userColumnsMap[userId]) {
-      if (!userColumnsMap[userId].tasks.some((t) => t.id === task.id)) {
-        userColumnsMap[userId].tasks.push(task);
+    if (effectiveHandlerId && effectiveHandlerId !== 'unassigned' && userColumnsMap[effectiveHandlerId]) {
+      if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
+        userColumnsMap[effectiveHandlerId].tasks.push(task);
       }
     }
 
@@ -1214,27 +1247,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
     // display it in that worker's column so they see their live active task:
     if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, currentTime)) {
       const workerCol = Object.entries(userColumnsMap).find(
-        ([colUserId, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
+        ([, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
       );
-      if (workerCol && (!task.assigneeId || task.assigneeId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
+      if (workerCol && (!effectiveHandlerId || effectiveHandlerId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
         workerCol[1].tasks.push(task);
       }
     }
-  });
+  };
 
-  // Only tasks in availablePool that are currently live working can be attached to the active worker's column;
-  // all other available pool tasks stay strictly in the Available Tasks column!
-  availablePool.forEach((task) => {
-    if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
-    if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, currentTime)) {
-      const workerCol = Object.entries(userColumnsMap).find(
-        ([colUserId, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
-      );
-      if (workerCol && (!task.assigneeId || task.assigneeId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
-        workerCol[1].tasks.push(task);
-      }
-    }
-  });
+  tasks.forEach(attachTaskToUserColumns);
+  availablePool.forEach(attachTaskToUserColumns);
 
   // 2.5 Ensure user columns reflect their latest MA schedule sheet input
   // (only if they have an active sheet session not already attached to a card)
@@ -1387,9 +1409,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const sortedUserColumns = Object.entries(userColumnsMap)
     .filter(([id, col]) => {
-      // If user search matches, always keep this MA visible!
-      if (cleanSearch && isUserSearchMatch(col.user)) {
-        return true;
+      // When searching marketing name, filter user columns to matching MAs only
+      if (cleanSearch) {
+        return isUserSearchMatch(col.user);
       }
       // If Custom shift is selected and specific MAs are chosen, filter by them
       const activeShifts = (currentShift || '').toUpperCase().split(',').map((s) => s.trim());
@@ -1514,16 +1536,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
 
       const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((currentTask?.status || '').toUpperCase().trim());
-      const nextStatus = isCadence ? toCanonicalTaskStatus(currentTask!.status) : 'IN PROGRESS';
+      toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
       try {
-        await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
-        if (onTaskUpdate) {
-          await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
+        if (onAssignTask) {
+          await onAssignTask(taskId, targetUserId, 'IN_PROGRESS');
         } else {
-          await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
+          const nextStatus = isCadence ? toCanonicalTaskStatus(currentTask!.status) : 'IN PROGRESS';
+          await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
+          if (onTaskUpdate) {
+            await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
+          } else {
+            await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
+          }
+          onDataRefresh();
         }
-        toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
-        onDataRefresh();
       } catch (err: any) {
         toast.error(err.message || 'Failed to set task In Progress');
       }
@@ -1536,14 +1562,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUser = getUserProfile(targetUserId);
 
       // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
-      if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId)) {
+      if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId) && !isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
         return;
       }
 
+      toast.success(`Task queued for ${targetUser?.name || 'user'}`);
       try {
-        await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE');
-        toast.success(`Task queued for ${targetUser?.name || 'user'}`);
-        onDataRefresh();
+        if (onAssignTask) {
+          await onAssignTask(taskId, targetUserId, 'QUEUE');
+        } else {
+          await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE');
+          onDataRefresh();
+        }
       } catch (err: any) {
         toast.error(err.message || 'Failed to queue task');
       }
@@ -1557,10 +1587,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
         toast.error('Only Project Managers can move tasks to the Available column');
         return;
       }
+      toast.success('Task moved to available pool');
       try {
-        await taskMapApi.assignTask(taskId, null);
-        toast.success('Task moved to available pool');
-        onDataRefresh();
+        if (onAssignTask) {
+          await onAssignTask(taskId, null, 'QUEUE');
+        } else {
+          await taskMapApi.assignTask(taskId, null);
+          onDataRefresh();
+        }
       } catch (err: any) {
         toast.error(err.message || 'Failed to move task');
       }
@@ -1571,16 +1605,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const targetUser = getUserProfile(targetUserId);
     const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
-    const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask!.status) : 'IN PROGRESS';
+    toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
     try {
-      await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
-      if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
+      if (onAssignTask) {
+        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS');
       } else {
-        await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
+        const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask!.status) : 'IN PROGRESS';
+        await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
+        if (onTaskUpdate) {
+          await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
+        } else {
+          await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
+        }
+        onDataRefresh();
       }
-      toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
-      onDataRefresh();
     } catch (err: any) {
       toast.error(err.message || 'Failed to assign task');
     }
@@ -1676,8 +1714,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
           }
           onStatusChange(task.id, ['Available Task']);
           try {
-            await taskMapApi.assignTask(task.id, null);
-            onDataRefresh();
+            if (onAssignTask) {
+              await onAssignTask(task.id, null, 'QUEUE');
+            } else {
+              await taskMapApi.assignTask(task.id, null);
+              onDataRefresh();
+            }
             toast.info('Task returned to Available Tasks');
           } catch (err: any) {
             toast.error(err?.message || 'Failed to move task to Available Tasks');
@@ -1823,7 +1865,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             matchesSearchFilter(t, searchQuery)
           );
           // Exclude On-hold tasks from the task number indicator per user requirement
-          const availableActiveCount = displayPool.filter((t) => !isTaskOnHold(t)).length;
+          const availableActiveCount = countNonOnHoldTasks(displayPool);
 
           if (isCollapsed) {
             return (
@@ -2074,11 +2116,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <div className="text-[11px] font-medium truncate max-w-[190px] mb-1 flex items-center gap-1.5">
                                 {isSubtask && hasParentInColumn && (
                                   <span
-                                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                                    className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
                                     title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
                                   >
                                     <CornerDownRight className="size-2.5 shrink-0" />
-                                    L
                                   </span>
                                 )}
                                 {isSeparatedSubtask && (
@@ -2117,10 +2158,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
                                 title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
                               >
-                                {isSeparatedSubtask && (
-                                  <span className="text-amber-400 font-mono mr-1">--</span>
-                                )}
-                                {task.title}
+                                {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
                               </h4>
 
                               {/* Controls row: circle dot left of bulletin, priority flag */}
@@ -2244,6 +2282,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             }
             return true;
           });
+          const userActiveCount = countNonOnHoldTasks(userTasks);
 
           if (isCollapsed) {
             return (
@@ -2281,7 +2320,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   </div>
                 )}
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700 mb-4">
-                  {userTasks.length}
+                  {userActiveCount}
                 </span>
                 <span
                   onClick={() => toggleCollapseColumn(userId)}
@@ -2332,7 +2371,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           </span>
                           <UserRoleBadge user={user} />
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
-                            {userTasks.length}
+                            {userActiveCount}
                           </span>
                         </div>
                       </div>
@@ -2544,11 +2583,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 <div className="text-[11px] font-medium truncate max-w-[190px] mb-1 flex items-center gap-1.5">
                                   {isSubtask && hasParentInColumn && (
                                     <span
-                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
                                       title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
                                     >
                                       <CornerDownRight className="size-2.5 shrink-0" />
-                                      L
                                     </span>
                                   )}
                                   {isSeparatedSubtask && (
@@ -2592,10 +2630,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
                               title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
                             >
-                              {isSeparatedSubtask && (
-                                <span className="text-amber-400 font-mono mr-1">--</span>
-                              )}
-                              {task.title}
+                              {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
                             </h4>
 
                             {/* Controls row: circle dot left of bulletin, priority flag */}
@@ -2752,7 +2787,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       <div className="pt-2 space-y-1">
                         <div className="flex items-center justify-between px-1">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                            Queue ({queuedTasks.length + (showColumnCutout ? 1 : 0)})
+                            Queue ({countNonOnHoldTasks(queuedTasks) + (showColumnCutout && (!activeDragTask || !isTaskOnHold(activeDragTask)) ? 1 : 0)})
                           </span>
                         </div>
                         <div className="space-y-2.5">
@@ -2796,14 +2831,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[190px] mb-1 flex items-center gap-1.5">
                   {activeDragTask.isSubtask && (
                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0">
-                      -- Subtask
+                      --
                     </span>
                   )}
                   <span className="truncate">{activeDragTask.list?.name || 'General'}</span>
                 </div>
                 <h4 className="text-[13px] font-bold text-white line-clamp-2 leading-snug my-0.5 h-[36px]">
-                  {activeDragTask.isSubtask && <span className="text-amber-400 font-mono mr-1">--</span>}
-                  {activeDragTask.title}
+                  {activeDragTask.isSubtask ? (activeDragTask.title || '').replace(/^--\s*/, '') : activeDragTask.title}
                 </h4>
                 <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
                   <span className="shrink-0 flex items-center">

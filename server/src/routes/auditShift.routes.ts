@@ -11,8 +11,8 @@ import {
 
 const router = Router();
 
-// All audit shift management requires an authenticated ADMIN user
-router.get('/', authenticateToken, requireSystemRole('ADMIN'), getAuditShifts);
+// Viewing audit shifts is open to all authenticated users; mutations & sweeps require ADMIN
+router.get('/', authenticateToken, getAuditShifts);
 router.post('/', authenticateToken, requireSystemRole('ADMIN'), createAuditShift);
 router.put('/:id', authenticateToken, requireSystemRole('ADMIN'), updateAuditShift);
 router.delete('/:id', authenticateToken, requireSystemRole('ADMIN'), deleteAuditShift);

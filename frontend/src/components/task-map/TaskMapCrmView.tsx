@@ -1,7 +1,18 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { TaskMapItem, TaskMapOption, TASK_MAP_STATUS_COLORS, toCanonicalTaskStatus } from '@/api/taskMap';
+import {
+  TaskMapItem,
+  TaskMapOption,
+  getEffectiveTaskMapHandlerId,
+  isTaskHandedOver,
+  countNonOnHoldTasks,
+  TASK_MAP_STATUS_COLORS,
+  toCanonicalTaskStatus,
+  matchesMarketingNameSearch,
+  subscribeTaskMapSaving,
+  isTaskSavingToDb,
+} from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -15,6 +26,7 @@ import {
   X,
   Lock,
   ArrowLeft,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isCrmUser, hasCrmAccess, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
@@ -57,6 +69,8 @@ interface Props {
   onDataRefresh: () => void;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
   onSwitchToBoard?: () => void;
+  currentShift?: string;
+  selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count?: number }>;
   showAdminTasks?: boolean;
   onToggleAdminTasks?: () => void;
@@ -75,18 +89,35 @@ const DraggableTaskCard: React.FC<{
     disabled,
   });
 
+  const [isSaving, setIsSaving] = useState<boolean>(() => isTaskSavingToDb(task.id));
+  useEffect(() => {
+    setIsSaving(isTaskSavingToDb(task.id));
+    return subscribeTaskMapSaving(() => {
+      setIsSaving(isTaskSavingToDb(task.id));
+    });
+  }, [task.id]);
+
   return (
     <div
       ref={setNodeRef}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`touch-none transition-all duration-200 ease-out ${isDragging
+      className={`relative touch-none transition-all duration-200 ease-out ${isDragging
         ? 'opacity-25 scale-[0.98] border border-dashed border-[#22A3AE] rounded-xl bg-zinc-900/40 pointer-events-none'
         : disabled
           ? 'cursor-default'
           : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
         }`}
     >
+      {isSaving && (
+        <div
+          className="absolute top-2 right-2 z-20 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-cyan-950/90 border border-[#22A3AE]/40 text-cyan-300 text-[9px] font-bold shadow-md pointer-events-none backdrop-blur-xs"
+          title="Saving changes to database..."
+        >
+          <Loader2 className="size-2.5 animate-spin text-[#22A3AE]" />
+          <span>Saving...</span>
+        </div>
+      )}
       {children}
     </div>
   );
@@ -123,6 +154,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
   onDataRefresh,
   onTaskUpdate,
   onSwitchToBoard,
+  currentShift = 'ALL',
+  selectedCustomMAs = [],
   clients = [],
   showAdminTasks = false,
   onToggleAdminTasks,
@@ -150,9 +183,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
   const cleanSearch = (search || '').trim().toLowerCase();
   const isCrmMemberSearchMatch = (u: any) => {
     if (!cleanSearch || !u) return false;
-    const name = (u.name || '').trim().toLowerCase();
-    const email = (u.email || '').trim().toLowerCase();
-    return name.includes(cleanSearch) || email.includes(cleanSearch);
+    return matchesMarketingNameSearch(u, cleanSearch);
   };
 
   useEffect(() => {
@@ -223,24 +254,46 @@ export const TaskMapCrmView: React.FC<Props> = ({
     useSensor(KeyboardSensor)
   );
 
-  // Discover all users who hold a CRM role
+  // Discover users who hold a CRM role, respecting selected shift or custom member filter
   const crmUsers = React.useMemo(() => {
     const map = new Map<string, any>();
-    const candidates = [
-      ...(currentUser ? [currentUser] : []),
-      ...(allUsers || []),
-      ...(shiftUsers || []),
-    ];
+    const isAllShifts =
+      !currentShift ||
+      currentShift === 'ALL' ||
+      currentShift
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .includes('ALL');
+    const isCustomShift = currentShift === 'CUSTOM';
+
+    let candidates: any[];
+    if (isCustomShift && selectedCustomMAs.length > 0) {
+      const pool = [...(allUsers || []), ...(shiftUsers || [])];
+      candidates = pool.filter((u) => u && selectedCustomMAs.includes(u.id));
+    } else if (!isAllShifts && !isCustomShift) {
+      candidates = [...(shiftUsers || [])];
+    } else {
+      candidates = [
+        ...(currentUser ? [currentUser] : []),
+        ...(allUsers || []),
+        ...(shiftUsers || []),
+      ];
+    }
+
     for (const u of candidates) {
       if (!u || !u.id) continue;
       if (map.has(u.id)) continue;
-      if (isCrmUser(u) || (currentUser?.id === u.id && hasCrmAccess(currentUser))) {
+      if (
+        isCrmUser(u) ||
+        (isCustomShift && selectedCustomMAs.includes(u.id)) ||
+        (isAllShifts && currentUser?.id === u.id && hasCrmAccess(currentUser))
+      ) {
         map.set(u.id, u);
       }
     }
     const list = Array.from(map.values());
     return list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [allUsers, shiftUsers, currentUser]);
+  }, [allUsers, shiftUsers, currentUser, currentShift, selectedCustomMAs]);
 
   // Combined tasks
   const combinedTasks = React.useMemo(() => {
@@ -315,19 +368,20 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return s === 'WAITING' || s === 'SENT';
   };
 
-  // Check if task is assigned to a specific CRM member (strictly status CRM)
+  // Check if task is assigned to a specific CRM member (strictly status CRM, latest assignee only)
   const isTaskAssignedToCrmMember = (task: TaskMapItem, crmMember: any) => {
-    if (isCrmCompleted(task) || isCrmSent(task)) return false;
+    if (isCrmCompleted(task) || isCrmSent(task) || isTaskHandedOver(task)) return false;
     // Task must be in CRM status
     const s = (task.status || '').toUpperCase().trim();
     if (s !== 'CRM') return false;
 
-    // Direct assignee check
-    if (task.assignee?.id === crmMember.id) return true;
-    if ((task.assignees || []).some((u) => u.id === crmMember.id)) return true;
+    const effectiveHandlerId = getEffectiveTaskMapHandlerId(task);
+    if (effectiveHandlerId) {
+      return effectiveHandlerId === crmMember.id;
+    }
 
-    // Tag match
-    const mapStatuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
+    // Legacy fallback: tag match when no assigneeId/PM_ASSIGNMENT is set
+    const mapStatuses = (task.taskMap?.statuses || []).map((st) => st.toUpperCase().trim());
     const memberNameUpper = (crmMember.name || '').toUpperCase().trim();
     const first = memberNameUpper.split(' ')[0];
     if (mapStatuses.includes(memberNameUpper)) return true;
@@ -337,12 +391,17 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return false;
   };
 
-  // General CRM Pool: tasks needing client outreach / CRM that are not yet assigned to a specific CRM member (strictly status CRM)
+  // General CRM Pool: tasks needing client outreach / CRM that are not yet assigned to a specific CRM member (across shifts)
   const isGeneralCrmPool = (t: TaskMapItem) => {
     if (isCrmCompleted(t) || isCrmSent(t)) return false;
     const s = (t.status || '').toUpperCase().trim();
     if (s !== 'CRM') return false;
-    if (crmUsers.some((u) => isTaskAssignedToCrmMember(t, u))) return false;
+    if (
+      crmUsers.some((u) => isTaskAssignedToCrmMember(t, u)) ||
+      (allUsers || []).some((u) => isCrmUser(u) && isTaskAssignedToCrmMember(t, u))
+    ) {
+      return false;
+    }
 
     return true;
   };
@@ -422,11 +481,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
           toast.error(transitionCheck.reason || 'Cannot move task to CRM');
           return;
         }
-        if (onTaskUpdate) {
-          await onTaskUpdate(taskId, { status: 'CRM' });
-        } else {
-          await tasksApi.updateTask(taskId, { status: 'CRM' } as any).catch(console.error);
-        }
+      }
+      if (onTaskUpdate) {
+        await onTaskUpdate(taskId, { assigneeId: null, status: 'CRM' });
+      } else {
+        await tasksApi.updateTask(taskId, { assigneeId: null, status: 'CRM' } as any).catch(console.error);
+        onDataRefresh();
       }
     } else if (targetColumnId === 'col-crm-sent') {
       // 1. Task edit permission
@@ -539,12 +599,13 @@ export const TaskMapCrmView: React.FC<Props> = ({
     }
   };
 
-  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent', 'Follow up', 'Closed')
-  const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => [
+  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent', 'Follow up', 'Hand-over', 'Closed')
+  const getCrmOptions = (_task: TaskMapItem): TaskMapOption[] => [
     { id: 'opt-crm-tosend', label: 'To send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 0 },
     { id: 'opt-crm-sent', label: 'Sent', color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff', order: 1 },
     { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
-    { id: 'opt-crm-closed', label: 'Closed', color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff', order: 3 },
+    { id: 'opt-crm-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 3 },
+    { id: 'opt-crm-closed', label: 'Closed', color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff', order: 4 },
   ];
 
   // Assemble full columns array
@@ -624,7 +685,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
   const closedCol = allColumns.find((c) => c.id === 'col-crm-closed');
   const memberCols = allColumns.filter((c) => c.isMember);
 
-  const sortedMemberCols = [...memberCols].sort((colA, colB) => {
+  const sortedMemberCols = [...memberCols]
+    .filter((col) => {
+      if (!cleanSearch) return true;
+      return isCrmMemberSearchMatch(col.memberUser);
+    })
+    .sort((colA, colB) => {
     const matchA = isCrmMemberSearchMatch(colA.memberUser);
     const matchB = isCrmMemberSearchMatch(colB.memberUser);
 
@@ -757,7 +823,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                   <span className={`size-2.5 rounded-full ${col.dotColor} mb-2 shrink-0`} />
 
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#22A3AE]/20 text-[#22A3AE] border border-[#22A3AE]/30 mb-4">
-                    {col.tasks.length}
+                    {countNonOnHoldTasks(col.tasks)}
                   </span>
 
                   <span
@@ -817,7 +883,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border shrink-0 ${col.badgeClass || 'bg-zinc-800 text-zinc-300 border-zinc-700'
                         }`}
                     >
-                      {col.tasks.length}
+                      {countNonOnHoldTasks(col.tasks)}
                     </span>
                   </div>
 
@@ -1217,6 +1283,18 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                     } else if (label === 'Follow up' && isSelecting) {
                                       onStatusChange(task.id, cleanNext);
                                       toast.warning('Task marked for Follow up');
+                                    } else if (label.toLowerCase().includes('hand-over') || label.toLowerCase() === 'handover') {
+                                      onStatusChange(task.id, cleanNext);
+                                      if (isSelecting) {
+                                        const preservedCrmStatus = toCanonicalTaskStatus(task.status || 'CRM') || 'CRM';
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { assigneeId: null, status: preservedCrmStatus });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { assigneeId: null } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info('Task handed over — returned to General CRM Pool');
+                                      }
                                     } else {
                                       onStatusChange(task.id, cleanNext);
                                     }

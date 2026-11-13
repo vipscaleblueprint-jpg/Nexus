@@ -391,7 +391,11 @@ const CardContent = memo(({
     const isAssigned = currentAssignees.some((a: any) => a.id === user.id);
     const newAssignees = isAssigned ? currentAssignees.filter((a: any) => a.id !== user.id) : [...currentAssignees, user];
     const assigneeIds = newAssignees.map(a => a.id);
-    const primaryAssignee = newAssignees.length > 0 ? newAssignees[0] : null;
+    const primaryAssignee = newAssignees.length === 0
+      ? null
+      : !isAssigned
+      ? user
+      : (newAssignees.find((a: any) => a.id === task.assigneeId) || newAssignees[newAssignees.length - 1]);
 
     const updated = {
       ...task,
@@ -406,7 +410,10 @@ const CardContent = memo(({
 
     try {
       if (isSubtask) {
-        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, { assigneeIds });
+        await tasksApi.updateSubtask((task as Subtask).taskId, task.id, {
+          assigneeIds,
+          assigneeId: primaryAssignee?.id || null,
+        });
       } else {
         await tasksApi.updateTask(task.id, {
           assigneeIds,

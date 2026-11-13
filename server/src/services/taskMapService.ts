@@ -17,7 +17,7 @@ export function toTaskMapShiftKey(key: string): string {
   if (norm === 'AM' || norm === 'DAY' || norm === 'MORNING') return 'DAY';
   if (norm === 'PM_AFTERNOON' || norm === 'NOON' || norm === 'AFTERNOON') return 'NOON';
   if (norm === 'PM_NIGHT' || norm === 'NIGHT') return 'NIGHT';
-  return 'DAY';
+  return norm || 'DAY';
 }
 
 export function fromTaskMapShiftKey(key: string): string {
@@ -25,7 +25,7 @@ export function fromTaskMapShiftKey(key: string): string {
   if (norm === 'DAY' || norm === 'AM' || norm === 'MORNING') return 'AM';
   if (norm === 'NOON' || norm === 'PM_AFTERNOON' || norm === 'AFTERNOON') return 'PM_AFTERNOON';
   if (norm === 'NIGHT' || norm === 'PM_NIGHT') return 'PM_NIGHT';
-  return 'AM';
+  return norm || 'AM';
 }
 
 export interface TaskMapOption {
@@ -235,47 +235,52 @@ export async function updateShiftConfig(shiftKey: string, data: Partial<TaskMapS
 }
 
 export async function getCurrentActiveShift(): Promise<string> {
-  try {
-    const activeAuditShift = await getActiveManilaShift();
-    if (activeAuditShift && activeAuditShift !== 'OFF_SHIFT') {
-      return toTaskMapShiftKey(activeAuditShift);
-    }
-  } catch (err) {
-    // Fall back to local calculation
-  }
-
   const shifts = await getShiftConfigs();
   if (shifts.length === 0) return 'DAY';
 
   const tz = shifts[0].timezone || 'Asia/Manila';
   const now = new Date();
-  const timeStr = new Intl.DateTimeFormat('en-US', {
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour: 'numeric',
     minute: 'numeric',
     hour12: false,
-  }).format(now);
+  }).formatToParts(now);
 
-  const [hStr, mStr] = timeStr.split(':');
-  const currentTotalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10) % 24;
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const currentTotalMinutes = hour * 60 + minute;
 
+  const matchingKeys: string[] = [];
   for (const shift of shifts) {
-    const startMins = shift.startHour * 60 + shift.startMinute;
-    const endMins = shift.endHour * 60 + shift.endMinute;
+    if (shift.isActive === false) continue;
+    const startMins = shift.startHour * 60 + (shift.startMinute || 0);
+    const endMins = shift.endHour * 60 + (shift.endMinute || 0);
 
-    if (startMins <= endMins) {
-      if (currentTotalMinutes >= startMins && currentTotalMinutes < endMins) {
-        return shift.shiftKey;
-      }
-    } else {
-      // Overnight shift, e.g. 17:00 to 01:00
-      if (currentTotalMinutes >= startMins || currentTotalMinutes < endMins) {
-        return shift.shiftKey;
-      }
+    const isActiveNow =
+      startMins <= endMins
+        ? currentTotalMinutes >= startMins && currentTotalMinutes < endMins
+        : currentTotalMinutes >= startMins || currentTotalMinutes < endMins;
+
+    if (isActiveNow) {
+      matchingKeys.push(shift.shiftKey);
     }
   }
 
-  return shifts[0]?.shiftKey || 'DAY';
+  if (matchingKeys.length > 0) {
+    return matchingKeys.join(',');
+  }
+
+  try {
+    const activeAuditShift = await getActiveManilaShift();
+    if (activeAuditShift && activeAuditShift !== 'OFF_SHIFT') {
+      return toTaskMapShiftKey(activeAuditShift);
+    }
+  } catch {
+    // Fall back to ALL when off-shift
+  }
+
+  return 'ALL';
 }
 
 // ---------------------------------------------------------------------------
@@ -1021,4 +1026,95 @@ export async function executeTaskMapDailyRollover(params?: {
     newDate: toDate,
     retainedTasksCount,
   };
+}
+
+/**
+ * Resolves the single active handler (`assigneeId`) as the most recently assigned user,
+ * preserving the current handler if still present during removals.
+ */
+export function resolveLatestAssigneeId(params: {
+  nextIds: string[];
+  previousIds?: string[];
+  currentAssigneeId?: string | null;
+  explicitAssigneeId?: string | null;
+}): string | null {
+  const { nextIds, previousIds = [], currentAssigneeId = null, explicitAssigneeId } = params;
+  if (explicitAssigneeId !== undefined) {
+    if (!explicitAssigneeId) return null;
+    if (nextIds.length === 0 || nextIds.includes(explicitAssigneeId)) {
+      return explicitAssigneeId;
+    }
+  }
+  if (nextIds.length === 0) return null;
+  const prevSet = new Set(previousIds);
+  const newlyAdded = nextIds.filter((id) => !prevSet.has(id));
+  if (newlyAdded.length > 0) {
+    return newlyAdded[newlyAdded.length - 1];
+  }
+  if (currentAssigneeId && nextIds.includes(currentAssigneeId)) {
+    return currentAssigneeId;
+  }
+  return nextIds[nextIds.length - 1];
+}
+
+/**
+ * Clears Task Map handover state and invalidates Task Map caches when a user is assigned directly.
+ */
+export async function syncTaskMapOnDirectAssign(
+  taskId: string,
+  subtaskId?: string | null,
+  assigneeId?: string | null
+): Promise<void> {
+  if (!assigneeId) {
+    await invalidateCache('task_map:all', 'task_map:*').catch(() => {});
+    return;
+  }
+
+  try {
+    const rec = await getOrCreateTaskMapRecord(taskId);
+    const cleanStatuses = (arr: string[] = []) =>
+      arr.filter((s) => {
+        const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+        return norm !== 'HANDOVER' && norm !== 'AVAILABLETASK';
+      });
+
+    let reviews: any[] = [];
+    if (typeof rec.pmReviews === 'string') {
+      try { reviews = JSON.parse(rec.pmReviews); } catch { reviews = []; }
+    } else if (Array.isArray(rec.pmReviews)) {
+      reviews = [...rec.pmReviews];
+    }
+
+    if (subtaskId) {
+      const idx = reviews.findIndex((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtaskId);
+      const existing = idx !== -1 && Array.isArray(reviews[idx].statuses) ? reviews[idx].statuses : [];
+      const nextEntry = {
+        type: 'SUBTASK_STATE',
+        subtaskId,
+        statuses: cleanStatuses(existing),
+        handedOver: false,
+        updatedAt: new Date().toISOString(),
+      };
+      if (idx !== -1) reviews[idx] = nextEntry;
+      else reviews.push(nextEntry);
+
+      await updateTaskMapRecord(taskId, { pmReviews: reviews });
+    } else {
+      const nextStatuses = cleanStatuses(rec.statuses || []);
+      await updateTaskMapRecord(taskId, {
+        statuses: nextStatuses,
+        handedOver: false,
+      });
+    }
+
+    await invalidateCache('task_map:all', 'task_map:*').catch(() => {});
+    getIo()?.emit('task_map:updated', {
+      taskId: subtaskId ? `subtask:${subtaskId}` : taskId,
+      ...(subtaskId ? { subtaskId, parentTaskId: taskId } : {}),
+      assigneeId,
+      handedOver: false,
+    });
+  } catch (err) {
+    logger.warn({ err, taskId, subtaskId }, 'syncTaskMapOnDirectAssign failed');
+  }
 }

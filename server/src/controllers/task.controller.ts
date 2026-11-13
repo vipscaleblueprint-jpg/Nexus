@@ -50,6 +50,7 @@ import {
 } from '../utils/roleNotification';
 import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
 import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
+import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign } from '../services/taskMapService';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -526,7 +527,9 @@ export async function createTask(req: Request, res: Response) {
     if (assigneeRoleRestrictions && assigneeRoleRestrictions.length > 0 && (!assigneeIds || assigneeIds.length === 0) && !assigneeId) {
       computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
     }
-    const effectiveAssigneeId = (computedAssigneeIds && computedAssigneeIds.length > 0) ? computedAssigneeIds[0] : (assigneeId || null);
+    const effectiveAssigneeId = Array.isArray(computedAssigneeIds)
+      ? resolveLatestAssigneeId({ nextIds: computedAssigneeIds, explicitAssigneeId: assigneeId })
+      : (assigneeId || null);
     const position = afterTaskId ? await getPositionAfter(listId, afterTaskId) : null;
 
     const task = await prisma.task.create({
@@ -554,7 +557,10 @@ export async function createTask(req: Request, res: Response) {
       include: taskInclude,
     });
 
-    await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
+    await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all', 'task_map:all');
+    if (effectiveAssigneeId) {
+      await syncTaskMapOnDirectAssign(task.id, null, effectiveAssigneeId);
+    }
 
     // Global broadcast reaches list-room members too, so a separate room emit would deliver it twice
     io.emit('task:created', task);
@@ -582,8 +588,8 @@ export async function createTask(req: Request, res: Response) {
       });
     })().catch((err) => console.error('createTask: assignment notifications failed:', err));
 
-    // Audits assigned per shift when moved to IN REVIEW or CHECKING
-    if (isReviewStatus(task.status) || isCheckingStatus(task.status)) autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
+    // Audits assigned per shift ONLY when status is IN REVIEW
+    if (isReviewStatus(task.status)) autoAssignAudits(task.id, (req as any).user?.id || creatorId).catch((err) =>
       console.error('createTask: audit auto-assign failed:', err)
     );
 
@@ -956,8 +962,15 @@ export async function updateTask(req: Request, res: Response) {
     }
 
     if (computedAssigneeIds !== undefined) {
+      const previousIds = (currentTask.assignees || []).map((a: any) => a.id);
+      const nextPrimaryId = resolveLatestAssigneeId({
+        nextIds: computedAssigneeIds,
+        previousIds,
+        currentAssigneeId: currentTask.assigneeId,
+        explicitAssigneeId: assigneeId,
+      });
       updateData.assignees = { set: computedAssigneeIds.map((id: string) => ({ id })) };
-      updateData.assigneeId = computedAssigneeIds.length > 0 ? computedAssigneeIds[0] : null;
+      updateData.assigneeId = nextPrimaryId;
     } else if (assigneeId !== undefined) {
       updateData.assigneeId = assigneeId || null;
       updateData.assignees = assigneeId ? { set: [{ id: assigneeId }] } : { set: [] };
@@ -982,11 +995,22 @@ export async function updateTask(req: Request, res: Response) {
         payload.assignees = [];
       }
       payload.assigneeIds = idsToFetch;
-      payload.assignee = payload.assignees[0] || null;
+      payload.assignee =
+        (updated.assigneeId ? payload.assignees.find((a: any) => a.id === updated.assigneeId) : null) ||
+        payload.assignees[0] ||
+        null;
+
+      if (updated.assigneeId && updated.assigneeId !== currentTask.assigneeId) {
+        syncTaskMapOnDirectAssign(taskId, null, updated.assigneeId).catch(() => {});
+      } else {
+        invalidateCache('task_map:all').catch(() => {});
+      }
     } else {
       payload.assignees = currentTask.assignees || [];
       payload.assigneeIds = (currentTask.assignees || []).map((a: any) => a.id);
-      payload.assignee = (currentTask.assignees && currentTask.assignees.length > 0) ? currentTask.assignees[0] : null;
+      payload.assignee =
+        (currentTask.assigneeId ? (currentTask.assignees || []).find((a: any) => a.id === currentTask.assigneeId) : null) ||
+        ((currentTask.assignees && currentTask.assignees.length > 0) ? currentTask.assignees[0] : null);
     }
     
     if (teamId !== undefined) {
@@ -1138,7 +1162,22 @@ export async function updateTask(req: Request, res: Response) {
               });
             }
 
-            if (isReviewStatus(status) || isCheckingStatus(status)) {
+            if (status.toLowerCase() === 'revision') {
+              const auditChecklist = (
+                await prisma.checklist.findMany({
+                  where: { taskId, subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
+                  include: { items: { select: { text: true } } },
+                })
+              ).find(isNexusAuditChecklist);
+              if (auditChecklist) {
+                await prisma.checklistItem.updateMany({
+                  where: { checklistId: auditChecklist.id },
+                  data: { completed: false, assigneeId: [] },
+                });
+              }
+            }
+
+            if (isReviewStatus(status)) {
               autoAssignAudits(taskId, actingUserId).catch((err) =>
                 console.error('updateTask: audit shift assign failed:', err)
               );
@@ -1509,7 +1548,7 @@ export async function moveTask(req: Request, res: Response) {
       if (auditChecklist) {
         await prisma.checklistItem.updateMany({
           where: { checklistId: auditChecklist.id },
-          data: { completed: false },
+          data: { completed: false, assigneeId: [] },
         });
       }
     }
@@ -1584,7 +1623,7 @@ export async function moveTask(req: Request, res: Response) {
             // Global broadcast so the Activity page and dashboards refresh too (list-room members receive it as well)
             io.emit('task_activity', { listId: roomListId, taskId: id, activity });
 
-            if (isReviewStatus(status) || isCheckingStatus(status)) {
+            if (isReviewStatus(status)) {
               autoAssignAudits(id, actingUserId).catch((err) =>
                 console.error('moveTask: audit shift assign failed:', err)
               );
@@ -2632,7 +2671,9 @@ export async function createSubtask(req: Request, res: Response) {
     const { id: taskId } = req.params;
     const { title, description, assigneeIds, assigneeId, teamId, priority, dueDate, status, assigneeRoleRestrictions, teamAssignAccessRole } = req.body;
 
-    const effectiveAssigneeId = (assigneeIds && assigneeIds.length > 0) ? assigneeIds[0] : (assigneeId || null);
+    const effectiveAssigneeId = Array.isArray(assigneeIds)
+      ? resolveLatestAssigneeId({ nextIds: assigneeIds, explicitAssigneeId: assigneeId })
+      : (assigneeId || null);
 
     const subtask = await prisma.subtask.create({
       data: {
@@ -2660,7 +2701,10 @@ export async function createSubtask(req: Request, res: Response) {
         team: { select: { id: true, name: true, color: true } }
       } as any
     });
-    await invalidateCache(`task:${taskId}`, `task:${subtask.id}`);
+    await invalidateCache(`task:${taskId}`, `task:${subtask.id}`, 'task_map:all');
+    if (effectiveAssigneeId) {
+      await syncTaskMapOnDirectAssign(taskId, subtask.id, effectiveAssigneeId);
+    }
     io.emit('subtask_created', { taskId, subtask });
 
     const task = await prisma.task.findUnique({ 
@@ -2871,12 +2915,25 @@ export async function updateSubtask(req: Request, res: Response) {
         status: true,
         completed: true,
         priority: true,
+        assigneeId: true,
         assignees: { select: { id: true, name: true, email: true } },
       },
     })) as any;
     const previousAssignees: { id: string; name: string; email?: string | null }[] = existingSubtask?.assignees || [];
     const oldSubtaskStatus: string = (existingSubtask?.status as string) || (existingSubtask?.completed ? 'CLOSED' : 'PENDING');
     const oldSubtaskPriority: string = (existingSubtask?.priority as string) || 'MEDIUM';
+
+    const nextSubtaskAssigneeId =
+      computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds)
+        ? resolveLatestAssigneeId({
+            nextIds: computedAssigneeIds,
+            previousIds: previousAssignees.map((p) => p.id),
+            currentAssigneeId: existingSubtask?.assigneeId || null,
+            explicitAssigneeId: assigneeId,
+          })
+        : assigneeId !== undefined
+        ? (assigneeId || null)
+        : undefined;
 
     const subtask = await prisma.subtask.update({
       where: { id: subtaskId },
@@ -2886,7 +2943,7 @@ export async function updateSubtask(req: Request, res: Response) {
         ...(status !== undefined && { status }),
         ...(finalCompleted !== undefined && { completed: finalCompleted }),
         ...(computedAssigneeIds !== undefined && Array.isArray(computedAssigneeIds) ? {
-          assigneeId: computedAssigneeIds.length > 0 ? computedAssigneeIds[0] : null,
+          assigneeId: nextSubtaskAssigneeId ?? null,
           assignees: { set: computedAssigneeIds.map((id: string) => ({ id })) }
         } : assigneeId !== undefined ? {
           assigneeId: assigneeId || null,
@@ -2905,6 +2962,14 @@ export async function updateSubtask(req: Request, res: Response) {
         team: { select: { id: true, name: true, color: true } }
       } as any
     });
+
+    if (assigneesChanging) {
+      if (subtask.assigneeId && subtask.assigneeId !== existingSubtask?.assigneeId) {
+        syncTaskMapOnDirectAssign(taskId, subtask.id, subtask.assigneeId).catch(() => {});
+      } else {
+        invalidateCache('task_map:all').catch(() => {});
+      }
+    }
 
     const authReq = req as any;
     const actingUserId = authReq.user?.id || (await prisma.user.findFirst())?.id;
@@ -4361,7 +4426,7 @@ export async function triggerRecurringRollover(req: Request, res: Response) {
 
 
 
-// GET /api/tasks/my-audits — unchecked audit items assigned to the current user, on open tasks
+// GET /api/tasks/my-audits — unchecked audit items assigned to the current user, on tasks/subtasks in IN REVIEW status
 export async function listMyAudits(req: Request, res: Response) {
   try {
     const userId = (req as any).user?.id;
@@ -4382,7 +4447,7 @@ export async function listMyAudits(req: Request, res: Response) {
         checklist: {
           select: {
             id: true,
-            subtask: { select: { id: true, title: true } },
+            subtask: { select: { id: true, title: true, status: true, completed: true } },
             task: { select: { id: true, title: true, status: true, priority: true, list: { select: { id: true, name: true } } } },
             subtaskId: true,
             taskId: true,
@@ -4439,7 +4504,13 @@ export async function listMyAudits(req: Request, res: Response) {
         const taskId = i.checklist.taskId || (i.checklist.subtaskId ? parentBySubtask.get(i.checklist.subtaskId)?.id : null);
         const subtaskId = i.checklist.subtaskId || null;
         const task = i.checklist.task || (subtaskId ? parentBySubtask.get(subtaskId) : null);
+        const subtask = i.checklist.subtask as any;
         if (!task || closed.includes((task.status || '').trim().toLowerCase())) return null;
+        if (subtask && (subtask.completed || closed.includes((subtask.status || '').trim().toLowerCase()))) return null;
+
+        // Only show audits when the effective status (subtask status if subtask audit, else task status) is IN REVIEW
+        const effectiveStatus = subtask?.status || task.status;
+        if (!isReviewStatus(effectiveStatus)) return null;
 
         const norm = normAudit(i.text);
         if (taskId && completedSet.has(`${taskId}::${norm}`)) return null;

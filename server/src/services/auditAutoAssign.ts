@@ -272,8 +272,8 @@ export async function autoAssignAudits(
   });
   if (!task) return { success: false, assignedCount: 0 };
 
-  // Status Gate: Only assign audits when task is IN REVIEW or CHECKING
-  if (!options?.force && !isReviewStatus(task.status) && !isCheckingStatus(task.status)) {
+  // Status Gate: Strictly only assign audits when task status is IN REVIEW
+  if (!isReviewStatus(task.status)) {
     return { success: false, assignedCount: 0 };
   }
 
@@ -451,15 +451,12 @@ export async function sweepInReviewTasksForShiftAudits(
         { status: { equals: 'In Review', mode: 'insensitive' } },
         { status: { equals: 'review', mode: 'insensitive' } },
         { status: { contains: 'review', mode: 'insensitive' } },
-        { status: { equals: 'CHECKING', mode: 'insensitive' } },
-        { status: { equals: 'Checking', mode: 'insensitive' } },
-        { status: { contains: 'checking', mode: 'insensitive' } },
       ],
     },
     select: { id: true, status: true },
   });
 
-  const matchingTasks = inReviewTasks.filter((t) => isReviewStatus(t.status) || isCheckingStatus(t.status));
+  const matchingTasks = inReviewTasks.filter((t) => isReviewStatus(t.status));
   let updatedTasks = 0;
 
   for (const t of matchingTasks) {

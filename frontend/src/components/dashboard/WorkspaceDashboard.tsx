@@ -852,8 +852,13 @@ function WorkspaceDashboardContent({
     return subtaskRows.length > 0 ? [...tasks, ...subtaskRows] : tasks;
   }, [tasks]);
 
+  const isStatusInReview = (status?: string | null) =>
+    ["in review", "inreview", "in-review", "review", "under review", "for review"].includes(
+      (status || "").trim().toLowerCase()
+    );
+
   const filteredMyAudits = useMemo(() => {
-    // Hide audits whose tasks are closed or whose items are completed
+    // Only show audits whose task/subtask status is IN REVIEW and whose items are not completed
     const openAudits = myAudits.filter((audit) => {
       if ((audit as any).completed) return false;
       const isSub = Boolean(audit.subtask?.id);
@@ -862,6 +867,11 @@ function WorkspaceDashboardContent({
       );
       const taskToCheck = known || audit.task;
       if (isTaskClosed(taskToCheck as Task)) return false;
+
+      // Require the effective status (subtask status if subtask audit, else task status) to be IN REVIEW
+      const effectiveStatus =
+        known?.status || (isSub ? audit.subtask?.status : undefined) || audit.task?.status;
+      if (!isStatusInReview(effectiveStatus)) return false;
 
       // If known task/subtask has the audit checklist item marked completed, do not show it
       if (known?.checklists) {
@@ -1011,9 +1021,14 @@ function WorkspaceDashboardContent({
         );
       }
 
-      // If a task:updated event was emitted with updated checklists
-      if (payload?.task) {
-        const targetTask = payload.task;
+      // If a task:updated event was emitted with updated checklists or status change
+      const targetTask = payload?.task || (payload?.id && payload?.status !== undefined ? payload : null);
+      if (targetTask) {
+        if (targetTask.status !== undefined && !isStatusInReview(targetTask.status)) {
+          setMyAudits((prev) =>
+            prev.filter((a) => !(a.task?.id === targetTask.id && !a.subtask?.id))
+          );
+        }
         const auditChecklists = (targetTask.checklists || []).filter((c: any) =>
           (c.name || "").trim().toLowerCase() === "audit"
         );

@@ -32,7 +32,7 @@ import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -463,21 +463,19 @@ async function addAssignee(target: LinkedTarget, assignee: unknown, res: Respons
   if (!user) return res.status(404).json({ error: `No Nexus user named "${assignee}"` });
 
   if (target.subtaskId) {
-    const subtask = await prisma.subtask.findUnique({ where: { id: target.subtaskId }, select: { assigneeId: true } });
     await prisma.subtask.update({
       where: { id: target.subtaskId },
       data: {
         assignees: { connect: { id: user.id } },
-        ...(!subtask?.assigneeId && { assigneeId: user.id }),
+        assigneeId: user.id,
       },
     });
   } else {
-    const task = await prisma.task.findUnique({ where: { id: target.taskId }, select: { assigneeId: true } });
     const updated = await prisma.task.update({
       where: { id: target.taskId },
       data: {
         assignees: { connect: { id: user.id } },
-        ...(!task?.assigneeId && { assigneeId: user.id }),
+        assigneeId: user.id,
       },
       select: {
         id: true, listId: true, assigneeId: true, updatedAt: true,
@@ -488,7 +486,8 @@ async function addAssignee(target: LinkedTarget, assignee: unknown, res: Respons
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all');
+  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:all');
+  await syncTaskMapOnDirectAssign(target.taskId, target.subtaskId, user.id);
   return res.status(200).json({ success: true, assignee: user.name, clickup_link: target.clickUpLink });
 }
 
@@ -501,11 +500,11 @@ async function removeAssignee(target: LinkedTarget, assignee: unknown, res: Resp
   const current = target.subtaskId
     ? await prisma.subtask.findUnique({ where, select })
     : await prisma.task.findUnique({ where, select });
-  // The primary assignee falls back to whoever else is still assigned.
+  // The primary assignee falls back to the last remaining assignee if the current handler is removed.
   const remaining = (current?.assignees ?? []).map((a) => a.id).filter((id) => id !== user.id);
   const data = {
     assignees: { disconnect: { id: user.id } },
-    ...(current?.assigneeId === user.id && { assigneeId: remaining[0] ?? null }),
+    ...(current?.assigneeId === user.id && { assigneeId: remaining.length > 0 ? remaining[remaining.length - 1] : null }),
   };
 
   if (target.subtaskId) {
@@ -523,7 +522,8 @@ async function removeAssignee(target: LinkedTarget, assignee: unknown, res: Resp
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all');
+  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:all');
+  io.emit('task_map:updated');
   return res.status(200).json({ success: true, assignee: user.name, clickup_link: target.clickUpLink });
 }
 
@@ -900,10 +900,10 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
             if (parsed?.userName && parsed.userName.toLowerCase().trim() === maClean) {
               shouldDelete = true;
             }
-          } catch {}
+          } catch { }
         }
         if (shouldDelete) {
-          await redis.hdel('task_map:upwork_active', key).catch(() => {});
+          await redis.hdel('task_map:upwork_active', key).catch(() => { });
           io.emit('upwork:status_changed', { taskId: key, active: false, userName: maName });
         }
       }
@@ -961,10 +961,10 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
           `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
           JSON.stringify(updatedRevs),
           rec.taskId
-        ).catch(() => {});
+        ).catch(() => { });
         await invalidateCache(`task:${rec.taskId}`, 'task-map:data');
         if (isRedisReady()) {
-          await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => {});
+          await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
         }
         io.emit('upwork:status_changed', { taskId: rec.taskId, active: false, userName: maName });
       }
@@ -1167,7 +1167,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               const allKeys = await redis.hkeys('task_map:upwork_active').catch(() => []);
               for (const k of allKeys) {
                 if (k.startsWith(userPrefix)) {
-                  await redis.hdel('task_map:upwork_active', k).catch(() => {});
+                  await redis.hdel('task_map:upwork_active', k).catch(() => { });
                 }
               }
             }
@@ -1209,7 +1209,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               const allKeys = await redis.hkeys('task_map:upwork_active').catch(() => []);
               for (const k of allKeys) {
                 if (k.startsWith(userPrefix)) {
-                  await redis.hdel('task_map:upwork_active', k).catch(() => {});
+                  await redis.hdel('task_map:upwork_active', k).catch(() => { });
                 }
               }
             }
@@ -1245,9 +1245,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           };
           if (isRedisReady()) {
             if (cleanTimeOut) {
-              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
             } else {
-              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => {});
+              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
             }
           }
           io.emit('ma:session_updated', sessionData);
@@ -1275,10 +1275,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         const assumedTask = cleanTaskStr
           ? cleanTaskStr
           : (task_deliverables_description?.trim()
-              ? String(task_deliverables_description).trim()
-              : (task_update_and_deliverables?.trim()
-                  ? String(task_update_and_deliverables).trim()
-                  : 'No task inputted'));
+            ? String(task_deliverables_description).trim()
+            : (task_update_and_deliverables?.trim()
+              ? String(task_update_and_deliverables).trim()
+              : 'No task inputted'));
         const sessionDate = date ? String(date).trim() : new Date().toISOString().split('T')[0];
         const sessionStatus = statusStr || (cleanTimeOut ? 'Done' : 'In progress');
         const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
@@ -1310,16 +1310,16 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             try {
               const parsed = JSON.parse(currentActiveRaw);
               if (parsed.rowNumber) currentActiveRowNum = Number(parsed.rowNumber);
-            } catch (_) {}
+            } catch (_) { }
           }
 
           isOlderRowEdit = incomingRowNum > 0 && currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum;
 
           if (!isOlderRowEdit) {
             if (cleanTimeOut) {
-              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
             } else {
-              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => {});
+              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
             }
             io.emit('ma:session_updated', sessionData);
             io.emit('task_map:ma_progress_changed', sessionData);
@@ -1352,7 +1352,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   mod = true;
                   if (r.isUpwork) {
                     if (isRedisReady()) {
-                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => {});
+                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
                     }
                     io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
                   }
@@ -1364,7 +1364,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   mod = true;
                   if (r.isUpwork) {
                     if (isRedisReady()) {
-                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => {});
+                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
                     }
                     io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
                   }
@@ -1377,7 +1377,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   r.stoppedAt = r.stoppedAt || new Date().toISOString();
                   mod = true;
                   if (isRedisReady()) {
-                    redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => {});
+                    redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
                   }
                   io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
                 }
@@ -1536,7 +1536,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 modified = true;
                 if (r.isUpwork) {
                   if (isRedisReady()) {
-                    redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => {});
+                    redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
                   }
                   io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
                 }
@@ -1550,7 +1550,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 modified = true;
                 if (r.isUpwork) {
                   if (isRedisReady()) {
-                    redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => {});
+                    redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
                   }
                   io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
                 }
@@ -1563,7 +1563,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 r.stoppedAt = r.stoppedAt || new Date().toISOString();
                 modified = true;
                 if (isRedisReady()) {
-                  redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => {});
+                  redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
                 }
                 io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
               }
@@ -1604,7 +1604,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           try {
             const parsed = JSON.parse(currentActiveRaw);
             if (parsed.rowNumber) currentActiveRowNum = Number(parsed.rowNumber);
-          } catch (_) {}
+          } catch (_) { }
         }
       }
 
@@ -1630,9 +1630,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         };
         if (isRedisReady()) {
           if (cleanTimeOut) {
-            await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+            await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
           } else {
-            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => {});
+            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
           }
         }
         io.emit('ma:session_updated', maSession);
@@ -1673,10 +1673,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             redis.hkeys('task_map:upwork_active').then((allKeys) => {
               for (const k of allKeys) {
                 if (k.startsWith(userPrefix)) {
-                  redis.hdel('task_map:upwork_active', k).catch(() => {});
+                  redis.hdel('task_map:upwork_active', k).catch(() => { });
                 }
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
           redis.hset(
             'task_map:upwork_active',
@@ -1723,10 +1723,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             redis.hkeys('task_map:upwork_active').then((allKeys) => {
               for (const k of allKeys) {
                 if (k.startsWith(userPrefix)) {
-                  redis.hdel('task_map:upwork_active', k).catch(() => {});
+                  redis.hdel('task_map:upwork_active', k).catch(() => { });
                 }
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
 
@@ -1748,7 +1748,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       if (hadUpworkSession) {
         reviewsList = reviewsList.filter((r: any) => r.type !== 'UPWORK_SESSION');
         if (isRedisReady()) {
-          redis.hdel('task_map:upwork_active', target.taskId).catch(() => {});
+          redis.hdel('task_map:upwork_active', target.taskId).catch(() => { });
         }
         io.emit('upwork:status_changed', {
           taskId: target.taskId,
@@ -1790,9 +1790,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       };
       const maKey = maNameStr.toLowerCase().trim();
       if (cleanTimeOut) {
-        await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => {});
+        await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
       } else {
-        await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => {});
+        await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
       }
       io.emit('ma:session_updated', maSession);
       io.emit('task_map:ma_progress_changed', maSession);

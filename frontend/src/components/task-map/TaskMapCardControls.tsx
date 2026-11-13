@@ -6,7 +6,7 @@ import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
@@ -73,19 +73,11 @@ export const isTaskHigh = (task: TaskMapItem) => {
   return p === 'HIGH';
 };
 
-export const isTaskOnHold = (task: TaskMapItem) => {
-  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
-  if (s === 'ONHOLD' || s.includes('HOLD')) return true;
-  const customStatuses = task.taskMap?.statuses || [];
-  return customStatuses.some((cs: string) => {
-    const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
-    return up === 'ONHOLD' || up.includes('HOLD');
-  });
-};
+export const isTaskOnHold = isTaskMapItemOnHold;
 
 /**
- * Sort Task Map items with all Urgent tasks strictly at the top,
- * non-urgent On-hold tasks at the bottom, then High priority, optional In Progress, and newest first.
+ * Sort Task Map items with all On-Hold tasks strictly at the most bottom,
+ * then Urgent tasks at the top, then High priority, optional In Progress, and newest first.
  */
 export const sortTasksUrgentFirst = (
   items: TaskMapItem[],
@@ -93,13 +85,13 @@ export const sortTasksUrgentFirst = (
 ) => {
   const prioritizeInProgress = Boolean(options?.prioritizeInProgress);
   return [...items].sort((a, b) => {
-    const urgentA = isTaskUrgent(a) ? 1 : 0;
-    const urgentB = isTaskUrgent(b) ? 1 : 0;
-    if (urgentA !== urgentB) return urgentB - urgentA;
-
     const holdA = isTaskOnHold(a) ? 1 : 0;
     const holdB = isTaskOnHold(b) ? 1 : 0;
     if (holdA !== holdB) return holdA - holdB;
+
+    const urgentA = isTaskUrgent(a) ? 1 : 0;
+    const urgentB = isTaskUrgent(b) ? 1 : 0;
+    if (urgentA !== urgentB) return urgentB - urgentA;
 
     const highA = isTaskHigh(a) ? 1 : 0;
     const highB = isTaskHigh(b) ? 1 : 0;
@@ -121,18 +113,28 @@ export const sortAvailablePoolTasks = (items: TaskMapItem[]) =>
   groupTasksWithSubtasks(sortTasksUrgentFirst(items, { prioritizeInProgress: true }));
 
 /**
- * Places subtasks directly below their parent main task whenever both exist in the same column,
- * while keeping separated subtasks (whose parent is absent) at their natural sorted positions.
+ * Places subtasks directly below their parent main task whenever both exist in the same column
+ * (unless a subtask is On-Hold under an active parent, keeping On-Hold at the bottom),
+ * while keeping separated subtasks at their natural sorted positions.
  */
 export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[] => {
-  const presentParentIds = new Set<string>();
+  const parentById = new Map<string, TaskMapItem>();
   for (const item of sortedItems) {
-    if (!item.isSubtask) presentParentIds.add(item.id);
+    if (!item.isSubtask) parentById.set(item.id, item);
   }
+
+  const shouldAttachToParent = (item: TaskMapItem): boolean => {
+    if (!item.isSubtask || !item.parentTaskId) return false;
+    const parent = parentById.get(item.parentTaskId);
+    if (!parent) return false;
+    // Keep On-Hold subtasks at the very bottom rather than pulling them up under an active parent
+    if (isTaskOnHold(item) && !isTaskOnHold(parent)) return false;
+    return true;
+  };
 
   const attachedByParent = new Map<string, TaskMapItem[]>();
   for (const item of sortedItems) {
-    if (item.isSubtask && item.parentTaskId && presentParentIds.has(item.parentTaskId)) {
+    if (shouldAttachToParent(item) && item.parentTaskId) {
       const list = attachedByParent.get(item.parentTaskId) || [];
       list.push(item);
       attachedByParent.set(item.parentTaskId, list);
@@ -150,7 +152,7 @@ export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[
 
   const result: TaskMapItem[] = [];
   for (const item of sortedItems) {
-    if (item.isSubtask && item.parentTaskId && presentParentIds.has(item.parentTaskId)) {
+    if (shouldAttachToParent(item)) {
       continue;
     }
     result.push(item);

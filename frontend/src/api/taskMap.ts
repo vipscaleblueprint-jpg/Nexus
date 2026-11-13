@@ -185,6 +185,348 @@ export function hasPmAssignmentForUser(task?: TaskMapItem | null, userId?: strin
   return Boolean(pmAssign);
 }
 
+export function getPmAssignedUserId(task?: TaskMapItem | null): string | null {
+  if (!task) return null;
+  let reviewsList = task.taskMap?.pmReviews;
+  if (typeof reviewsList === 'string') {
+    try {
+      reviewsList = JSON.parse(reviewsList);
+    } catch {
+      reviewsList = [];
+    }
+  }
+  if (!Array.isArray(reviewsList)) return null;
+  const pmAssign = reviewsList.find(
+    (r: any) =>
+      r?.type === 'PM_ASSIGNMENT' &&
+      r?.assignedTo &&
+      (task.isSubtask ? r?.subtaskId === task.subtaskId : !r?.subtaskId)
+  );
+  return pmAssign?.assignedTo || null;
+}
+
+export function isTaskHandedOver(task?: TaskMapItem | null): boolean {
+  if (!task) return false;
+  if (task.taskMap?.handedOver) return true;
+  const statuses = task.taskMap?.statuses || [];
+  return statuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+}
+
+export function getEffectiveTaskMapHandlerId(task?: TaskMapItem | null): string | null {
+  if (!task) return null;
+  const pmAssignedId = getPmAssignedUserId(task);
+  if (pmAssignedId) return pmAssignedId;
+  if (isTaskHandedOver(task)) return null;
+  return task.assigneeId || task.assignee?.id || null;
+}
+
+/**
+ * Search helper for Task Map header search: matches Marketing Associate (MA) / user name
+ */
+export function matchesMarketingNameSearch(user: any, searchQuery?: string | null): boolean {
+  const clean = (searchQuery || '').trim().toLowerCase();
+  if (!clean) return true;
+  if (!user) return false;
+  const name = (user.name || '').trim().toLowerCase();
+  const email = (user.email || '').trim().toLowerCase();
+  const tokens = clean.split(/\s+/).filter(Boolean);
+  return tokens.every((tok) => name.includes(tok) || email.includes(tok));
+}
+
+/**
+ * Reactive tracker for tasks currently being saved/posted to the database on Task Map
+ */
+const savingTaskCounts = new Map<string, number>();
+const savingListeners = new Set<(savingIds: Set<string>) => void>();
+
+function notifySavingListeners() {
+  const activeIds = new Set<string>();
+  savingTaskCounts.forEach((count, id) => {
+    if (count > 0) activeIds.add(id);
+  });
+  savingListeners.forEach((listener) => {
+    try {
+      listener(activeIds);
+    } catch (err) {
+      console.error('TaskMap saving listener error:', err);
+    }
+  });
+}
+
+export function markTaskSavingToDb(taskId: string, isSaving: boolean): void {
+  if (!taskId) return;
+  const current = savingTaskCounts.get(taskId) || 0;
+  if (isSaving) {
+    savingTaskCounts.set(taskId, current + 1);
+  } else if (current <= 1) {
+    savingTaskCounts.delete(taskId);
+  } else {
+    savingTaskCounts.set(taskId, current - 1);
+  }
+  notifySavingListeners();
+}
+
+export function isTaskSavingToDb(taskId?: string | null): boolean {
+  if (!taskId) return false;
+  return (savingTaskCounts.get(taskId) || 0) > 0;
+}
+
+export function getSavingTaskIds(): Set<string> {
+  const activeIds = new Set<string>();
+  savingTaskCounts.forEach((count, id) => {
+    if (count > 0) activeIds.add(id);
+  });
+  return activeIds;
+}
+
+export function subscribeTaskMapSaving(listener: (savingIds: Set<string>) => void): () => void {
+  savingListeners.add(listener);
+  listener(getSavingTaskIds());
+  return () => {
+    savingListeners.delete(listener);
+  };
+}
+
+function parseTaskPmReviewsList(task?: TaskMapItem | null): any[] {
+  if (!task) return [];
+  let reviewsList: any = task.taskMap?.pmReviews;
+  if (typeof reviewsList === 'string') {
+    try {
+      reviewsList = JSON.parse(reviewsList);
+    } catch {
+      reviewsList = [];
+    }
+  }
+  return Array.isArray(reviewsList) ? [...reviewsList] : [];
+}
+
+function isCadenceTaskMapItem(task: TaskMapItem): boolean {
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const mapStatuses = (task.taskMap?.statuses || []).map((x) =>
+    x.trim().toUpperCase().replace(/[\s_-]+/g, '')
+  );
+  return (
+    s === 'DAILY' ||
+    s.includes('DAILY') ||
+    s === 'WEEKLY' ||
+    s.includes('WEEKLY') ||
+    s === 'MONTHLY' ||
+    s.includes('MONTHLY') ||
+    s === 'RECURRING' ||
+    s.includes('RECURRING') ||
+    Boolean((task as any).recurringConfig) ||
+    mapStatuses.some(
+      (st) =>
+        ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+        st.includes('DAILY') ||
+        st.includes('WEEKLY') ||
+        st.includes('MONTHLY') ||
+        st.includes('RECURRING')
+    )
+  );
+}
+
+/**
+ * Optimistically apply a Task Map drag-and-drop assignment or slot change at 0ms on the frontend
+ * so the card moves immediately into its target column/slot while posting to the database.
+ */
+export function applyOptimisticTaskMapAssignment(
+  task: TaskMapItem,
+  targetUser: { id: string; name?: string; email?: string; avatarUrl?: string | null; roles?: string[] } | null,
+  mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
+): TaskMapItem {
+  const existingReviews = parseTaskPmReviewsList(task);
+  const filteredReviews = existingReviews.filter((r: any) => {
+    if (r?.type !== 'PM_ASSIGNMENT') return true;
+    return task.isSubtask ? r?.subtaskId !== task.subtaskId : Boolean(r?.subtaskId);
+  });
+
+  const isCadence = isCadenceTaskMapItem(task);
+  const existingStatuses = Array.isArray(task.taskMap?.statuses) ? [...task.taskMap.statuses] : [];
+
+  if (!targetUser) {
+    // Unassign / return to Available Tasks pool
+    return {
+      ...task,
+      assigneeId: null,
+      assignee: null,
+      assignees: [],
+      status: isCadence ? task.status : 'PENDING',
+      progress: task.progress
+        ? {
+            ...task.progress,
+            timeIn: null,
+            timeOut: task.progress.timeOut || (task.progress.timeIn ? 'HandedOver' : null),
+          }
+        : null,
+      taskMap: {
+        ...(task.taskMap || {
+          taskId: task.id,
+          statuses: ['Hand-over'],
+          shift: 'DAY',
+          stepOrder: 0,
+          dontRollover: false,
+        }),
+        handedOver: true,
+        statuses: ['Hand-over'],
+        pmReviews: filteredReviews,
+      },
+    };
+  }
+
+  const nextReviews = [
+    ...filteredReviews,
+    {
+      id: `optimistic-pm-${Date.now()}`,
+      type: 'PM_ASSIGNMENT',
+      assignedTo: targetUser.id,
+      assignedToName: targetUser.name || 'Team Member',
+      subtaskId: task.isSubtask ? task.subtaskId : undefined,
+      mode,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  const cleanedStatuses = existingStatuses.filter((st) => {
+    const norm = st.trim().toUpperCase().replace(/[\s_-]+/g, '');
+    if (norm === 'HANDOVER') return false;
+    if (mode === 'QUEUE' && norm === 'INPROGRESS') return false;
+    return true;
+  });
+
+  if (mode === 'IN_PROGRESS' && !cleanedStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+    cleanedStatuses.push('In progress');
+  }
+
+  const curStatusNorm = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const nextStatus =
+    mode === 'IN_PROGRESS'
+      ? isCadence
+        ? task.status
+        : 'IN PROGRESS'
+      : isCadence
+        ? task.status
+        : curStatusNorm === 'INPROGRESS' || curStatusNorm === 'ONHOLD'
+          ? 'PENDING'
+          : task.status || 'PENDING';
+
+  const nextAssigneeObj = {
+    id: targetUser.id,
+    name: targetUser.name || 'Team Member',
+    email: targetUser.email || '',
+    avatarUrl: targetUser.avatarUrl || null,
+    roles: targetUser.roles || [],
+  };
+
+  const nextAssignees = [
+    nextAssigneeObj,
+    ...(task.assignees || []).filter((u: any) => u && u.id !== targetUser.id),
+  ];
+
+  const nextProgress =
+    mode === 'IN_PROGRESS'
+      ? {
+          ...(task.progress || {}),
+          maName: targetUser.name || task.progress?.maName || 'Team Member',
+          timeOut: null,
+        }
+      : task.progress
+        ? {
+            ...task.progress,
+            timeIn: null,
+          }
+        : null;
+
+  return {
+    ...task,
+    assigneeId: targetUser.id,
+    assignee: nextAssigneeObj,
+    assignees: nextAssignees,
+    status: nextStatus,
+    progress: nextProgress as any,
+    taskMap: {
+      ...(task.taskMap || {
+        taskId: task.id,
+        statuses: cleanedStatuses,
+        shift: 'DAY',
+        stepOrder: 0,
+        dontRollover: false,
+      }),
+      handedOver: false,
+      statuses: cleanedStatuses,
+      pmReviews: nextReviews,
+    },
+  };
+}
+
+/**
+ * Syncs taskMap.pmReviews when a task's assigneeId is updated directly (e.g. Auditing or CRM view)
+ */
+export function syncTaskPmReviewsWithAssignee(
+  task: TaskMapItem,
+  nextAssigneeId: string | null | undefined,
+  nextAssigneeName?: string
+): TaskMapRecord {
+  const baseMap: TaskMapRecord = task.taskMap || {
+    taskId: task.id,
+    statuses: [],
+    shift: 'DAY',
+    stepOrder: 0,
+    dontRollover: false,
+    handedOver: false,
+    pmReviews: [],
+  };
+  if (nextAssigneeId === undefined) return baseMap;
+
+  const existingReviews = parseTaskPmReviewsList(task);
+  const filteredReviews = existingReviews.filter((r: any) => {
+    if (r?.type !== 'PM_ASSIGNMENT') return true;
+    return task.isSubtask ? r?.subtaskId !== task.subtaskId : Boolean(r?.subtaskId);
+  });
+
+  if (nextAssigneeId === null) {
+    return {
+      ...baseMap,
+      handedOver: true,
+      pmReviews: filteredReviews,
+    };
+  }
+
+  return {
+    ...baseMap,
+    handedOver: false,
+    pmReviews: [
+      ...filteredReviews,
+      {
+        id: `optimistic-pm-${Date.now()}`,
+        type: 'PM_ASSIGNMENT',
+        assignedTo: nextAssigneeId,
+        assignedToName: nextAssigneeName || 'Team Member',
+        subtaskId: task.isSubtask ? task.subtaskId : undefined,
+        mode: 'QUEUE',
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  };
+}
+
+export function pickLatestPrimaryAssignee<T extends { id: string }>(
+  updatedAssignees: T[],
+  currentAssigneeId?: string | null,
+  toggledUser?: T | null,
+  wasRemoved?: boolean
+): T | null {
+  if (updatedAssignees.length === 0) return null;
+  if (!wasRemoved && toggledUser && updatedAssignees.some((u) => u.id === toggledUser.id)) {
+    return toggledUser;
+  }
+  if (currentAssigneeId) {
+    const preserved = updatedAssignees.find((u) => u.id === currentAssigneeId);
+    if (preserved) return preserved;
+  }
+  return updatedAssignees[updatedAssignees.length - 1];
+}
+
 export interface DailyRolloverResult {
   success: boolean;
   rolledCount: number;
@@ -223,7 +565,6 @@ export const taskMapApi = {
     const q = new URLSearchParams();
     if (params?.shift) q.set('shift', params.shift);
     if (params?.date) q.set('date', params.date);
-    if (params?.search) q.set('search', params.search);
     if (params?.client) q.set('client', params.client);
     q.set('_t', String(Date.now()));
     const queryString = q.toString() ? `?${q.toString()}` : '';
@@ -268,22 +609,32 @@ export const taskMapApi = {
     upworkSession?: UpworkSession | null;
     activeUpworkSessions?: UpworkSession[];
   }> => {
-    return apiClient<{
-      success: boolean;
-      taskMap: TaskMapRecord;
-      upworkStartedAt?: string | null;
-      upworkSession?: UpworkSession | null;
-      activeUpworkSessions?: UpworkSession[];
-    }>(`/api/task-map/tasks/${taskId}/statuses`, {
-      method: 'PATCH',
-      body: JSON.stringify({ statuses }),
-    });
+    markTaskSavingToDb(taskId, true);
+    try {
+      return await apiClient<{
+        success: boolean;
+        taskMap: TaskMapRecord;
+        upworkStartedAt?: string | null;
+        upworkSession?: UpworkSession | null;
+        activeUpworkSessions?: UpworkSession[];
+      }>(`/api/task-map/tasks/${taskId}/statuses`, {
+        method: 'PATCH',
+        body: JSON.stringify({ statuses }),
+      });
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
   },
 
   claimTask: async (taskId: string): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/claim`, {
-      method: 'PATCH',
-    });
+    markTaskSavingToDb(taskId, true);
+    try {
+      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/claim`, {
+        method: 'PATCH',
+      });
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
   },
 
   assignTask: async (
@@ -291,10 +642,15 @@ export const taskMapApi = {
     assigneeId: string | null,
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/assign`, {
-      method: 'PATCH',
-      body: JSON.stringify({ assigneeId, mode }),
-    });
+    markTaskSavingToDb(taskId, true);
+    try {
+      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/assign`, {
+        method: 'PATCH',
+        body: JSON.stringify({ assigneeId, mode }),
+      });
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
   },
 
   resetColumnTasks: async (
@@ -765,5 +1121,28 @@ export function getDefaultTaskMapSubStatuses(taskStatus?: string | null): string
   }
   return ['Available Task'];
 }
+
+/**
+ * Returns true if the Task Map item is in On-Hold status (main status or Task Map sub-status).
+ */
+export function isTaskMapItemOnHold(task?: Partial<TaskMapItem> | null): boolean {
+  if (!task) return false;
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (s === 'ONHOLD' || s.includes('HOLD')) return true;
+  const customStatuses = task.taskMap?.statuses || [];
+  return customStatuses.some((cs: string) => {
+    const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    return up === 'ONHOLD' || up.includes('HOLD');
+  });
+}
+
+/**
+ * Counts active Task Map items excluding On-Hold tasks for task number indicators.
+ */
+export function countNonOnHoldTasks(items?: Array<Partial<TaskMapItem>> | null): number {
+  if (!items || items.length === 0) return 0;
+  return items.filter((t) => !isTaskMapItemOnHold(t)).length;
+}
+
 
 

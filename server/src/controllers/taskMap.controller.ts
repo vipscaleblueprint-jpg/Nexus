@@ -56,18 +56,18 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const requestedDate = (dateQuery || todayManila).trim().split('T')[0];
     const isPastDate = requestedDate < todayManila;
 
-    const shiftTokens = shiftQuery
+    const activeShift = await getCurrentActiveShift();
+    const effectiveShiftStr = (shiftQuery || activeShift || 'ALL').toUpperCase();
+    const shiftTokens = effectiveShiftStr
       .split(',')
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
 
     const isAllShifts =
       shiftTokens.length === 0 ||
-      shiftTokens.includes('ALL') ||
-      (shiftTokens.includes('DAY') && shiftTokens.includes('NOON') && shiftTokens.includes('NIGHT'));
+      shiftTokens.includes('ALL');
 
-    const activeShift = await getCurrentActiveShift();
-    const currentShift = isAllShifts ? 'ALL' : (shiftQuery || activeShift);
+    const currentShift = isAllShifts ? 'ALL' : shiftTokens.join(',');
 
     const cacheKey = `task_map:data:${requestedDate}:${currentShift}:${clientQuery || 'ALL'}:${searchQuery || 'ALL'}`;
     const cachedData = await getCache<any>(cacheKey);
@@ -243,8 +243,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       .filter((u) => {
         if (isAllShifts && (shiftMemberIdSet.size === 0 && shiftAuditorIdSet.size === 0)) return true;
         if (shiftMemberIdSet.has(u.id) || shiftAuditorIdSet.has(u.id)) return true;
-        if (u.name && (shiftMemberNameSet.has(u.name.toLowerCase()) || shiftAuditorNameSet.has(u.name.toLowerCase()))) {
+        const uName = (u.name || '').trim().toLowerCase();
+        if (!uName) return false;
+        if (shiftMemberNameSet.has(uName) || shiftAuditorNameSet.has(uName)) {
           return true;
+        }
+        for (const token of [...shiftMemberNameSet, ...shiftAuditorNameSet]) {
+          if (token && (uName.startsWith(`${token} `) || (token.length >= 3 && uName.includes(token)))) {
+            return true;
+          }
         }
         return false;
       })
@@ -411,8 +418,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           const subAssignees = Array.isArray(st.assignees) && st.assignees.length > 0
             ? st.assignees
             : (st.User ? [st.User] : []);
-          const subAssignee = st.User || subAssignees[0] || null;
-          const subAssigneeId = st.assigneeId || subAssignee?.id || null;
+          const subAssigneeId = st.assigneeId || null;
+          const subAssignee =
+            (subAssigneeId && st.User?.id === subAssigneeId ? st.User : null) ||
+            (subAssigneeId ? subAssignees.find((u: any) => u.id === subAssigneeId) : null) ||
+            null;
 
           const subPmTags = subStatuses.filter((s: string) => {
             const up = s.toUpperCase();
@@ -475,6 +485,79 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
+    // Batched AuditLog fallback for pre-existing multi-assignee tasks/subtasks (so the most recently assigned user owns the card)
+    const multiAssigneeItems = enrichedTasks.filter((item: any) => {
+      if (!item.assigneeId || !Array.isArray(item.assignees) || item.assignees.length <= 1) return false;
+      if (item.taskMap?.handedOver) return false;
+      const isLive = Boolean(item.progress?.maName && !item.progress?.timeOut && item.progress?.timeIn);
+      if (isLive) return false;
+      const revs = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap.pmReviews : [];
+      const hasPm = revs.some(
+        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo && (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
+      );
+      return !hasPm;
+    });
+
+    if (multiAssigneeItems.length > 0) {
+      const entityIds = Array.from(
+        new Set(
+          multiAssigneeItems.flatMap((i: any) => (i.isSubtask ? [i.parentTaskId, i.subtaskId] : [i.id])).filter(Boolean)
+        )
+      );
+      const logs = await prisma.auditLog.findMany({
+        where: {
+          action: 'ASSIGNMENT',
+          entity: { in: ['TASK', 'SUBTASK'] },
+          entityId: { in: entityIds },
+        },
+        select: { entityId: true, details: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const logsByEntity = new Map<string, any[]>();
+      for (const l of logs) {
+        const arr = logsByEntity.get(l.entityId) || [];
+        arr.push(l);
+        logsByEntity.set(l.entityId, arr);
+      }
+
+      for (const item of multiAssigneeItems) {
+        const candidateLogs = item.isSubtask
+          ? [...(logsByEntity.get(item.subtaskId) || []), ...(logsByEntity.get(item.parentTaskId) || [])].filter(
+              (l: any) => l.details?.subtaskId === item.subtaskId
+            )
+          : (logsByEntity.get(item.id) || []).filter((l: any) => !l.details?.subtaskId);
+
+        let resolvedUser: any = null;
+        for (const l of candidateLogs) {
+          const d: any = l.details || {};
+          const addedNames: string[] = Array.isArray(d.added) ? d.added : [];
+          for (let k = addedNames.length - 1; k >= 0; k--) {
+            const targetName = String(addedNames[k] || '').trim().toLowerCase();
+            if (!targetName) continue;
+            const match = item.assignees.find((u: any) => (u.name || '').trim().toLowerCase() === targetName);
+            if (match) {
+              resolvedUser = match;
+              break;
+            }
+          }
+          if (resolvedUser) break;
+          if (typeof d.assigneeName === 'string' && !d.assigneeName.includes(',')) {
+            const singleName = d.assigneeName.trim().toLowerCase();
+            const match = item.assignees.find((u: any) => (u.name || '').trim().toLowerCase() === singleName);
+            if (match) {
+              resolvedUser = match;
+              break;
+            }
+          }
+        }
+        if (resolvedUser && resolvedUser.id !== item.assigneeId) {
+          item.assigneeId = resolvedUser.id;
+          item.assignee = resolvedUser;
+        }
+      }
+    }
+
     // Filter by search query if present
     const searchedTasks = enrichedTasks.filter((task: any) => {
       if (!searchQuery) return true;
@@ -517,12 +600,17 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
 
-      // Exclude recurring, daily, weekly, monthly, and CRM/Waiting tasks
+      // Exclude review/audit, recurring, daily, weekly, monthly, and CRM/Waiting tasks from Available Tasks pool
       const isExcluded =
         s === 'WAITING' ||
         s.includes('WAITING') ||
         s === 'CRM' ||
         s.includes('CRM') ||
+        s === 'INREVIEW' ||
+        s === 'TOREVIEW' ||
+        s === 'REVIEW' ||
+        s === 'CHECKING' ||
+        s === 'INCHECKING' ||
         s === 'DAILY' ||
         s.includes('DAILY') ||
         s === 'WEEKLY' ||
@@ -533,7 +621,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         s.includes('RECURRING') ||
         !!t.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
           st.includes('WAITING') ||
           st.includes('CRM') ||
           st.includes('DAILY') ||
@@ -544,9 +632,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       if (isExcluded) return false;
 
-      // Available tasks pool holds all non-closed, non-cadence workflow tasks
-      // that are NOT currently claimed by an active live worker or queued to a user column by a PM.
-      // Direct Assignment is removed so user columns start clean and empty.
+      // Available tasks pool holds non-closed, non-cadence workflow tasks
+      // that are unassigned OR explicitly handed over (and not actively worked or PM-queued).
       let reviewsList = t.taskMap?.pmReviews;
       if (typeof reviewsList === 'string') {
         try { reviewsList = JSON.parse(reviewsList); } catch { reviewsList = []; }
@@ -566,6 +653,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       );
 
       if (isLiveWorking || hasPmAssignment) {
+        return false;
+      }
+
+      const isExplicitlyHandedOver = Boolean(t.taskMap?.handedOver) || mapStatuses.includes('HANDOVER');
+      if (t.assigneeId && !isExplicitlyHandedOver) {
         return false;
       }
 
@@ -597,15 +689,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return isAvailableTaskStatus(t);
       })
       .sort((a: any, b: any) => {
-        // 0. ALWAYS prioritize urgent tasks at the very top
-        const urgentA = isTaskUrgent(a) ? 1 : 0;
-        const urgentB = isTaskUrgent(b) ? 1 : 0;
-        if (urgentA !== urgentB) return urgentB - urgentA;
-
-        // 1. Non-urgent on-hold tasks go to the bottom
+        // 0. Always push ALL On-hold tasks (even urgent) to the very bottom
         const holdA = isTaskOnHold(a) ? 1 : 0;
         const holdB = isTaskOnHold(b) ? 1 : 0;
         if (holdA !== holdB) return holdA - holdB;
+
+        // 1. Prioritize urgent tasks at the top among active (non-on-hold) tasks
+        const urgentA = isTaskUrgent(a) ? 1 : 0;
+        const urgentB = isTaskUrgent(b) ? 1 : 0;
+        if (urgentA !== urgentB) return urgentB - urgentA;
 
         const highA = isTaskHigh(a) ? 1 : 0;
         const highB = isTaskHigh(b) ? 1 : 0;
@@ -1138,23 +1230,43 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Only Project Managers can modify statuses on Available Tasks' });
       }
 
+      const isHandoverSubStatus = statuses.some((s: string) => {
+        const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+        return norm === 'HANDOVER' || norm === 'AVAILABLETASK';
+      });
+
       const parentRecord = await getOrCreateTaskMapRecord(subtask.taskId);
-      const pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
+      let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
       const subStateIdx = pmReviews.findIndex((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtask.id);
       const oldStatuses =
         subStateIdx !== -1 && Array.isArray(pmReviews[subStateIdx].statuses)
           ? pmReviews[subStateIdx].statuses
           : deriveDefaultTaskMapStatuses(subtask.status || (subtask.completed ? 'CLOSED' : 'PENDING'));
 
+      if (isHandoverSubStatus) {
+        pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
+        if (subtask.assigneeId) {
+          await prisma.subtask.update({
+            where: { id: subtask.id },
+            data: { assigneeId: null },
+          });
+        }
+      }
+
+      const nextHandedOver = isHandoverSubStatus
+        ? true
+        : (subStateIdx !== -1 ? Boolean(pmReviews[subStateIdx].handedOver) : false);
+
       const nextEntry = {
         type: 'SUBTASK_STATE',
         subtaskId: subtask.id,
         statuses,
-        handedOver: subStateIdx !== -1 ? Boolean(pmReviews[subStateIdx].handedOver) : false,
+        handedOver: nextHandedOver,
         updatedAt: new Date().toISOString(),
       };
-      if (subStateIdx !== -1) {
-        pmReviews[subStateIdx] = nextEntry;
+      const nextSubStateIdx = pmReviews.findIndex((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtask.id);
+      if (nextSubStateIdx !== -1) {
+        pmReviews[nextSubStateIdx] = nextEntry;
       } else {
         pmReviews.push(nextEntry);
       }
@@ -1178,12 +1290,20 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         },
       });
 
-      const subTaskMap = { ...updatedParent, taskId: target.rawId, subtaskId: subtask.id, statuses };
+      const subTaskMap = {
+        ...updatedParent,
+        taskId: target.rawId,
+        subtaskId: subtask.id,
+        statuses,
+        handedOver: nextHandedOver,
+      };
       io.emit('task_map:updated', {
         taskId: target.rawId,
         subtaskId: subtask.id,
         parentTaskId: subtask.taskId,
         statuses,
+        handedOver: nextHandedOver,
+        ...(isHandoverSubStatus ? { assigneeId: null, assignee: null } : {}),
         taskMap: subTaskMap,
       });
 
@@ -1355,10 +1475,28 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       });
     }
 
+    const isHandoverStatus = statuses.some((s: string) => {
+      const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+      return norm === 'HANDOVER' || norm === 'AVAILABLETASK';
+    });
+
+    if (isHandoverStatus) {
+      if (Array.isArray(pmReviews)) {
+        pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
+      }
+      if (currentTask?.assigneeId) {
+        await prisma.task.update({
+          where: { id },
+          data: { assigneeId: null },
+        });
+      }
+    }
+
     const updated = await updateTaskMapRecord(id, {
       statuses,
       waitingReviewSince,
       pmReviews,
+      ...(isHandoverStatus ? { handedOver: true } : {}),
     });
 
     // Invalidate Redis task and task_map caches
@@ -1404,6 +1542,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       taskId: id,
       statuses,
       taskMap: updated,
+      ...(isHandoverStatus ? { handedOver: true, assigneeId: null, assignee: null } : {}),
       upworkStartedAt,
       upworkSession,
       activeUpworkSessions,

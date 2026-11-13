@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
+import { invalidateCache } from '../services/redisService';
 import {
   getDbShiftConfigs,
   invalidateAuditShiftsCache,
@@ -55,8 +56,15 @@ export const getAuditShifts = async (req: Request, res: Response) => {
       const members = users
         .filter((u) => {
           if (memberIdSet.has(u.id) || auditorIdSet.has(u.id)) return true;
-          if (u.name && (memberNameSet.has(u.name.toLowerCase()) || auditorNameSet.has(u.name.toLowerCase()))) {
+          const uName = (u.name || '').trim().toLowerCase();
+          if (!uName) return false;
+          if (memberNameSet.has(uName) || auditorNameSet.has(uName)) {
             return true;
+          }
+          for (const token of [...memberNameSet, ...auditorNameSet]) {
+            if (token && (uName.startsWith(`${token} `) || (token.length >= 3 && uName.includes(token)))) {
+              return true;
+            }
           }
           return false;
         })
@@ -140,7 +148,9 @@ export const updateAuditShift = async (req: Request, res: Response) => {
     });
 
     invalidateAuditShiftsCache();
+    await invalidateCache('task_map:*').catch(() => {});
     io.emit('audit_shifts:updated', updated);
+    io.emit('task_map:shifts_updated', { source: 'audit_shifts', updated });
 
     res.json({ success: true, shift: updated });
   } catch (error: any) {
@@ -191,7 +201,9 @@ export const createAuditShift = async (req: Request, res: Response) => {
     });
 
     invalidateAuditShiftsCache();
+    await invalidateCache('task_map:*').catch(() => {});
     io.emit('audit_shifts:updated', created);
+    io.emit('task_map:shifts_updated', { source: 'audit_shifts', created });
 
     res.status(201).json({ success: true, shift: created });
   } catch (error: any) {
@@ -212,7 +224,9 @@ export const deleteAuditShift = async (req: Request, res: Response) => {
     });
 
     invalidateAuditShiftsCache();
+    await invalidateCache('task_map:*').catch(() => {});
     io.emit('audit_shifts:updated', { id, deleted: true });
+    io.emit('task_map:shifts_updated', { source: 'audit_shifts', id, deleted: true });
 
     res.json({ success: true, message: 'Shift deleted successfully' });
   } catch (error: any) {
@@ -269,7 +283,9 @@ export const resetAuditShifts = async (req: Request, res: Response) => {
     }
 
     invalidateAuditShiftsCache();
+    await invalidateCache('task_map:*').catch(() => {});
     io.emit('audit_shifts:updated');
+    io.emit('task_map:shifts_updated', { source: 'audit_shifts', reset: true });
 
     const fresh = await (prisma as any).auditShiftConfig.findMany({
       orderBy: { order: 'asc' },

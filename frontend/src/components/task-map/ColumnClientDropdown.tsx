@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useLayoutEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Building2, Shield, Check, Search } from 'lucide-react';
 import { TaskMapItem } from '@/api/taskMap';
@@ -29,6 +29,34 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const [draftSelectedClients, setDraftSelectedClients] = useState<string[] | 'ALL'>(selectedClients);
+  const [draftShowAdmin, setDraftShowAdmin] = useState(showAdmin);
+  const clientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setDraftSelectedClients(selectedClients);
+  }, [selectedClients]);
+
+  useEffect(() => {
+    setDraftShowAdmin(showAdmin);
+  }, [showAdmin]);
+
+  const scheduleClientsCommit = (next: string[] | 'ALL') => {
+    setDraftSelectedClients(next);
+    if (clientTimerRef.current) clearTimeout(clientTimerRef.current);
+    clientTimerRef.current = setTimeout(() => {
+      onSelectClients(next);
+    }, 500);
+  };
+
+  const scheduleAdminCommit = (nextAdmin: boolean) => {
+    setDraftShowAdmin(nextAdmin);
+    if (clientTimerRef.current) clearTimeout(clientTimerRef.current);
+    clientTimerRef.current = setTimeout(() => {
+      if (nextAdmin !== showAdmin) onToggleAdmin();
+    }, 500);
+  };
 
   const calcPos = (rect: DOMRect) => {
     const width = 240;
@@ -150,19 +178,19 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
   }, [tasks, clients, isTaskUnderAdmin]);
 
   const allClientsChecked =
-    selectedClients === 'ALL' ||
-    (Array.isArray(selectedClients) && selectedClients.length === clientsList.length);
+    draftSelectedClients === 'ALL' ||
+    (Array.isArray(draftSelectedClients) && draftSelectedClients.length === clientsList.length);
 
   const isClientChecked = (id: string, name: string) => {
-    if (selectedClients === 'ALL') return true;
-    return selectedClients.includes(id) || selectedClients.includes(name);
+    if (draftSelectedClients === 'ALL') return true;
+    return draftSelectedClients.includes(id) || draftSelectedClients.includes(name);
   };
 
   const filteredClients = clientsList.filter((c) =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase().trim())
   );
 
-  const isFiltered = showAdmin || !allClientsChecked;
+  const isFiltered = draftShowAdmin || !allClientsChecked;
 
   const getButtonDetails = () => {
     if (!isFiltered) {
@@ -176,12 +204,12 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
     }
 
     let label = 'Filtered';
-    if (showAdmin && Array.isArray(selectedClients) && selectedClients.length === 0) {
+    if (draftShowAdmin && Array.isArray(draftSelectedClients) && draftSelectedClients.length === 0) {
       label = 'Admin only';
-    } else if (!showAdmin && Array.isArray(selectedClients) && selectedClients.length === 1) {
+    } else if (!draftShowAdmin && Array.isArray(draftSelectedClients) && draftSelectedClients.length === 1) {
       const match = clientsList.find((c) => isClientChecked(c.id, c.name));
       if (match) label = match.name;
-    } else if (showAdmin && Array.isArray(selectedClients) && selectedClients.length === 1) {
+    } else if (draftShowAdmin && Array.isArray(draftSelectedClients) && draftSelectedClients.length === 1) {
       const match = clientsList.find((c) => isClientChecked(c.id, c.name));
       if (match) label = `${match.name} + Admin`;
     }
@@ -199,18 +227,18 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
 
   const handleToggleAllClients = () => {
     if (allClientsChecked) {
-      onSelectClients([]);
+      scheduleClientsCommit([]);
     } else {
-      onSelectClients('ALL');
+      scheduleClientsCommit('ALL');
     }
   };
 
   const handleToggleClient = (clientId: string) => {
-    if (selectedClients === 'ALL') {
+    if (draftSelectedClients === 'ALL') {
       const remaining = clientsList.map((c) => c.id).filter((id) => id !== clientId);
-      onSelectClients(remaining);
+      scheduleClientsCommit(remaining);
     } else {
-      const current = new Set(selectedClients);
+      const current = new Set(draftSelectedClients);
       if (current.has(clientId)) {
         current.delete(clientId);
       } else {
@@ -218,21 +246,21 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
       }
       const arr = Array.from(current);
       if (arr.length === clientsList.length) {
-        onSelectClients('ALL');
+        scheduleClientsCommit('ALL');
       } else {
-        onSelectClients(arr);
+        scheduleClientsCommit(arr);
       }
     }
   };
 
   const handleSelectOnlyClient = (clientId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    onSelectClients([clientId]);
+    scheduleClientsCommit([clientId]);
   };
 
   const handleReset = () => {
-    onSelectClients('ALL');
-    if (showAdmin) onToggleAdmin();
+    scheduleClientsCommit('ALL');
+    if (draftShowAdmin) scheduleAdminCommit(false);
     setSearchQuery('');
   };
 
@@ -322,9 +350,9 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
               {/* Admin Tasks Option */}
               <button
                 type="button"
-                onClick={onToggleAdmin}
+                onClick={() => scheduleAdminCommit(!draftShowAdmin)}
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
-                  showAdmin
+                  draftShowAdmin
                     ? 'bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800/60 font-semibold'
                     : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                 }`}
@@ -332,7 +360,7 @@ export const ColumnClientDropdown: React.FC<ColumnClientDropdownProps> = ({
                 <div className="flex items-center gap-2 min-w-0">
                   <div
                     className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                      showAdmin
+                      draftShowAdmin
                         ? 'bg-purple-600 border-purple-500 text-white'
                         : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                     }`}

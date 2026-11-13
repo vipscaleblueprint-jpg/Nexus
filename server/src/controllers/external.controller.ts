@@ -23,6 +23,7 @@ import { autoAssignAudits, sweepInReviewTasksForShiftAudits } from '../services/
 import { isReviewStatus } from '../utils/auditChecklist';
 import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
+import { syncTaskMapOnDirectAssign } from '../services/taskMapService';
 import { getTaskMoverAndUpdaters } from './task.controller';
 
 
@@ -1045,8 +1046,13 @@ export async function updateTask(req: Request, res: Response) {
       'tasks:all',
       'lists:all',
       'dashboard:all',
-      'spaces:all'
+      'spaces:all',
+      'task_map:all'
     ).catch(() => {});
+
+    if (assigneeId !== undefined && assigneeId) {
+      syncTaskMapOnDirectAssign(task.id, null, assigneeId).catch(() => {});
+    }
 
     // Audit log & activity feed broadcast when status changed OR MA update received
     const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;

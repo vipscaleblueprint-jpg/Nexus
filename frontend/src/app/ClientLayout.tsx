@@ -575,6 +575,14 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task_map:updated', { detail: data }));
     });
 
+    s.on('task_map:shifts_updated', (data) => {
+      window.dispatchEvent(new CustomEvent('task_map:shifts_updated', { detail: data }));
+    });
+
+    s.on('audit_shifts:updated', (data) => {
+      window.dispatchEvent(new CustomEvent('audit_shifts:updated', { detail: data }));
+    });
+
     s.on('task_map:ma_progress_changed', (data) => {
       window.dispatchEvent(new CustomEvent('task_map:ma_progress_changed', { detail: data }));
       if (data?.maName) {

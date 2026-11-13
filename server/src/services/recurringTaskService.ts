@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { taskInclude } from '../controllers/task.controller';
+import { isNexusAuditChecklist } from '../utils/auditChecklist';
 
 export interface RecurringConfig {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
@@ -200,14 +201,15 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
     });
 
     if (cl.items && cl.items.length > 0) {
+      const isAudit = isNexusAuditChecklist(cl);
       const sortedItems = [...cl.items].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       await prisma.checklistItem.createMany({
         data: sortedItems.map((item) => ({
           checklistId: createdChecklist.id,
           text: item.text,
-          completed: item.completed,
-          checkedById: item.checkedById,
-          assigneeId: item.assigneeId,
+          completed: isAudit ? false : item.completed,
+          checkedById: isAudit ? null : item.checkedById,
+          assigneeId: isAudit ? [] : item.assigneeId,
         })),
       });
     }
@@ -301,14 +303,15 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
           });
 
           if (cl.items && cl.items.length > 0) {
+            const isAudit = isNexusAuditChecklist(cl);
             const sortedItems = [...cl.items].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
             await prisma.checklistItem.createMany({
               data: sortedItems.map((item) => ({
                 checklistId: createdChecklist.id,
                 text: item.text,
-                completed: item.completed,
-                checkedById: item.checkedById,
-                assigneeId: item.assigneeId,
+                completed: isAudit ? false : item.completed,
+                checkedById: isAudit ? null : item.checkedById,
+                assigneeId: isAudit ? [] : item.assigneeId,
               })),
             });
           }

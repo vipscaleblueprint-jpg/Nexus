@@ -2853,7 +2853,11 @@ export function TaskDetailModalContent({
       : [...latestAssignees, user];
 
     const updatedIds = updatedAssignees.map((u) => u.id);
-    const primaryAssignee = updatedAssignees.length > 0 ? updatedAssignees[0] : null;
+    const primaryAssignee = updatedAssignees.length === 0
+      ? null
+      : !isAssigned
+      ? user
+      : (updatedAssignees.find((u) => u.id === task.assigneeId) || updatedAssignees[updatedAssignees.length - 1]);
 
     const updatedTask: Task = {
       ...task,
@@ -4478,7 +4482,7 @@ export function TaskDetailModalContent({
               {/* Action Buttons (Notes, Attachments, etc) */}
               <div className="mt-1 flex flex-col gap-1 w-full">
                 <AuditSection
-                  task={task}
+                  task={{ ...task, status: localStatus || task.status }}
                   title={task.title}
                   users={workspaceUsers || []}
                   checklists={task.checklists || []}
@@ -7171,17 +7175,26 @@ export function SubtaskDetailView({
     return () => window.removeEventListener('task_activity', handleWindowSubtaskActivity);
   }, [subtask?.id]);
 
-  const applyAssigneesLocally = (updatedAssignees: any[]) => {
+  const applyAssigneesLocally = (updatedAssignees: any[], primaryAssignee?: any | null) => {
     lastAssigneeUpdateTimestampRef.current = Date.now();
     latestAssigneesRef.current = updatedAssignees;
     setLocalAssignees(updatedAssignees);
     subtask.assignees = updatedAssignees;
     subtask.assigneeIds = updatedAssignees.map((a: any) => a.id);
-    const updatedSubtask = { ...subtaskRef.current, assignees: updatedAssignees, assigneeIds: updatedAssignees.map((a: any) => a.id) };
+    if (primaryAssignee !== undefined) {
+      subtask.assigneeId = primaryAssignee?.id || null;
+      (subtask as any).User = primaryAssignee || null;
+    }
+    const updatedSubtask = {
+      ...subtaskRef.current,
+      assignees: updatedAssignees,
+      assigneeIds: updatedAssignees.map((a: any) => a.id),
+      ...(primaryAssignee !== undefined ? { assigneeId: primaryAssignee?.id || null, User: primaryAssignee || null } : {}),
+    };
     syncSubtaskToParent(updatedSubtask);
   };
 
-  const persistAssignees = (previous: any[], next: any[]) => {
+  const persistAssignees = (previous: any[], next: any[], primaryAssignee?: any | null) => {
     const added = next.filter(u => !previous.some(p => p.id === u.id)).map(u => u.name);
     const removed = previous.filter(p => !next.some(u => u.id === p.id)).map(p => p.name);
     if (added.length === 0 && removed.length === 0) return; // toggled on and off again
@@ -7199,7 +7212,10 @@ export function SubtaskDetailView({
       user: currentUser,
     }]);
 
-    tasksApi.updateSubtask(parentTask.id, subtask.id, { assigneeIds: next.map(u => u.id) }).then(() => {
+    tasksApi.updateSubtask(parentTask.id, subtask.id, {
+      assigneeIds: next.map(u => u.id),
+      ...(primaryAssignee !== undefined ? { assigneeId: primaryAssignee?.id || null } : {}),
+    }).then(() => {
       lastAssigneeUpdateTimestampRef.current = Date.now();
     }).catch((err) => {
       console.error(err);
@@ -7210,22 +7226,28 @@ export function SubtaskDetailView({
   const handleToggleAssignee = (u: any) => {
     const latest = latestAssigneesRef.current;
     if (!assigneeBaselineRef.current) assigneeBaselineRef.current = latest;
-    const updatedAssignees = latest.some((a: any) => a.id === u.id)
+    const isAssigned = latest.some((a: any) => a.id === u.id);
+    const updatedAssignees = isAssigned
       ? latest.filter((a: any) => a.id !== u.id)
       : [...latest, u];
-    applyAssigneesLocally(updatedAssignees);
+    const primaryAssignee = updatedAssignees.length === 0
+      ? null
+      : !isAssigned
+      ? u
+      : (updatedAssignees.find((a: any) => a.id === subtask.assigneeId) || updatedAssignees[updatedAssignees.length - 1]);
+    applyAssigneesLocally(updatedAssignees, primaryAssignee);
 
     const previous = assigneeBaselineRef.current || [];
     assigneeBaselineRef.current = null;
-    persistAssignees(previous, updatedAssignees);
+    persistAssignees(previous, updatedAssignees, primaryAssignee);
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const previous = assigneeBaselineRef.current || latestAssigneesRef.current;
     assigneeBaselineRef.current = null;
-    applyAssigneesLocally([]);
-    persistAssignees(previous, []);
+    applyAssigneesLocally([], null);
+    persistAssignees(previous, [], null);
     setIsAssigneeOpen(false);
   };
 
@@ -7245,8 +7267,9 @@ export function SubtaskDetailView({
 
     const previous = assigneeBaselineRef.current || latestAssigneesRef.current;
     assigneeBaselineRef.current = null;
-    applyAssigneesLocally(updatedAssignees);
-    persistAssignees(previous, updatedAssignees);
+    const primaryAssignee = updatedAssignees.length > 0 ? updatedAssignees[updatedAssignees.length - 1] : null;
+    applyAssigneesLocally(updatedAssignees, primaryAssignee);
+    persistAssignees(previous, updatedAssignees, primaryAssignee);
   };
 
   const handleApplySubtaskRoleRestrictions = (next: string[], transitionToAssignee = true) => {
@@ -7256,7 +7279,9 @@ export function SubtaskDetailView({
       ? currentAssigneesList.filter((u: any) => matchingUsers.some((m: any) => m.id === u.id))
       : [];
     const validIds = validAssignees.map((u: any) => u.id);
-    const primaryAssignee = validAssignees.length > 0 ? validAssignees[0] : null;
+    const primaryAssignee = validAssignees.length > 0
+      ? (validAssignees.find((u: any) => u.id === subtask.assigneeId) || validAssignees[validAssignees.length - 1])
+      : null;
 
     latestRoleRestrictionsRef.current = next;
     setLocalRoleRestrictions(next);
@@ -8874,7 +8899,7 @@ export function SubtaskDetailView({
               <div className="mt-8 flex flex-col gap-2 w-full">
                 <AuditSection
                   task={parentTask}
-                  subtask={subtask}
+                  subtask={{ ...subtask, status: localStatus || subtask.status }}
                   title={subtask.title}
                   subtaskId={subtask.id}
                   users={workspaceUsers || []}

@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
+import { auditShiftsApi, AuditShift } from '@/api/auditShifts';
 import { ChevronDown, ChevronRight, User, Check, Plus, Trash2, Lock } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -39,6 +40,73 @@ const generateTempChecklistId = () => `temp-cl-${Date.now()}`;
 const generateTempItemId = () => `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const generateTempExclusionId = () => `temp-ex-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
+export const isReviewStatus = (status?: string | null): boolean => {
+  const s = (status || '').trim().toLowerCase();
+  return ['in review', 'inreview', 'in-review', 'review', 'under review', 'for review'].includes(s);
+};
+
+const isWithinShiftWindow = (
+  totalMinutes: number,
+  startHour: number,
+  startMinute: number,
+  endHour: number,
+  endMinute: number
+): boolean => {
+  const startMins = startHour * 60 + startMinute;
+  const endMins = endHour * 60 + endMinute;
+  if (startMins <= endMins) {
+    return totalMinutes >= startMins && totalMinutes < endMins;
+  }
+  // Overnight window (e.g., 17:00 -> 02:00)
+  return totalMinutes >= startMins || totalMinutes < endMins;
+};
+
+const getActiveManilaShifts = (shifts: AuditShift[]): { activeShifts: AuditShift[]; shiftKey: string } => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const parts = formatter.formatToParts(new Date());
+  const hourStr = parts.find(p => p.type === 'hour')?.value || '0';
+  const minStr = parts.find(p => p.type === 'minute')?.value || '0';
+  const hour = parseInt(hourStr, 10) % 24;
+  const minute = parseInt(minStr, 10);
+  const totalMinutes = hour * 60 + minute;
+
+  const activeShifts = shifts.filter(
+    s =>
+      s.isActive !== false &&
+      isWithinShiftWindow(totalMinutes, s.startHour, s.startMinute, s.endHour, s.endMinute)
+  );
+  const shiftKey = activeShifts.length > 0 ? activeShifts.map(s => s.shiftKey).sort().join('+') : 'OFF_SHIFT';
+  return { activeShifts, shiftKey };
+};
+
+let cachedAuditShifts: { shifts: AuditShift[]; fetchedAt: number } | null = null;
+let inFlightShiftFetch: Promise<AuditShift[]> | null = null;
+
+const getAuditShiftsCached = async (force = false): Promise<AuditShift[]> => {
+  const now = Date.now();
+  if (!force && cachedAuditShifts && now - cachedAuditShifts.fetchedAt < 60_000) {
+    return cachedAuditShifts.shifts;
+  }
+  if (inFlightShiftFetch) return inFlightShiftFetch;
+  inFlightShiftFetch = auditShiftsApi
+    .getAuditShifts()
+    .then(res => {
+      const shifts = res?.shifts || [];
+      cachedAuditShifts = { shifts, fetchedAt: Date.now() };
+      return shifts;
+    })
+    .catch(() => cachedAuditShifts?.shifts || [])
+    .finally(() => {
+      inFlightShiftFetch = null;
+    });
+  return inFlightShiftFetch;
+};
+
 interface AuditSectionProps {
   task: Task;
   subtask?: any;
@@ -74,6 +142,57 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
   const inFlightOpsRef = useRef<Map<string, Promise<{ checklistId: string; itemId: string } | null>>>(new Map());
 
   const canManageAudits = isProjectManagerOrAdmin(currentUser);
+
+  const effectiveStatus = useMemo(() => {
+    if (subtaskId) {
+      const sub = subtask || (task.subtasks || []).find((s: any) => s.id === subtaskId);
+      return sub?.status || task.status || '';
+    }
+    return task.status || '';
+  }, [subtaskId, subtask, task.subtasks, task.status]);
+
+  const isStatusInReview = useMemo(() => isReviewStatus(effectiveStatus), [effectiveStatus]);
+
+  const [shiftConfigs, setShiftConfigs] = useState<AuditShift[]>(
+    () => cachedAuditShifts?.shifts || []
+  );
+  const [shiftTick, setShiftTick] = useState(0);
+  const autoAssignedTrackerRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isStatusInReview) return;
+    let mounted = true;
+    getAuditShiftsCached().then(shifts => {
+      if (mounted) setShiftConfigs(shifts);
+    });
+    const interval = setInterval(() => {
+      if (mounted) setShiftTick(t => t + 1);
+    }, 60_000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [isStatusInReview]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleShiftsUpdated = (payload: any) => {
+      if (payload?.shifts?.length) {
+        cachedAuditShifts = { shifts: payload.shifts, fetchedAt: Date.now() };
+        setShiftConfigs(payload.shifts);
+        autoAssignedTrackerRef.current.clear();
+      } else {
+        getAuditShiftsCached(true).then(shifts => {
+          setShiftConfigs(shifts);
+          autoAssignedTrackerRef.current.clear();
+        });
+      }
+    };
+    socket.on('audit_shifts:updated', handleShiftsUpdated);
+    return () => {
+      socket.off('audit_shifts:updated', handleShiftsUpdated);
+    };
+  }, [socket]);
 
   const isSelfAuditBlocked = useMemo(() => {
     if (!currentUser?.id) return false;
@@ -785,6 +904,111 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
     }
   }, [task, subtaskId, onUpdateChecklists, broadcastTaskChecklists]);
 
+  // Auto-assign audits strictly based on active Manila shift + status being IN REVIEW
+  useEffect(() => {
+    // Strictly only auto-assign when the task/subtask status is IN REVIEW
+    if (!isStatusInReview) return;
+    if (requiredAuditItems.length === 0 || users.length === 0) return;
+
+    const { activeShifts, shiftKey } = getActiveManilaShifts(shiftConfigs);
+    if (activeShifts.length === 0 || shiftKey === 'OFF_SHIFT') return;
+
+    const shiftAuditorIds = new Set(activeShifts.flatMap(s => s.auditorIds || []));
+    const shiftAuditorNames = activeShifts
+      .flatMap(s => s.auditorNames || [])
+      .map(n => n.trim().toLowerCase())
+      .filter(Boolean);
+
+    const isUserInActiveShift = (u: UserModel): boolean => {
+      if (shiftAuditorIds.has(u.id)) return true;
+      const uName = (u.name || '').trim().toLowerCase();
+      const uEmail = (u.email || '').trim().toLowerCase();
+      return shiftAuditorNames.some(target => {
+        if (!target) return false;
+        if (uName === target || uName.includes(target) || target.includes(uName)) return true;
+        if (uEmail && uEmail.includes(target)) return true;
+        const firstToken = target.split(/\s+/)[0];
+        return Boolean(firstToken && firstToken.length >= 3 && uName.includes(firstToken));
+      });
+    };
+
+    const isUserBlockedParticipant = (u: UserModel): boolean => {
+      if (task.maUpdaterIds?.includes(u.id)) return true;
+      const uName = (u.name || '').trim().toLowerCase();
+      const uEmail = (u.email || '').trim().toLowerCase();
+      if (!uName && !uEmail) return false;
+      const matchesName = (target?: string | null) => {
+        if (!target) return false;
+        const t = target.trim().toLowerCase();
+        if (!t) return false;
+        if (uName && (t === uName || uName.includes(t) || t.includes(uName))) return true;
+        if (uEmail && (t === uEmail || uEmail.includes(t) || t.includes(uEmail))) return true;
+        const tTokens = t.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+        const uTokens = uName.split(/[\s\-_\/]+/).filter(w => w.length > 2);
+        return tTokens.some(tok => uTokens.includes(tok));
+      };
+      return Boolean(task.maUpdaterNames && task.maUpdaterNames.some(matchesName));
+    };
+
+    const blockedParticipantIds = new Set(
+      users.filter(isUserBlockedParticipant).map(u => u.id)
+    );
+    (task.maUpdaterIds || []).forEach(id => {
+      if (id) blockedParticipantIds.add(id);
+    });
+
+    for (const auditText of requiredAuditItems) {
+      const norm = normalizeAuditName(auditText);
+      const pending = pendingUpdatesRef.current.get(norm);
+      if (pending && Date.now() - pending.timestamp < 5000) continue;
+
+      const item = auditItemsMap.get(norm);
+      if (item?.completed) continue;
+
+      const eligibleShiftAuditors = users.filter(
+        u =>
+          !isSystemUser(u) &&
+          isUserInActiveShift(u) &&
+          isAuditorFor(auditText, u.roles) &&
+          !blockedParticipantIds.has(u.id)
+      );
+
+      if (eligibleShiftAuditors.length === 0) continue;
+
+      const currentAssignees = item?.assigneeId || [];
+      const validExistingAssignees = currentAssignees.filter(id => !blockedParticipantIds.has(id));
+      const targetAssigneeIds = Array.from(
+        new Set([...validExistingAssignees, ...eligibleShiftAuditors.map(u => u.id)])
+      );
+
+      const hasBlockedToRemove = validExistingAssignees.length !== currentAssignees.length;
+      const hasMissingShiftAuditor = targetAssigneeIds.some(id => !currentAssignees.includes(id));
+
+      if (!hasBlockedToRemove && !hasMissingShiftAuditor) continue;
+
+      const trackerKey = `${task.id}:${subtaskId || 'root'}:${norm}:${shiftKey}:${targetAssigneeIds
+        .slice()
+        .sort()
+        .join(',')}`;
+      if (autoAssignedTrackerRef.current.has(trackerKey)) continue;
+      autoAssignedTrackerRef.current.add(trackerKey);
+
+      handleUpdateAssignee(auditText, item, targetAssigneeIds);
+    }
+  }, [
+    isStatusInReview,
+    requiredAuditItems,
+    users,
+    shiftConfigs,
+    shiftTick,
+    auditItemsMap,
+    task.id,
+    task.maUpdaterIds,
+    task.maUpdaterNames,
+    subtaskId,
+    handleUpdateAssignee,
+  ]);
+
   const handleAddAudit = useCallback(async (auditId: string) => {
     if (!canManageAudits) return;
 
@@ -1140,7 +1364,8 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
                 {requiredAuditItems.map((text, idx) => {
                   const item = getAuditItem(text);
                   const isCompleted = !!item?.completed;
-                  const assigneeIds = item?.assigneeId || [];
+                  // Only show/assign unchecked audit assignees when the status is IN REVIEW
+                  const assigneeIds = isStatusInReview || isCompleted ? (item?.assigneeId || []) : [];
 
                   const isItemNeeded = Boolean(
                     highlightedAudits &&
@@ -1279,20 +1504,20 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
                         )}
 
                         {/* Assignee */}
-                        <Popover.Root open={canManageAudits ? undefined : false}>
+                        <Popover.Root open={canManageAudits && isStatusInReview ? undefined : false}>
                           <Popover.Trigger asChild>
                             {assigneeIds.length === 0 ? (
                               <button 
                                 type="button"
-                                className={`w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover ${canManageAudits ? 'cursor-pointer' : 'cursor-default'}`} 
-                                title={canManageAudits ? 'Assign auditors' : 'Unassigned. Only Project Managers can assign auditors'}
+                                className={`w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-border-hover ${canManageAudits && isStatusInReview ? 'cursor-pointer' : 'cursor-default'}`} 
+                                title={!isStatusInReview ? 'Auditors are assigned only when status is In Review' : canManageAudits ? 'Assign auditors' : 'Unassigned. Only Project Managers can assign auditors'}
                               >
                                 <User className="w-3 h-3" />
                               </button>
                             ) : (
                               <button
                                 type="button"
-                                className={`flex items-center -space-x-1.5 ${canManageAudits ? 'cursor-pointer' : 'cursor-default'}`}
+                                className={`flex items-center -space-x-1.5 ${canManageAudits && isStatusInReview ? 'cursor-pointer' : 'cursor-default'}`}
                                 title={assigneeIds.map(id => usersMap.get(id)?.name || 'Unknown').join(', ')}
                               >
                                 {assigneeIds.slice(0, 3).map(id => {

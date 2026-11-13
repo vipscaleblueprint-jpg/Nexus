@@ -386,7 +386,7 @@ export function Header() {
                       <span className="truncate text-[var(--accent)] font-medium">View Role Map</span>
                     </button>
 
-                    {activeUser.systemRole === "ADMIN" && (
+                    {activeUser.systemRole === "ADMIN" ? (
                       <button
                         onClick={() => {
                           setIsProfileOpen(false);
@@ -396,6 +396,18 @@ export function Header() {
                       >
                         <span className="truncate text-yellow-400">
                           Admin Settings
+                        </span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          router.push("/settings/users?tab=shifts");
+                        }}
+                        className="w-full flex items-center justify-start gap-2 p-2 rounded-lg hover:bg-zinc-800 text-zinc-300 transition-colors text-xs cursor-pointer"
+                      >
+                        <span className="truncate text-indigo-400 font-medium">
+                          Audit Shifts
                         </span>
                       </button>
                     )}

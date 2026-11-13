@@ -226,6 +226,8 @@ export interface Subtask {
   status?: string;
   completed: boolean;
   taskId: string;
+  assigneeId?: string | null;
+  assignee?: User | null;
   assignees?: User[];
   assigneeIds?: string[];
   teamId?: string | null;

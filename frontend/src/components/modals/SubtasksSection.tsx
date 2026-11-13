@@ -517,12 +517,18 @@ function SubtaskRow({
       : [...latestAssignees, u];
 
     const updatedIds = updatedAssignees.map((a) => a.id);
+    const primaryAssignee = updatedAssignees.length === 0
+      ? null
+      : !isAssigned
+      ? u
+      : (updatedAssignees.find((a) => a.id === subtask.assigneeId) || updatedAssignees[updatedAssignees.length - 1]);
     lastAssigneeUpdateTimestampRef.current = Date.now();
     latestAssigneesRef.current = updatedAssignees;
     setLocalAssignees(updatedAssignees);
     subtask.assignees = updatedAssignees;
     subtask.assigneeIds = updatedIds;
-    onUpdate(subtask.id, { assigneeIds: updatedIds, assignees: updatedAssignees } as any);
+    subtask.assigneeId = primaryAssignee?.id || null;
+    onUpdate(subtask.id, { assigneeIds: updatedIds, assigneeId: primaryAssignee?.id || null, assignees: updatedAssignees } as any);
   };
 
   const handleClearAllAssignees = (e?: React.MouseEvent) => {
@@ -532,7 +538,8 @@ function SubtaskRow({
     setLocalAssignees([]);
     subtask.assignees = [];
     subtask.assigneeIds = [];
-    onUpdate(subtask.id, { assigneeIds: [], assignees: [] } as any);
+    subtask.assigneeId = null;
+    onUpdate(subtask.id, { assigneeIds: [], assigneeId: null, assignees: [] } as any);
     onCloseDropdown();
   };
 

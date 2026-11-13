@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
-import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, AuditorRoleOption, isProjectBasedUpwork } from '@/api/taskMap';
-import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus } from 'lucide-react';
+import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, AuditorRoleOption, isProjectBasedUpwork, subscribeTaskMapSaving } from '@/api/taskMap';
+import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { isAaronUser, isProjectManagerOrAdmin } from '@/lib/permissions';
 
@@ -15,6 +15,7 @@ export interface ClientOption {
 interface Props {
   currentDate: string;
   currentShift: string;
+  activeShift?: string;
   onShiftChange: (shift: string) => void;
   shifts?: TaskMapShift[];
   search: string;
@@ -42,6 +43,7 @@ interface Props {
   auditorRoles?: AuditorRoleOption[];
   auditorTypeFilter?: string;
   onAuditorTypeFilterChange?: (filter: string) => void;
+  isFilterLoading?: boolean;
 }
 
 function formatElapsed(startedAt: string, now: Date): string {
@@ -84,6 +86,7 @@ function getCleanUpworkName(session: UpworkSession): string {
 export const TaskMapHeader: React.FC<Props> = ({
   currentDate,
   currentShift,
+  activeShift = '',
   onShiftChange,
   shifts = [],
   search,
@@ -111,6 +114,7 @@ export const TaskMapHeader: React.FC<Props> = ({
   auditorRoles = [],
   auditorTypeFilter = 'ALL',
   onAuditorTypeFilterChange,
+  isFilterLoading = false,
 }) => {
   // Live ticking timer for elapsed duration (Reverse-engineered from Teammap.js)
   const [now, setNow] = useState<Date>(new Date());
@@ -120,6 +124,123 @@ export const TaskMapHeader: React.FC<Props> = ({
     }, 5000);
     return () => clearInterval(timer);
   }, []);
+
+  // Track in-flight DB saves from taskMap.ts
+  const [savingCount, setSavingCount] = useState(0);
+  useEffect(() => {
+    return subscribeTaskMapSaving((ids) => {
+      setSavingCount(ids.size);
+    });
+  }, []);
+
+  // Local buffered filter states so multi-select filter changes wait before loading all on the board
+  const propSelectedClients: string[] | 'ALL' =
+    selectedClients !== undefined
+      ? selectedClients
+      : (selectedClient ? (selectedClient === 'ALL' ? 'ALL' : [selectedClient]) : 'ALL');
+
+  const [draftShift, setDraftShift] = useState(currentShift || 'ALL');
+  const [draftSelectedClients, setDraftSelectedClients] = useState<string[] | 'ALL'>(propSelectedClients);
+  const [draftShowAdmin, setDraftShowAdmin] = useState(showAdmin);
+  const [draftSelectedMAs, setDraftSelectedMAs] = useState<string[]>(selectedMAs);
+  const [draftAuditorFilter, setDraftAuditorFilter] = useState(auditorTypeFilter || 'ALL');
+  const [draftSearch, setDraftSearch] = useState(search || '');
+  const [isWaitingFilter, setIsWaitingFilter] = useState(false);
+
+  useEffect(() => {
+    setDraftShift(currentShift || 'ALL');
+  }, [currentShift]);
+
+  useEffect(() => {
+    setDraftSelectedClients(propSelectedClients);
+  }, [selectedClients, selectedClient]);
+
+  useEffect(() => {
+    setDraftShowAdmin(showAdmin);
+  }, [showAdmin]);
+
+  useEffect(() => {
+    setDraftSelectedMAs(selectedMAs);
+  }, [selectedMAs]);
+
+  useEffect(() => {
+    setDraftAuditorFilter(auditorTypeFilter || 'ALL');
+  }, [auditorTypeFilter]);
+
+  useEffect(() => {
+    setDraftSearch(search || '');
+  }, [search]);
+
+  const shiftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const auditorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleShiftCommit = (nextShift: string) => {
+    setDraftShift(nextShift);
+    setIsWaitingFilter(true);
+    if (shiftTimerRef.current) clearTimeout(shiftTimerRef.current);
+    shiftTimerRef.current = setTimeout(() => {
+      onShiftChange(nextShift);
+      setIsWaitingFilter(false);
+    }, 550);
+  };
+
+  const scheduleClientsCommit = (nextClients: string[] | 'ALL', nextClientSingle?: string) => {
+    setDraftSelectedClients(nextClients);
+    setIsWaitingFilter(true);
+    if (clientTimerRef.current) clearTimeout(clientTimerRef.current);
+    clientTimerRef.current = setTimeout(() => {
+      onSelectClients?.(nextClients);
+      if (nextClientSingle !== undefined) onClientChange?.(nextClientSingle);
+      setIsWaitingFilter(false);
+    }, 550);
+  };
+
+  const scheduleAdminToggleCommit = (nextAdmin: boolean) => {
+    setDraftShowAdmin(nextAdmin);
+    setIsWaitingFilter(true);
+    if (clientTimerRef.current) clearTimeout(clientTimerRef.current);
+    clientTimerRef.current = setTimeout(() => {
+      if (nextAdmin !== showAdmin) {
+        onToggleAdmin?.();
+      }
+      setIsWaitingFilter(false);
+    }, 550);
+  };
+
+  const scheduleMAsCommit = (nextMAs: string[]) => {
+    setDraftSelectedMAs(nextMAs);
+    setIsWaitingFilter(true);
+    if (maTimerRef.current) clearTimeout(maTimerRef.current);
+    maTimerRef.current = setTimeout(() => {
+      onSelectedMAsChange?.(nextMAs);
+      setIsWaitingFilter(false);
+    }, 550);
+  };
+
+  const scheduleAuditorFilterCommit = (nextFilter: string) => {
+    setDraftAuditorFilter(nextFilter);
+    setIsWaitingFilter(true);
+    if (auditorTimerRef.current) clearTimeout(auditorTimerRef.current);
+    auditorTimerRef.current = setTimeout(() => {
+      onAuditorTypeFilterChange?.(nextFilter);
+      setIsWaitingFilter(false);
+    }, 550);
+  };
+
+  const handleSearchInputChange = (val: string) => {
+    setDraftSearch(val);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!val.trim()) {
+      onSearchChange('');
+      return;
+    }
+    searchTimerRef.current = setTimeout(() => {
+      onSearchChange(val);
+    }, 250);
+  };
 
   // Client dropdown state
   const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
@@ -254,23 +375,23 @@ export const TaskMapHeader: React.FC<Props> = ({
   }, [auditorRoles]);
 
   const isAuditorRoleChecked = (key: string) => {
-    if (!auditorTypeFilter || auditorTypeFilter === 'ALL') return true;
-    if (auditorTypeFilter === 'NONE') return false;
-    const tokens = auditorTypeFilter.split(',').map((k) => k.trim().toLowerCase());
+    if (!draftAuditorFilter || draftAuditorFilter === 'ALL') return true;
+    if (draftAuditorFilter === 'NONE') return false;
+    const tokens = draftAuditorFilter.split(',').map((k) => k.trim().toLowerCase());
     return tokens.includes(key.toLowerCase());
   };
 
   const allAuditorsChecked =
-    !auditorTypeFilter ||
-    auditorTypeFilter === 'ALL' ||
+    !draftAuditorFilter ||
+    draftAuditorFilter === 'ALL' ||
     (nonAllAuditorRoles.length > 0 &&
       nonAllAuditorRoles.every((r) => isAuditorRoleChecked(r.key)));
 
   const handleToggleAllAuditors = () => {
     if (allAuditorsChecked) {
-      onAuditorTypeFilterChange?.('NONE');
+      scheduleAuditorFilterCommit('NONE');
     } else {
-      onAuditorTypeFilterChange?.('ALL');
+      scheduleAuditorFilterCommit('ALL');
     }
   };
 
@@ -278,15 +399,15 @@ export const TaskMapHeader: React.FC<Props> = ({
     if (allAuditorsChecked) {
       const remaining = nonAllAuditorRoles.map((r) => r.key).filter((k) => k.toLowerCase() !== key.toLowerCase());
       if (remaining.length === 0) {
-        onAuditorTypeFilterChange?.('NONE');
+        scheduleAuditorFilterCommit('NONE');
       } else {
-        onAuditorTypeFilterChange?.(remaining.join(','));
+        scheduleAuditorFilterCommit(remaining.join(','));
       }
-    } else if (auditorTypeFilter === 'NONE') {
-      onAuditorTypeFilterChange?.(key);
+    } else if (draftAuditorFilter === 'NONE') {
+      scheduleAuditorFilterCommit(key);
     } else {
       const currentTokens = new Set(
-        (auditorTypeFilter || '')
+        (draftAuditorFilter || '')
           .split(',')
           .map((k) => k.trim())
           .filter((k) => k && k.toUpperCase() !== 'ALL' && k.toUpperCase() !== 'NONE')
@@ -299,22 +420,22 @@ export const TaskMapHeader: React.FC<Props> = ({
       }
       const arr = Array.from(currentTokens);
       if (arr.length === nonAllAuditorRoles.length) {
-        onAuditorTypeFilterChange?.('ALL');
+        scheduleAuditorFilterCommit('ALL');
       } else if (arr.length === 0) {
-        onAuditorTypeFilterChange?.('NONE');
+        scheduleAuditorFilterCommit('NONE');
       } else {
-        onAuditorTypeFilterChange?.(arr.join(','));
+        scheduleAuditorFilterCommit(arr.join(','));
       }
     }
   };
 
   const handleSelectOnlyAuditorRole = (key: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    onAuditorTypeFilterChange?.(key);
+    scheduleAuditorFilterCommit(key);
   };
 
   const handleResetAuditorFilter = () => {
-    onAuditorTypeFilterChange?.('ALL');
+    scheduleAuditorFilterCommit('ALL');
     setAuditorSearch('');
   };
 
@@ -328,14 +449,14 @@ export const TaskMapHeader: React.FC<Props> = ({
       };
     }
 
-    if (auditorTypeFilter === 'NONE') {
+    if (draftAuditorFilter === 'NONE') {
       return {
         label: 'None',
         isHighlight: true,
       };
     }
 
-    const currentTokens = (auditorTypeFilter || '')
+    const currentTokens = (draftAuditorFilter || '')
       .split(',')
       .map((k) => k.trim())
       .filter((k) => k && k.toUpperCase() !== 'ALL' && k.toUpperCase() !== 'NONE');
@@ -373,11 +494,8 @@ export const TaskMapHeader: React.FC<Props> = ({
   // Compute total tasks and active client object
   const totalClientTasks = clients.reduce((acc, c) => acc + c.count, 0);
 
-  // Effective multi-select client state (fallback to selectedClient if selectedClients not passed)
-  const effectiveSelectedClients: string[] | 'ALL' =
-    selectedClients !== undefined
-      ? selectedClients
-      : (selectedClient ? (selectedClient === 'ALL' ? 'ALL' : [selectedClient]) : 'ALL');
+  // Effective multi-select client state uses buffered draftSelectedClients for instant checkbox response
+  const effectiveSelectedClients: string[] | 'ALL' = draftSelectedClients;
 
   const allClientsChecked =
     effectiveSelectedClients === 'ALL' ||
@@ -390,19 +508,19 @@ export const TaskMapHeader: React.FC<Props> = ({
 
   const handleToggleAllClients = () => {
     if (allClientsChecked) {
-      onSelectClients?.([]);
-      onClientChange?.('NONE');
+      scheduleClientsCommit([], 'NONE');
     } else {
-      onSelectClients?.('ALL');
-      onClientChange?.('ALL');
+      scheduleClientsCommit('ALL', 'ALL');
     }
   };
 
   const handleToggleClient = (clientId: string) => {
     if (effectiveSelectedClients === 'ALL') {
       const remaining = clients.map((c) => c.id).filter((id) => id !== clientId);
-      onSelectClients?.(remaining);
-      onClientChange?.(remaining.length === 1 ? remaining[0] : (remaining.length === 0 ? 'NONE' : 'MULTIPLE'));
+      scheduleClientsCommit(
+        remaining,
+        remaining.length === 1 ? remaining[0] : (remaining.length === 0 ? 'NONE' : 'MULTIPLE')
+      );
     } else {
       const current = new Set(effectiveSelectedClients);
       if (current.has(clientId)) {
@@ -412,31 +530,30 @@ export const TaskMapHeader: React.FC<Props> = ({
       }
       const arr = Array.from(current);
       if (arr.length === clients.length) {
-        onSelectClients?.('ALL');
-        onClientChange?.('ALL');
+        scheduleClientsCommit('ALL', 'ALL');
       } else {
-        onSelectClients?.(arr);
-        onClientChange?.(arr.length === 1 ? arr[0] : (arr.length === 0 ? 'NONE' : 'MULTIPLE'));
+        scheduleClientsCommit(
+          arr,
+          arr.length === 1 ? arr[0] : (arr.length === 0 ? 'NONE' : 'MULTIPLE')
+        );
       }
     }
   };
 
   const handleSelectOnlyClient = (clientId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    onSelectClients?.([clientId]);
-    onClientChange?.(clientId);
+    scheduleClientsCommit([clientId], clientId);
   };
 
   const handleResetFilter = () => {
-    onSelectClients?.('ALL');
-    onClientChange?.('ALL');
-    if (showAdmin && onToggleAdmin) {
-      onToggleAdmin();
+    scheduleClientsCommit('ALL', 'ALL');
+    if (draftShowAdmin) {
+      scheduleAdminToggleCommit(false);
     }
     setClientSearch('');
   };
 
-  const isClientFiltered = showAdmin || !allClientsChecked;
+  const isClientFiltered = draftShowAdmin || !allClientsChecked;
 
   // Header button label & style
   const getHeaderButtonLabel = () => {
@@ -447,21 +564,21 @@ export const TaskMapHeader: React.FC<Props> = ({
       };
     }
 
-    if (showAdmin && Array.isArray(effectiveSelectedClients) && effectiveSelectedClients.length === 0) {
+    if (draftShowAdmin && Array.isArray(effectiveSelectedClients) && effectiveSelectedClients.length === 0) {
       return {
         label: 'Admin only',
         isHighlight: true,
       };
     }
 
-    if (showAdmin && allClientsChecked) {
+    if (draftShowAdmin && allClientsChecked) {
       return {
         label: 'All + Admin',
         isHighlight: true,
       };
     }
 
-    if (!showAdmin && Array.isArray(effectiveSelectedClients) && effectiveSelectedClients.length === 1) {
+    if (!draftShowAdmin && Array.isArray(effectiveSelectedClients) && effectiveSelectedClients.length === 1) {
       const match = clients.find((c) => isClientChecked(c.id, c.name));
       return {
         label: match ? match.name : '1 Client',
@@ -469,7 +586,7 @@ export const TaskMapHeader: React.FC<Props> = ({
       };
     }
 
-    if (showAdmin && Array.isArray(effectiveSelectedClients) && effectiveSelectedClients.length === 1) {
+    if (draftShowAdmin && Array.isArray(effectiveSelectedClients) && effectiveSelectedClients.length === 1) {
       const match = clients.find((c) => isClientChecked(c.id, c.name));
       return {
         label: `${match ? match.name : '1 Client'} + Admin`,
@@ -479,7 +596,7 @@ export const TaskMapHeader: React.FC<Props> = ({
 
     if (Array.isArray(effectiveSelectedClients)) {
       return {
-        label: `${effectiveSelectedClients.length} Clients${showAdmin ? ' + Admin' : ''}`,
+        label: `${effectiveSelectedClients.length} Clients${draftShowAdmin ? ' + Admin' : ''}`,
         isHighlight: true,
       };
     }
@@ -530,20 +647,59 @@ export const TaskMapHeader: React.FC<Props> = ({
   const formattedDate = format(dateObj, 'MMMM d, yyyy');
   const dayOfWeek = format(dateObj, 'EEEE');
 
-  const shiftOptions = [
-    { key: 'ALL', label: 'All' },
-    { key: 'DAY', label: 'Day' },
-    { key: 'NOON', label: 'Noon' },
-    { key: 'NIGHT', label: 'Night' },
-    { key: 'CUSTOM', label: 'Custom' },
-  ];
+  const formatShiftHours = (s: TaskMapShift) => {
+    const fmt = (h: number, m: number) => {
+      const hour = h % 12 || 12;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      return `${hour}:${String(m || 0).padStart(2, '0')} ${ampm}`;
+    };
+    return `${fmt(s.startHour, s.startMinute)} – ${fmt(s.endHour, s.endMinute)}`;
+  };
 
-  const activeShiftTokens = React.useMemo(() => {
-    return (currentShift || 'ALL')
+  const shiftOptions = React.useMemo(() => {
+    const baseLabel = (s: TaskMapShift) => {
+      const k = (s.shiftKey || '').toUpperCase();
+      if (k === 'DAY') return 'Day';
+      if (k === 'NOON') return 'Noon';
+      if (k === 'NIGHT') return 'Night';
+      return s.name || s.shiftKey;
+    };
+
+    const dbActiveShifts = (shifts || []).filter((s) => s.isActive !== false);
+    const dynamicShifts = dbActiveShifts.length > 0
+      ? [...dbActiveShifts]
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+          .map((s) => ({
+            key: (s.shiftKey || '').toUpperCase(),
+            label: baseLabel(s),
+            hoursLabel: `${s.name} (${formatShiftHours(s)} Manila)`,
+          }))
+      : [
+          { key: 'DAY', label: 'Day', hoursLabel: 'Morning Shift' },
+          { key: 'NOON', label: 'Noon', hoursLabel: 'Afternoon Shift' },
+          { key: 'NIGHT', label: 'Night', hoursLabel: 'Night Shift' },
+        ];
+
+    return [
+      { key: 'ALL', label: 'All', hoursLabel: 'All shifts' },
+      ...dynamicShifts,
+      { key: 'CUSTOM', label: 'Custom', hoursLabel: 'Custom MA selection' },
+    ];
+  }, [shifts]);
+
+  const activeManilaShiftTokens = React.useMemo(() => {
+    return (activeShift || '')
       .split(',')
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
-  }, [currentShift]);
+  }, [activeShift]);
+
+  const activeShiftTokens = React.useMemo(() => {
+    return (draftShift || 'ALL')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+  }, [draftShift]);
 
   const isAllActive = activeShiftTokens.includes('ALL') || activeShiftTokens.length === 0;
 
@@ -595,25 +751,39 @@ export const TaskMapHeader: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Right: Clean Search Input with clear button */}
-          <div className="relative flex items-center">
-            <Search className="size-3.5 text-zinc-500 absolute left-3 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search tasks..."
-              className="w-48 sm:w-64 pl-8 pr-8 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => onSearchChange('')}
-                className="absolute right-2.5 text-zinc-500 hover:text-zinc-300 p-0.5 cursor-pointer"
-              >
-                <X className="size-3.5" />
-              </button>
-            )}
+          {/* Right: Status Indicator + Clean Search Marketing Name Input */}
+          <div className="flex items-center gap-2.5">
+            {savingCount > 0 ? (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[11px] font-semibold animate-in fade-in duration-150">
+                <Loader2 className="size-3 animate-spin text-blue-400 shrink-0" />
+                <span>Saving to database...</span>
+              </div>
+            ) : isWaitingFilter || isFilterLoading ? (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800/80 border border-zinc-700/80 text-zinc-300 text-[11px] font-medium animate-in fade-in duration-150">
+                <Loader2 className="size-3 animate-spin text-blue-400 shrink-0" />
+                <span>Loading filter...</span>
+              </div>
+            ) : null}
+
+            <div className="relative flex items-center">
+              <Search className="size-3.5 text-zinc-500 absolute left-3 pointer-events-none" />
+              <input
+                type="text"
+                value={draftSearch}
+                onChange={(e) => handleSearchInputChange(e.target.value)}
+                placeholder="Search marketing name..."
+                className="w-48 sm:w-64 pl-8 pr-8 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
+              />
+              {draftSearch && (
+                <button
+                  type="button"
+                  onClick={() => handleSearchInputChange('')}
+                  className="absolute right-2.5 text-zinc-500 hover:text-zinc-300 p-0.5 cursor-pointer"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -788,24 +958,24 @@ export const TaskMapHeader: React.FC<Props> = ({
                       type="button"
                       onClick={() => {
                         if (opt.key === 'ALL') {
-                          onShiftChange('ALL');
+                          scheduleShiftCommit('ALL');
                           return;
                         }
                         if (isAllActive) {
-                          onShiftChange(opt.key);
+                          scheduleShiftCommit(opt.key);
                           if (isCustom) setMaDropdownOpen(true);
                           return;
                         }
                         if (isActive) {
                           const remaining = activeShiftTokens.filter((k) => k !== opt.key && k !== 'ALL');
                           if (remaining.length === 0) {
-                            onShiftChange('ALL');
+                            scheduleShiftCommit('ALL');
                           } else {
-                            onShiftChange(remaining.join(','));
+                            scheduleShiftCommit(remaining.join(','));
                           }
                         } else {
                           const next = [...activeShiftTokens.filter((k) => k !== 'ALL'), opt.key];
-                          onShiftChange(next.join(','));
+                          scheduleShiftCommit(next.join(','));
                           if (isCustom) setMaDropdownOpen(true);
                         }
                       }}
@@ -817,14 +987,17 @@ export const TaskMapHeader: React.FC<Props> = ({
                         isActive
                           ? isCustom
                             ? 'Configure custom MAs (or click again to deselect)'
-                            : `Click to deselect (${opt.label})`
-                          : `Filter by ${opt.label} shift (multi-select supported)`
+                            : `Click to deselect • ${(opt as any).hoursLabel || opt.label}`
+                          : `Filter by ${(opt as any).hoursLabel || opt.label} (multi-select supported)`
                       }
                     >
+                      {activeManilaShiftTokens.includes(opt.key) && (
+                        <span className="size-1.5 rounded-full bg-emerald-400 shrink-0" title="Currently active Manila shift" />
+                      )}
                       <span>{opt.label}</span>
-                      {isCustom && selectedMAs.length > 0 && (
+                      {isCustom && draftSelectedMAs.length > 0 && (
                         <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-blue-500/20 text-blue-700 dark:text-blue-300 font-bold ml-0.5">
-                          {selectedMAs.length}
+                          {draftSelectedMAs.length}
                         </span>
                       )}
                       {isCustom && (
@@ -835,10 +1008,10 @@ export const TaskMapHeader: React.FC<Props> = ({
                             e.stopPropagation();
                             if (!isActive) {
                               if (isAllActive) {
-                                onShiftChange('CUSTOM');
+                                scheduleShiftCommit('CUSTOM');
                               } else {
                                 const next = [...activeShiftTokens.filter((k) => k !== 'ALL'), 'CUSTOM'];
-                                onShiftChange(next.join(','));
+                                scheduleShiftCommit(next.join(','));
                               }
                             }
                             setMaDropdownOpen(!maDropdownOpen);
@@ -876,16 +1049,16 @@ export const TaskMapHeader: React.FC<Props> = ({
                             </p>
                           ) : (
                             filteredMAs.map((ma) => {
-                              const isChecked = selectedMAs.includes(ma.id);
+                              const isChecked = draftSelectedMAs.includes(ma.id);
                               return (
                                 <button
                                   key={ma.id}
                                   type="button"
                                   onClick={() => {
                                     const next = isChecked
-                                      ? selectedMAs.filter((id) => id !== ma.id)
-                                      : [...selectedMAs, ma.id];
-                                    onSelectedMAsChange?.(next);
+                                      ? draftSelectedMAs.filter((id) => id !== ma.id)
+                                      : [...draftSelectedMAs, ma.id];
+                                    scheduleMAsCommit(next);
                                   }}
                                   className={`flex items-center justify-between px-2 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${isChecked
                                     ? 'bg-blue-600/15 text-blue-700 dark:text-blue-200 font-semibold'
@@ -923,14 +1096,14 @@ export const TaskMapHeader: React.FC<Props> = ({
               })}
             </div>
 
-            {/* Link to Shift Members configuration UI */}
+            {/* Link to Audit Shifts configuration / schedule view */}
             <Link
               href="/settings/users?tab=shifts"
               className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-zinc-700 rounded-xl text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors"
-              title="Configure Shift Members (Day, Noon, Night)"
+              title={currentUser?.systemRole === 'ADMIN' ? 'Configure Shift Members & Audit Shifts' : 'View Audit Shifts Schedule'}
             >
               <Users className="size-3.5 text-indigo-400" />
-              <span className="hidden sm:inline">Manage Shifts</span>
+              <span className="hidden sm:inline">{currentUser?.systemRole === 'ADMIN' ? 'Manage Shifts' : 'Audit Shifts'}</span>
             </Link>
 
             {/* Upwork Clients Configuration Button (Restricted to Aaron) */}
@@ -1029,8 +1202,8 @@ export const TaskMapHeader: React.FC<Props> = ({
                     {/* Option 2: Admin Tasks / Admin Clients (Right under All, exactly per user red annotation) */}
                     <button
                       type="button"
-                      onClick={() => onToggleAdmin?.()}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${showAdmin
+                      onClick={() => scheduleAdminToggleCommit(!draftShowAdmin)}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${draftShowAdmin
                         ? 'bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800/60 font-semibold'
                         : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                         }`}
@@ -1038,7 +1211,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <div
-                          className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${showAdmin
+                          className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${draftShowAdmin
                             ? 'bg-purple-600 border-purple-500 text-white'
                             : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-transparent'
                             }`}
@@ -1151,7 +1324,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                     )}
 
                     {/* Admin folder clients section */}
-                    {adminClients && adminClients.length > 0 && showAdmin && (
+                    {adminClients && adminClients.length > 0 && draftShowAdmin && (
                       <>
                         <div className="h-px bg-purple-900/40 my-1" />
                         <div className="px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1">

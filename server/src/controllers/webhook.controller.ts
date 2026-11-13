@@ -444,7 +444,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     }
 
     const finalAssigneeIds = Array.from(assigneeIdsSet);
-    const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
+    const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[finalAssigneeIds.length - 1] : null;
     const roleRestrictions = Array.from(roleNamesSet);
 
     // Prevent duplicate task creation with the same title in the same client list
@@ -877,7 +877,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     }
 
     const finalAssigneeIds = Array.from(assigneeIdsSet);
-    const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[0] : null;
+    const primaryAssigneeId = finalAssigneeIds.length > 0 ? finalAssigneeIds[finalAssigneeIds.length - 1] : null;
     const roleRestrictions = Array.from(roleNamesSet);
     // "--Audit Design — …" subtasks carry their auditor role, the same way the ClickUp pull sets it.
     const auditorRole = auditorRoleFromTitle(title || undefined);

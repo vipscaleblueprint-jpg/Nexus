@@ -217,10 +217,11 @@ export default function UsersSettingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tabParam = searchParams?.get('tab');
+  const { currentUser } = useAppStore();
+  const isAdmin = currentUser?.systemRole === 'ADMIN';
   const [activeTab, setActiveTab] = useState<'users' | 'shifts'>(
     tabParam === 'shifts' || tabParam === 'audit-shifts' ? 'shifts' : 'users'
   );
-  const { currentUser } = useAppStore();
 
   const [users, setUsers] = useState<User[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -278,6 +279,10 @@ export default function UsersSettingsPage() {
   };
 
   const loadData = async () => {
+    if (!currentUser || currentUser.systemRole !== 'ADMIN') {
+      setLoading(false);
+      return;
+    }
     try {
       const [usersRes, invitesRes] = await Promise.all([
         usersApi.getUsers(),
@@ -293,8 +298,11 @@ export default function UsersSettingsPage() {
   };
 
   useEffect(() => {
+    if (currentUser && currentUser.systemRole !== 'ADMIN' && tabParam !== 'users') {
+      setActiveTab('shifts');
+    }
     loadData();
-  }, []);
+  }, [currentUser?.id, currentUser?.systemRole]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -337,8 +345,8 @@ export default function UsersSettingsPage() {
     }
   };
 
-  // If user is loaded and not an admin, block access
-  if (currentUser && currentUser.systemRole !== 'ADMIN') {
+  // Block only the Users & Roles tab for non-admins; Audit Shifts is viewable by everyone
+  if (currentUser && !isAdmin && activeTab !== 'shifts') {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8 text-center">
         <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl mb-3">
@@ -348,17 +356,25 @@ export default function UsersSettingsPage() {
         <p className="text-xs text-zinc-400 max-w-sm mb-4">
           You must have the <strong className="text-yellow-400">ADMIN</strong> system role to manage workspace users and invitations.
         </p>
-        <button
-          onClick={() => router.push('/')}
-          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
-        >
-          Return to Workspace
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('shifts')}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+          >
+            View Audit Shifts
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+          >
+            Return to Workspace
+          </button>
+        </div>
       </div>
     );
   }
 
-  if (loading) {
+  if (loading && isAdmin && activeTab === 'users') {
     return (
       <div className="p-8 w-full max-w-7xl mx-auto">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 mb-8">
@@ -419,42 +435,55 @@ export default function UsersSettingsPage() {
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <Shield className="w-5 h-5 text-indigo-400" />
-              Admin Settings
+              {isAdmin ? (
+                <>
+                  <Shield className="w-5 h-5 text-indigo-400" />
+                  Admin Settings
+                </>
+              ) : (
+                <>
+                  <Clock className="w-5 h-5 text-indigo-400" />
+                  Audit Shifts
+                </>
+              )}
             </h1>
 
-            {/* Segmented Tab Switcher */}
-            <div className="inline-flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 shadow-inner">
-              <button
-                type="button"
-                onClick={() => setActiveTab('users')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === 'users'
-                    ? 'bg-zinc-800 text-white shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Users & Roles</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('shifts')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === 'shifts'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>Audit Shifts</span>
-              </button>
-            </div>
+            {/* Segmented Tab Switcher (Users & Roles shown only to Admins) */}
+            {isAdmin && (
+              <div className="inline-flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('users')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeTab === 'users'
+                      ? 'bg-zinc-800 text-white shadow-xs'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Users & Roles</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('shifts')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeTab === 'shifts'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Audit Shifts</span>
+                </button>
+              </div>
+            )}
           </div>
           <p className="text-zinc-500 text-sm mt-0.5">
             {activeTab === 'users'
               ? 'Manage workspace members, invitations, and custom roles.'
-              : 'Configure shift schedules and auto-assigned auditors for in-review tasks.'}
+              : isAdmin
+              ? 'Configure shift schedules and auto-assigned auditors for in-review tasks.'
+              : 'View Manila Time (UTC+8) shift schedules and assigned shift members.'}
           </p>
         </div>
 
@@ -498,7 +527,7 @@ export default function UsersSettingsPage() {
       </div>
 
       {activeTab === 'shifts' ? (
-        <AuditShiftsTab onRefreshUsers={loadData} />
+        <AuditShiftsTab onRefreshUsers={loadData} readOnly={!isAdmin} />
       ) : (
         <div className="space-y-8">
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full">

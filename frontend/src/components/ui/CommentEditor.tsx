@@ -51,6 +51,8 @@ interface CommentEditorProps {
   /** The send action on the right of the toolbar row (use ComposerSendButton). */
   footerEnd?: React.ReactNode;
   onKeyDown?: (event: KeyboardEvent) => boolean | void;
+  /** Compact mini layout for nested reply composers in narrow containers. */
+  compact?: boolean;
 }
 
 /** An icon button for the comment toolbar. */
@@ -175,7 +177,7 @@ const fileNameFromSrc = (src: string, type: string) => {
   return `pasted-image-${Date.now()}.${ext}`;
 };
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown, compact = false }, ref) => {
   const pendingUploads = React.useRef(0);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = React.useState(false);
@@ -239,7 +241,9 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-sm prose-invert prose-p:my-0 focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full comment-editor-content',
+        class: compact
+          ? 'prose prose-sm prose-invert prose-p:my-0 focus:outline-none min-h-[28px] max-h-[220px] overflow-y-auto custom-scrollbar max-w-full text-[13px] leading-snug comment-editor-content'
+          : 'prose prose-sm prose-invert prose-p:my-0 focus:outline-none min-h-[40px] max-h-[400px] overflow-y-auto custom-scrollbar max-w-full comment-editor-content',
         'data-is-comment': 'true',
       },
       handleKeyDown: (view, event) => {
@@ -744,7 +748,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleWrapperDrop}
-      className={`group/composer relative w-full rounded-xl border ${isDraggingOver ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/50 hover:border-zinc-600/60'} bg-zinc-900/60 py-3 pr-3 pl-7 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar`}
+      className={`group/composer relative w-full rounded-xl border ${isDraggingOver ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/50 hover:border-zinc-600/60'} bg-zinc-900/60 ${compact ? 'py-2 pr-2 pl-5.5 text-[13px]' : 'py-3 pr-3 pl-7 text-sm'} shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar`}
     >
       {isDraggingOver && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl bg-zinc-950/90 backdrop-blur-sm border-2 border-dashed border-indigo-500 shadow-[0_0_24px_rgba(99,102,241,0.35)] transition-all pointer-events-none animate-in fade-in zoom-in-95 duration-150">
@@ -801,9 +805,15 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             <BubbleMenu
               pluginKey={`bubbleMenu-${id}`}
               editor={editor}
-              tippyOptions={{ duration: 100, maxWidth: 390, zIndex: 999999, placement: 'top' }}
+              tippyOptions={{
+                duration: 100,
+                maxWidth: 420,
+                zIndex: 999999,
+                placement: 'top',
+                ...(compact ? { appendTo: () => document.body } : {}),
+              }}
               shouldShow={({ state }) => !state.selection.empty}
-              className="flex items-center flex-wrap max-w-[min(390px,calc(100vw-32px))] bg-popover/95 backdrop-blur-md border border-zinc-700/80 p-0.5 rounded-xl shadow-2xl mb-2 gap-0.5 text-zinc-300 z-[999999]"
+              className={`flex items-center flex-wrap ${compact ? 'max-w-[calc(100vw-24px)] gap-0' : 'max-w-[min(390px,calc(100vw-32px))] gap-0.5'} bg-popover/95 backdrop-blur-md border border-zinc-700/80 p-0.5 rounded-xl shadow-2xl mb-2 text-zinc-300 z-[999999]`}
             >
               {/* Text Color / Highlight Dropdown */}
               <div className="relative group/color">
@@ -923,37 +933,44 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       `}</style>
       <div><EditorContent editor={editor} /></div>
       {(footer || footerEnd) && (
-        <div className="-mr-1.5 -mb-1.5 mt-2 flex items-center gap-0.5 pt-1.5">
-          <ComposerToolButton onClick={insertMentionTrigger} disabled={disabled} title="Mention someone (@)">
-            <AtSign className="h-4 w-4" />
+        <div className={`${compact ? '-mr-0.5 -mb-0.5 mt-1.5 flex flex-wrap items-center gap-x-0.5 gap-y-1.5 pt-1 border-t border-zinc-800/60' : '-mr-1.5 -mb-1.5 mt-2 flex items-center gap-0.5 pt-1.5'}`}>
+          <ComposerToolButton
+            onClick={insertMentionTrigger}
+            disabled={disabled}
+            title="Mention someone (@)"
+            className={compact ? '!h-6 !w-6' : ''}
+          >
+            <AtSign className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
           </ComposerToolButton>
           {footer}
-          <div className="w-px h-3.5 bg-zinc-700/60 mx-1" />
+          <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'}`} />
           <ComposerToolButton
             onClick={() => editor.chain().focus().outdent().run()}
             disabled={disabled}
             title={`Decrease indent (${SHORTCUT_OUTDENT})`}
+            className={compact ? '!h-6 !w-6' : ''}
           >
-            <IndentDecrease className="h-4 w-4" />
+            <IndentDecrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
           </ComposerToolButton>
           <ComposerToolButton
             onClick={() => editor.chain().focus().indent().run()}
             disabled={disabled}
             title={`Increase indent (${SHORTCUT_INDENT})`}
+            className={compact ? '!h-6 !w-6' : ''}
           >
-            <IndentIncrease className="h-4 w-4" />
+            <IndentIncrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
           </ComposerToolButton>
-          <div className="w-px h-3.5 bg-zinc-700/60 mx-1" />
+          <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'}`} />
           <ComposerToolButton
             onClick={() => editor.chain().focus().toggleTaskList().run()}
             disabled={disabled}
             title="Checklist"
-            className={editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : ''}
+            className={`${compact ? '!h-6 !w-6' : ''} ${editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : ''}`}
           >
-            <CheckSquare className="h-4 w-4" />
+            <CheckSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
           </ComposerToolButton>
-          <div className="ml-auto flex items-center gap-2.5">
-            {onSubmit && (
+          <div className={`ml-auto flex items-center shrink-0 ${compact ? 'gap-1' : 'gap-2.5'}`}>
+            {onSubmit && !compact && (
               <span className="hidden items-center gap-1 text-[10.5px] text-zinc-500 opacity-0 transition-opacity group-focus-within/composer:opacity-100 sm:flex">
                 <kbd className={KBD_CLASS}>⏎</kbd> send
                 <span className="mx-0.5 text-zinc-700">·</span>

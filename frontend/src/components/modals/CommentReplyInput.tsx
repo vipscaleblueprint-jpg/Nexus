@@ -359,11 +359,11 @@ export function CommentReplyInput({
   return (
     <div
       ref={wrapperRef}
-      className="pl-11 flex flex-col gap-2 mt-1.5 relative w-full min-w-0 max-w-full"
+      className="flex flex-col gap-1.5 mt-1.5 relative w-full min-w-0 max-w-full"
     >
       {/* Staged Attachments Strip */}
       {stagedFiles.length > 0 && (
-        <div className="flex flex-wrap gap-2.5">
+        <div className="flex flex-wrap gap-2">
           {stagedFiles.map((item) => {
             const { file, previewUrl, id } = item;
             const isImage = file.type.startsWith('image/');
@@ -378,7 +378,7 @@ export function CommentReplyInput({
                   isSoftWarning
                     ? 'border-amber-500/60 ring-1 ring-amber-500/30'
                     : 'border-indigo-500/40 ring-1 ring-indigo-500/20'
-                } w-16 h-16 shrink-0 overflow-hidden shadow-sm`}
+                } w-12 h-12 shrink-0 overflow-hidden shadow-sm`}
               >
                 {isImage && previewUrl ? (
                   <>
@@ -435,12 +435,13 @@ export function CommentReplyInput({
         </div>
       )}
 
-      {/* Rich-Text CommentEditor matching main & subtask comment sections */}
+      {/* Mini Rich-Text CommentEditor matching main & subtask comment sections */}
       <CommentEditor
         ref={commentEditorRef}
         id={`reply-${commentId || 'default'}`}
         value={replyHtml}
         autoFocus
+        compact
         disabled={isSubmitting}
         placeholder={isSubmitting ? 'Posting reply...' : placeholder}
         onChange={(html, text, cursorPosition, textBefore) => {
@@ -508,13 +509,14 @@ export function CommentReplyInput({
         onUploadImageUrl={copyCommentImage}
         onUploadingChange={setIsUploadingInline}
         footer={
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <ComposerToolButton
               onClick={() => fileInputRef.current?.click()}
               disabled={isSubmitting}
               title="Attach file or image"
+              className="!h-6 !w-6"
             >
-              <Paperclip className="w-4 h-4" />
+              <Paperclip className="w-3.5 h-3.5" />
             </ComposerToolButton>
             <ComposerToolButton
               onClick={(e) => {
@@ -523,18 +525,19 @@ export function CommentReplyInput({
               }}
               disabled={isSubmitting}
               title="Add emoji"
+              className="!h-6 !w-6"
             >
-              <SmilePlus className="w-4 h-4" />
+              <SmilePlus className="w-3.5 h-3.5" />
             </ComposerToolButton>
           </div>
         }
         footerEnd={
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={handleCancel}
               disabled={isSubmitting}
-              className="h-7 px-2.5 rounded-lg text-[12px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer disabled:opacity-50"
+              className="h-6 px-2 rounded-md text-[11px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer disabled:opacity-50"
               title="Cancel reply (Esc)"
             >
               Cancel
@@ -543,6 +546,7 @@ export function CommentReplyInput({
               onClick={handleSubmit}
               disabled={!hasContent || isUploadingInline || isSubmitting}
               title={isUploadingInline ? 'Uploading image...' : 'Send reply'}
+              className="!h-6 !pl-2 !pr-2.5 !gap-1 !text-[11px] !rounded-md"
             >
               {isSubmitting ? 'Sending…' : 'Send'}
             </ComposerSendButton>

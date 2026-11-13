@@ -116,6 +116,14 @@ export const TaskMapContainer: React.FC = () => {
   // Task Detail Modal
   const [selectedTaskModal, setSelectedTaskModal] = useState<any | null>(null);
   const [selectedSubtaskTargetId, setSelectedSubtaskTargetId] = useState<string | undefined>(undefined);
+  const [restoringUrlTask, setRestoringUrlTask] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return Boolean(new URLSearchParams(window.location.search).get('task'));
+    } catch {
+      return false;
+    }
+  });
   const closedTaskIdRef = useRef<string | null>(null);
   const lastUrlTaskIdRef = useRef<string | null>(null);
 
@@ -155,12 +163,14 @@ export const TaskMapContainer: React.FC = () => {
       if (!urlTaskParam) {
         closedTaskIdRef.current = null;
         lastUrlTaskIdRef.current = null;
+        setRestoringUrlTask(false);
         setSelectedTaskModal((prev: any) => (prev ? null : prev));
         setSelectedSubtaskTargetId(undefined);
         return;
       }
 
       if (urlTaskParam === closedTaskIdRef.current) {
+        setRestoringUrlTask(false);
         return;
       }
 
@@ -204,6 +214,7 @@ export const TaskMapContainer: React.FC = () => {
           setSelectedSubtaskTargetId(urlSubtaskParam);
           setSelectedTaskModal(localMatch);
         }
+        setRestoringUrlTask(false);
         return;
       }
 
@@ -225,6 +236,8 @@ export const TaskMapContainer: React.FC = () => {
         cleanUrl.searchParams.delete('task');
         cleanUrl.searchParams.delete('subtask');
         window.history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}`);
+      } finally {
+        setRestoringUrlTask(false);
       }
     };
 
@@ -1208,17 +1221,20 @@ export const TaskMapContainer: React.FC = () => {
     useAppStore.getState().setActiveUpworkSessions(effectiveUpworkSessions);
   }, [effectiveUpworkSessions]);
 
-  if (loading && tasks.length === 0 && availablePool.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 h-full bg-background text-zinc-400">
-        <Loader2 className="size-8 animate-spin text-[#0099ff] mb-3" />
-        <p className="text-sm font-medium">Loading Task Map Journal...</p>
-      </div>
-    );
-  }
+  const isInitialBoardLoading = loading && tasks.length === 0 && availablePool.length === 0;
+  const showJournalLoader = isInitialBoardLoading && !selectedTaskModal && !restoringUrlTask;
 
   return (
-    <div className="flex h-full w-full bg-background overflow-hidden select-none">
+    <>
+      {showJournalLoader ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-12 h-full bg-background text-zinc-400">
+          <Loader2 className="size-8 animate-spin text-[#0099ff] mb-3" />
+          <p className="text-sm font-medium">Loading Task Map Journal...</p>
+        </div>
+      ) : isInitialBoardLoading ? (
+        <div className="flex-1 h-full bg-background" />
+      ) : (
+        <div className="flex h-full w-full bg-background overflow-hidden select-none">
       {/* 1. Left: Dedicated Date Sidebar (Matches Image 1) */}
       <TaskMapSidebar
         currentDate={currentDate}
@@ -1359,14 +1375,18 @@ export const TaskMapContainer: React.FC = () => {
           )}
         </div>
       </main>
+        </div>
+      )}
 
       {/* Task Detail Modal */}
       {selectedTaskModal && (
         <TaskDetailModal
           isOpen={!!selectedTaskModal}
           onClose={() => {
-            closedTaskIdRef.current = selectedTaskModal?.id ?? null;
+            closedTaskIdRef.current =
+              new URLSearchParams(window.location.search).get('task') || selectedTaskModal?.id || null;
             lastUrlTaskIdRef.current = null;
+            setRestoringUrlTask(false);
             setSelectedTaskModal(null);
             setSelectedSubtaskTargetId(undefined);
             const url = new URL(window.location.href);
@@ -1416,6 +1436,6 @@ export const TaskMapContainer: React.FC = () => {
             : 'Open Task & Review Subtasks'
         }
       />
-    </div>
+    </>
   );
 };

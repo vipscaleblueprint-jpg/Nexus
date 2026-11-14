@@ -7,8 +7,13 @@ import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
 import { CreateListModal } from '@/components/modals/CreateListModal';
 import { CreateDocModal } from '@/components/modals/CreateDocModal';
 import { CreatePageModal } from '@/components/modals/CreatePageModal';
-import { TaskDetailModal } from '@/components/modals/TaskDetailModal';
+import dynamic from 'next/dynamic';
 import { EntityType } from '@/components/modals/CreateEntityModal';
+
+const TaskDetailModal = dynamic(
+  () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
+  { ssr: false }
+);
 import { useAppStore } from '@/lib/store';
 import { Space, Folder, Doc, Task } from '@/lib/types';
 import { ClickUpMobileTasksHub } from '@/components/mobile/ClickUpMobileTasksHub';

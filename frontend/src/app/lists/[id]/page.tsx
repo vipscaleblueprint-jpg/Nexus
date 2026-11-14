@@ -28,7 +28,13 @@ import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { arrayMove } from '@dnd-kit/sortable';
 import { tasksApi } from '@/api/tasks';
 import { CreateTaskModal } from '@/components/modals/CreateTaskModal';
-import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
+import dynamic from 'next/dynamic';
+import { isModalHistoryBackPending } from '@/lib/taskNavigation';
+
+const TaskDetailModal = dynamic(
+  () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
+  { ssr: false }
+);
 import { STATUS_COLORS, isClosedStatus } from '@/lib/taskTokens';
 import { motion } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
@@ -1040,7 +1046,7 @@ export default function BoardPage() {
           socket={socket}
           listStatuses={list?.statuses || []}
           workspaceRoles={workspaceRoles}
-          onStatusChange={(newStatus) => {
+          onStatusChange={(newStatus: string) => {
             if (selectedTask) {
               const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
               if (!check.allowed) {
@@ -1056,7 +1062,7 @@ export default function BoardPage() {
               setSelectedTask({ ...selectedTask, status: newStatus });
             }
           }}
-          onUpdateTask={async (updatedTask) => {
+          onUpdateTask={async (updatedTask: any) => {
             // Sync board and modal state
             localTaskEditsRef.current.set(updatedTask.id, Date.now());
             useAppStore.getState().updateTask(updatedTask);

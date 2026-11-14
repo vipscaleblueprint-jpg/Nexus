@@ -4,11 +4,12 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 're
 import { createPortal } from 'react-dom';
 import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from 'lucide-react';
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
-import { fetchListStatuses } from '@/lib/listStatusCache';
+import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
 import { TaskMapItem, isTaskMapItemOnHold } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
+import { useLiveClock } from '@/lib/liveClock';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
 
 const getHexColor = (color: string) => {
@@ -306,7 +307,7 @@ export const ColumnPriorityDropdown: React.FC<{
         return {
           label: 'Low',
           flagClass: 'text-zinc-500 dark:text-zinc-400',
-          btnClass: 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-750 dark:text-zinc-200 dark:border-zinc-700',
+          btnClass: 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700',
           badgeClass: 'bg-zinc-200 text-zinc-700 dark:bg-black/40 dark:text-zinc-300',
           count: counts.LOW,
         };
@@ -516,6 +517,17 @@ export const CardStatusDropdown: React.FC<{
       return;
     }
     if (!listId) return;
+
+    // Check synchronous cache first
+    const cached = getCachedListStatuses(listId);
+    if (cached && cached.length > 0) {
+      setFetchedStatuses(cached);
+      return;
+    }
+
+    // Only fetch over the wire if the dropdown is open
+    if (!isOpen) return;
+
     let active = true;
     fetchListStatuses(listId).then((res) => {
       if (active && Array.isArray(res) && res.length > 0) {
@@ -525,7 +537,7 @@ export const CardStatusDropdown: React.FC<{
     return () => {
       active = false;
     };
-  }, [listId, listStatuses]);
+  }, [listId, listStatuses, isOpen]);
 
   const orderedStatuses = useMemo(() => {
     const raw = (fetchedStatuses && fetchedStatuses.length > 0)
@@ -662,6 +674,11 @@ export const CardStatusDropdown: React.FC<{
         ref={triggerRef}
         type="button"
         onClick={handleToggle}
+        onMouseEnter={() => {
+          if (listId && !getCachedListStatuses(listId)) {
+            fetchListStatuses(listId).catch(() => {});
+          }
+        }}
         className="flex items-center p-1 -m-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer select-none"
         title={`Status: ${clean} (click to change)`}
       >
@@ -986,12 +1003,15 @@ export function computeElapsed(timeInStr?: string | null, dateStr?: string | nul
 
 export interface TaskTimeProgressSlotProps {
   task: TaskMapItem;
-  now: Date;
+  now?: Date;
   isLive?: boolean;
 }
 
-export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now, isLive = true }) => {
+export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: propNow, isLive = true }) => {
   const prog = task.progress;
+  const isCountingLive = Boolean(isLive && prog?.timeIn && !prog?.timeOut);
+  const liveClockNow = useLiveClock(isCountingLive && !propNow);
+  const now = propNow || liveClockNow;
   const upworkClients = useAppStore((s) => s.upworkClients);
   const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
 
@@ -1066,12 +1086,12 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     if (isUpwork) {
       return (
         <div
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/15 border border-white/50 text-white font-bold text-[10px] shadow-[0_0_8px_rgba(255,255,255,0.12)] select-none truncate max-w-full"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/40 text-indigo-700 dark:bg-white/15 dark:border-white/50 dark:text-white font-bold text-[10px] shadow-[0_0_8px_rgba(99,102,241,0.12)] dark:shadow-[0_0_8px_rgba(255,255,255,0.12)] select-none truncate max-w-full"
           title={`Upwork task in progress since ${prog.timeIn} (${elapsed} elapsed)`}
         >
           <span className="relative flex size-1.5 shrink-0">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
-            <span className="relative inline-flex rounded-full size-1.5 bg-white" />
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-500 dark:bg-white opacity-75" />
+            <span className="relative inline-flex rounded-full size-1.5 bg-indigo-600 dark:bg-white" />
           </span>
           <span className="font-mono truncate">{liveText}</span>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   TaskMapItem,
@@ -52,6 +52,7 @@ export function doesProgressMatchUser(progMaName?: string | null, userName?: str
 
 import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { getCurrentLiveTime } from '@/lib/liveClock';
 import { getPriorityConfig } from '@/lib/priority';
 import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
@@ -370,7 +371,7 @@ const CardCutoutPlaceholder: React.FC<{
             <Sparkles className="size-3 text-blue-400 shrink-0" />
             <span className="truncate">{task.list?.name || 'General'}</span>
           </div>
-          <h4 className="text-[13px] font-bold text-white/95 line-clamp-2 leading-snug my-0.5 h-[36px]">
+          <h4 className="text-[13px] font-bold text-zinc-900 dark:text-white/95 line-clamp-2 leading-snug my-0.5 h-[36px]">
             {task.title}
           </h4>
         </div>
@@ -544,7 +545,7 @@ const ColumnPriorityDropdown: React.FC<{
         return {
           label: 'Low',
           flagClass: 'text-zinc-500 dark:text-zinc-400',
-          btnClass: 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-750 dark:text-zinc-200 dark:border-zinc-700',
+          btnClass: 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700',
           badgeClass: 'bg-zinc-200 text-zinc-700 dark:bg-black/40 dark:text-zinc-300',
           count: counts.LOW,
         };
@@ -811,12 +812,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
   });
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
 
-  // Live ticking clock to update in-progress elapsed minutes and hours
-  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  // Low-frequency heartbeat (every 5 minutes) for 14h staleness boundary checks; active elapsed timers self-update via liveClock
+  const [stalenessTick, setStalenessTick] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 10000);
+    const timer = setInterval(() => setStalenessTick((prev) => prev + 1), 300000);
     return () => clearInterval(timer);
   }, []);
+
+  const boardTime = useMemo(() => getCurrentLiveTime(), [tasks, availablePool, stalenessTick]);
 
   const togglePinColumn = (columnId: string) => {
     setPinnedColumns((prev) => {
@@ -956,7 +959,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const hasActiveWorker = Boolean(
         t.progress?.maName &&
         !t.progress?.timeOut &&
-        isTaskLiveWorking(t, t.progress.maName, currentTime) &&
+        isTaskLiveWorking(t, t.progress.maName, boardTime) &&
         (shiftUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name)) ||
           (allUsers && allUsers.some((u) => doesProgressMatchUser(t.progress?.maName, u.name))))
       );
@@ -1147,7 +1150,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   // Ensure any user who is actively live working on a task gets a column in userColumnsMap
   tasks.forEach((t) => {
-    if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, currentTime) && allUsers) {
+    if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
       const alreadyHasCol = Object.values(userColumnsMap).some((col) =>
         doesProgressMatchUser(t.progress?.maName, col.user.name)
       );
@@ -1213,7 +1216,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           p.progress?.maName &&
           !p.progress?.timeOut &&
           Object.values(userColumnsMap).some(
-            (col) => doesProgressMatchUser(p.progress?.maName, col.user.name) && isTaskLiveWorking(p, col.user.name, currentTime)
+            (col) => doesProgressMatchUser(p.progress?.maName, col.user.name) && isTaskLiveWorking(p, col.user.name, boardTime)
           )
         );
         const handlerId = getEffectiveTaskMapHandlerId(p);
@@ -1245,7 +1248,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     // Only if an MA is actively live working on this task (and it's not assigned to someone else),
     // display it in that worker's column so they see their live active task:
-    if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, currentTime)) {
+    if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, boardTime)) {
       const workerCol = Object.entries(userColumnsMap).find(
         ([, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
       );
@@ -1281,7 +1284,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const isMyProg = doesProgressMatchUser(t.progress?.maName, col.user.name);
       if (!isMyProg || !t.progress?.timeIn || t.progress?.timeOut || t.progress?.isMissingTime) return false;
       // Stale sessions (>14h or past date) can never act as active assigned task
-      if (isStaleLiveSession(t.progress.timeIn, t.progress.date, currentTime)) return false;
+      if (isStaleLiveSession(t.progress.timeIn, t.progress.date, boardTime)) return false;
       // If the active session has a sheetRow, only match if this task actually has the same sheetRow!
       if (activeSession?.rowNumber && t.progress?.sheetRow) {
         return Number(t.progress.sheetRow) === Number(activeSession.rowNumber);
@@ -1302,7 +1305,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         userName: col.user.name,
         client: effectiveClient,
         taskTitle: effectiveTask,
-        day: activeSession?.date || format(currentTime, 'yyyy-MM-dd'),
+        day: activeSession?.date || format(boardTime, 'yyyy-MM-dd'),
         timeIn: activeSession?.timeIn || null,
         timeOut: activeSession?.timeOut || null,
         status: activeSession?.status || (activeSession?.timeOut ? 'CLOSED' : 'IN PROGRESS'),
@@ -1632,8 +1635,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const list: TaskMapOption[] = [
       { id: 'opt-status-avail', label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff', order: 0 },
       { id: 'opt-status-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 1 },
-      { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#fffbeb', order: 2 },
-      { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ecfeff', order: 3 },
+      { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12', order: 2 },
+      { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75', order: 3 },
       { id: 'opt-status-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 4 },
       { id: 'opt-status-waiting', label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#fef2f2', order: 5 },
       { id: 'opt-status-onhold', label: 'On-hold', color: TASK_MAP_STATUS_COLORS.ON_HOLD, textColor: '#ffffff', order: 6 },
@@ -2081,11 +2084,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       task.progress?.timeIn &&
                       !task.progress?.timeOut &&
                       !task.progress?.isMissingTime &&
-                      !isStaleLiveSession(task.progress?.timeIn, task.progress?.date, currentTime)
+                      !isStaleLiveSession(task.progress?.timeIn, task.progress?.date, boardTime)
                     );
 
                     const cardBorderClass = isUpwork && isLive
-                      ? 'border-white/60 ring-1 ring-white/20 shadow-[0_0_12px_rgba(255,255,255,0.08)]'
+                      ? 'border-indigo-500/70 ring-1 ring-indigo-500/20 shadow-[0_0_12px_rgba(99,102,241,0.15)] dark:border-white/60 dark:ring-white/20 dark:shadow-[0_0_12px_rgba(255,255,255,0.08)]'
                       : isMissingTime
                         ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
                         : isLive
@@ -2131,8 +2134,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   </span>
                                 )}
                                 {isUpwork && isLive ? (
-                                  <span className="text-white font-bold uppercase tracking-wider flex items-center gap-1 truncate">
-                                    <span className="size-1.5 rounded-full bg-white animate-pulse shrink-0" />
+                                  <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1 truncate">
+                                    <span className="size-1.5 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
                                     {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
                                   </span>
                                 ) : isLive ? (
@@ -2214,7 +2217,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
                             <div className="w-[130px] sm:w-[145px] shrink-0 flex flex-col justify-between py-0.5">
                               <div className="flex justify-end items-center">
-                                <TaskTimeProgressSlot task={task} now={currentTime} />
+                                <TaskTimeProgressSlot task={task} />
                               </div>
 
                               <div
@@ -2546,11 +2549,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     effectiveProgress?.timeIn &&
                     !effectiveProgress?.timeOut &&
                     !effectiveProgress?.isMissingTime &&
-                    (task.isAssumptionBlock || !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, currentTime))
+                    (task.isAssumptionBlock || !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, boardTime))
                   );
                   // Only highlight tasks that are actively live working (with a counting timer)
                   const cardBorderClass = isUpwork && isLiveWorking
-                    ? 'border-white/80 ring-2 ring-white/30 shadow-[0_0_18px_rgba(255,255,255,0.22)] animate-[pulse_3s_ease-in-out_infinite]'
+                    ? 'border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.22)] animate-[pulse_3s_ease-in-out_infinite] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.22)]'
                     : isMissingTime
                       ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
                       : isLiveWorking
@@ -2559,7 +2562,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           ? 'border-indigo-500/35 hover:border-indigo-400/60 shadow-sm'
                           : isSeparatedSubtask
                             ? 'border-amber-500/30 hover:border-amber-400/55 shadow-sm'
-                            : 'border-zinc-800/90 hover:border-zinc-700 shadow-sm';
+                            : 'border-border dark:border-zinc-800/90 hover:border-zinc-700 shadow-sm';
 
                   return (
                     <DraggableTaskCard key={task.id} task={task} disabled={!isPmUser || task.isAssumptionBlock}>
@@ -2598,8 +2601,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                     </span>
                                   )}
                                   {isUpwork && isLiveWorking ? (
-                                    <span className="text-white font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
-                                      <span className="size-2 rounded-full bg-white animate-pulse shrink-0" />
+                                    <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
+                                      <span className="size-2 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
                                       {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
                                     </span>
                                   ) : isLiveWorking ? (
@@ -2700,7 +2703,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           {/* RIGHT: Section where Sub-Status is (with Time Progress in top right corner) */}
                           <div className="w-[130px] sm:w-[145px] shrink-0 flex flex-col justify-between py-0.5">
                             <div className="flex justify-end items-center">
-                              <TaskTimeProgressSlot task={{ ...task, progress: effectiveProgress }} now={currentTime} isLive={isLiveWorking} />
+                              <TaskTimeProgressSlot task={{ ...task, progress: effectiveProgress }} isLive={isLiveWorking} />
                             </div>
 
                             <div
@@ -2741,7 +2744,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       <div className="flex items-center justify-between px-1">
                         {(() => {
                           const isColumnLiveWorking = Boolean(
-                            activeInProgTask && isTaskLiveWorking(activeInProgTask, user.name, currentTime)
+                            activeInProgTask && isTaskLiveWorking(activeInProgTask, user.name, boardTime)
                           );
                           return (
                             <>
@@ -2836,7 +2839,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   )}
                   <span className="truncate">{activeDragTask.list?.name || 'General'}</span>
                 </div>
-                <h4 className="text-[13px] font-bold text-white line-clamp-2 leading-snug my-0.5 h-[36px]">
+                <h4 className="text-[13px] font-bold text-zinc-900 dark:text-white line-clamp-2 leading-snug my-0.5 h-[36px]">
                   {activeDragTask.isSubtask ? (activeDragTask.title || '').replace(/^--\s*/, '') : activeDragTask.title}
                 </h4>
                 <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
@@ -2865,7 +2868,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
               {/* Right: Sub-Status snapshot */}
               <div className="w-[125px] shrink-0 flex flex-col justify-between py-0.5">
                 <div className="flex justify-end items-center">
-                  <TaskTimeProgressSlot task={activeDragTask} now={currentTime} />
+                  <TaskTimeProgressSlot task={activeDragTask} />
                 </div>
                 <div className="w-full">
                   <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">

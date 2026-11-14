@@ -10,9 +10,14 @@ import { tasksApi } from '@/api/tasks';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { Task } from '@/lib/types';
-import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
+import dynamic from 'next/dynamic';
 import { parseNexusTaskLink } from '@/lib/links';
-import { openTaskInNewTab } from '@/lib/taskNavigation';
+import { openTaskInNewTab, isModalHistoryBackPending } from '@/lib/taskNavigation';
+
+const TaskDetailModal = dynamic(
+  () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
+  { ssr: false }
+);
 import { getTaskSnapshot } from '@/lib/nexusLinkPaste';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { RenameModal } from '@/components/modals/RenameModal';

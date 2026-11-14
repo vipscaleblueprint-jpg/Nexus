@@ -158,3 +158,29 @@ export function initGlobalTaskNewTabListeners() {
   };
 }
 
+let pendingModalHistoryBack = false;
+let pendingModalHistoryBackTimer: NodeJS.Timeout | null = null;
+
+export function markPendingModalHistoryBack() {
+  pendingModalHistoryBack = true;
+  if (pendingModalHistoryBackTimer) clearTimeout(pendingModalHistoryBackTimer);
+  pendingModalHistoryBackTimer = setTimeout(() => {
+    pendingModalHistoryBack = false;
+    pendingModalHistoryBackTimer = null;
+  }, 200);
+}
+
+export function isModalHistoryBackPending(): boolean {
+  return pendingModalHistoryBack;
+}
+
+export function clearPendingModalHistoryBack(): boolean {
+  if (!pendingModalHistoryBack) return false;
+  pendingModalHistoryBack = false;
+  if (pendingModalHistoryBackTimer) {
+    clearTimeout(pendingModalHistoryBackTimer);
+    pendingModalHistoryBackTimer = null;
+  }
+  return true;
+}
+

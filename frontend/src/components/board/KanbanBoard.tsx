@@ -1633,7 +1633,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                 >
                                   {isClosedCategory && (
                                     <button
-                                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer border-b border-zinc-800/80 mb-1"
+                                      className="w-full text-left px-3 py-2 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2 transition-colors cursor-pointer border-b border-zinc-200 dark:border-zinc-800/80 mb-1"
                                       onClick={() => {
                                         toggleSortLatestClosed();
                                         setOpenGroupMenu(null);
@@ -1646,7 +1646,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                   )}
                                   {!category.isCatchAll && (
                                     <button
-                                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                                      className="w-full text-left px-3 py-2 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
                                       onClick={() => {
                                         setEditingGroup(category.title);
                                         setEditingGroupName(category.title);
@@ -1659,7 +1659,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
                                     </button>
                                   )}
                                   <button
-                                    className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+                                    className="w-full text-left px-3 py-2 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
                                     onClick={() => {
                                       setAddingStatusToGroup(category.title);
                                       setNewStatusName('');

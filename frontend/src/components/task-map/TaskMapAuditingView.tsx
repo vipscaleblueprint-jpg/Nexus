@@ -17,6 +17,7 @@ import {
   isTaskSavingToDb,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { useLiveClock } from '@/lib/liveClock';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
@@ -228,11 +229,14 @@ function computeElapsed(timeInStr?: string | null, dateStr?: string | null, now 
 
 interface TaskTimeProgressSlotProps {
   task: TaskMapItem;
-  now: Date;
+  now?: Date;
 }
 
-const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now }) => {
+const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: propNow }) => {
   const prog = task.progress;
+  const isCountingLive = Boolean(prog?.timeIn && !prog?.timeOut);
+  const liveClockNow = useLiveClock(isCountingLive && !propNow);
+  const now = propNow || liveClockNow;
 
   if (prog?.isMissingTime) {
     return (
@@ -314,13 +318,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     openSubtasks: [],
   });
   const boardScrollRef = useRef<HTMLDivElement>(null);
-
-  // Live ticking clock to update in-progress elapsed minutes and hours
-  const [currentTime, setCurrentTime] = useState<Date>(new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 10000);
-    return () => clearInterval(timer);
-  }, []);
 
   const cleanSearch = (search || '').trim().toLowerCase();
   const isAuditorSearchMatch = (u: any) => {
@@ -1172,7 +1169,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                             {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
                             <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
                               <div className="flex justify-end items-center">
-                                <TaskTimeProgressSlot task={task} now={currentTime} />
+                                <TaskTimeProgressSlot task={task} />
                               </div>
 
                               <div

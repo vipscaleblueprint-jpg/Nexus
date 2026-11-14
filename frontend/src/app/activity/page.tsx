@@ -28,8 +28,13 @@ import {
 } from 'lucide-react';
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns';
 import { draftsApi, TaskDraft } from '@/api/drafts';
-import { openTaskInNewTab } from '@/lib/taskNavigation';
-import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
+import dynamic from 'next/dynamic';
+import { openTaskInNewTab, isModalHistoryBackPending } from '@/lib/taskNavigation';
+
+const TaskDetailModal = dynamic(
+  () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
+  { ssr: false }
+);
 import { ImageLightboxModal } from '@/components/modals/ImageLightboxModal';
 import { tasksApi } from '@/api/tasks';
 import { toast } from '@/lib/toast';

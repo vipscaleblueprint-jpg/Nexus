@@ -745,7 +745,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
             <button
               type="button"
               onClick={onSwitchToBoard}
-              className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-750 text-zinc-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
             >
               <ArrowLeft className="size-3.5" />
               <span>Return to Task Map</span>

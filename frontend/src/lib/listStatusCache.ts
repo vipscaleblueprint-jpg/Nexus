@@ -8,6 +8,10 @@ import { spacesApi } from '@/api/spaces';
 const statusCache = new Map<string, any[]>();
 const inflight = new Map<string, Promise<any[]>>();
 
+export function getCachedListStatuses(listId: string): any[] | null {
+  return statusCache.get(listId) || null;
+}
+
 export function fetchListStatuses(listId: string): Promise<any[]> {
   const cached = statusCache.get(listId);
   if (cached) return Promise.resolve(cached);

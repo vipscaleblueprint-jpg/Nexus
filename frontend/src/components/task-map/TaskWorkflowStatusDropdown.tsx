@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { fetchListStatuses } from '@/lib/listStatusCache';
+import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd, CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
 import { tasksApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -50,20 +50,28 @@ export const TaskWorkflowStatusDropdown: React.FC<Props> = ({
 
   const currentUser = useAppStore((s) => s.currentUser);
 
-  // Load list statuses
+  // Load list statuses lazily on open or from cache
   useEffect(() => {
-    let mounted = true;
-    if (listId) {
-      fetchListStatuses(listId).then((res) => {
-        if (mounted && Array.isArray(res) && res.length > 0) {
-          setListStatuses(res);
-        }
-      }).catch(() => {});
+    if (!listId) return;
+
+    const cached = getCachedListStatuses(listId);
+    if (cached && cached.length > 0) {
+      setListStatuses(cached);
+      return;
     }
+
+    if (!isOpen) return;
+
+    let mounted = true;
+    fetchListStatuses(listId).then((res) => {
+      if (mounted && Array.isArray(res) && res.length > 0) {
+        setListStatuses(res);
+      }
+    }).catch(() => {});
     return () => {
       mounted = false;
     };
-  }, [listId]);
+  }, [listId, isOpen]);
 
   // Position portal dropdown & handle scroll limit with smooth fade
   useEffect(() => {

@@ -40,7 +40,7 @@ function DropdownField({ label, placeholder, value, options, onSelect, optional,
           readOnly
           value={value || ''}
           placeholder={placeholder}
-          className="w-full bg-card border border-zinc-800 rounded-md px-3 py-2.5 text-sm text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-[#332238] transition-colors cursor-pointer"
+          className="w-full bg-card border border-zinc-800 rounded-md px-3 py-2.5 text-sm text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-primary transition-colors cursor-pointer"
         />
         <ChevronDown className="w-4 h-4 text-zinc-600 absolute right-3 top-1/2 -translate-y-1/2" />
       </div>
@@ -153,7 +153,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
         onClick={e => e.stopPropagation()}
       >
         {/* Form Container */}
-        <div className="bg-background border border-[#332238] rounded-xl shadow-2xl p-6 flex flex-col gap-6 relative mt-8">
+        <div className="bg-background border border-border rounded-xl shadow-2xl p-6 flex flex-col gap-6 relative mt-8">
           
           {/* Header & Close Button */}
           <div className="flex items-center justify-between pb-2 border-b border-zinc-800/50">
@@ -188,7 +188,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
               autoFocus
               value={title}
               onChange={e => setTitle(e.target.value)}
-              className="w-full bg-card border border-zinc-800 rounded-md px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#402a47] transition-colors"
+              className="w-full bg-card border border-zinc-800 rounded-md px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-primary transition-colors"
               placeholder="Enter task title..."
             />
           </div>
@@ -199,7 +199,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
             <div className="relative flex items-center">
               <input 
                 type="text" 
-                className="w-full bg-card border border-zinc-800 rounded-md pl-3 pr-28 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#402a47] transition-colors"
+                className="w-full bg-card border border-zinc-800 rounded-md pl-3 pr-28 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-primary transition-colors"
                 placeholder="https://example.com or WhatsApp, Slack, Telegram..."
               />
               <div className="absolute right-2 flex items-center gap-1.5 cursor-pointer text-zinc-400 hover:text-zinc-200 transition-colors">
@@ -258,7 +258,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
             <textarea 
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full bg-card border border-zinc-800 rounded-md px-3 py-3 text-sm text-zinc-100 focus:outline-none focus:border-[#402a47] transition-colors min-h-[120px] resize-y"
+              className="w-full bg-card border border-zinc-800 rounded-md px-3 py-3 text-sm text-zinc-100 focus:outline-none focus:border-primary transition-colors min-h-[120px] resize-y"
               placeholder="Describe the task details and requirements..."
             />
           </div>

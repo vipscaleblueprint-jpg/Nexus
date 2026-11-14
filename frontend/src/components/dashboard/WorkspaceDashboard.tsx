@@ -55,7 +55,12 @@ import { HIDE_DESIGN_AUDIT, normalizeAuditName } from "@/lib/auditChecklist";
 import { clickUpApi } from "@/api/clickup";
 import { io, Socket } from "socket.io-client";
 import { API_BASE_URL } from "@/api/client";
-import { TaskDetailModal } from "@/components/modals/TaskDetailModal";
+import dynamic from "next/dynamic";
+
+const TaskDetailModal = dynamic(
+  () => import("@/components/modals/TaskDetailModal").then((m) => m.TaskDetailModal),
+  { ssr: false }
+);
 import { getAssigneeAvatarColor } from "@/lib/taskTokens";
 import { getRoles } from "@/api/roles";
 import { toast } from "@/lib/toast";

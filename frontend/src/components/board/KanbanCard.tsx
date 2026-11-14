@@ -950,7 +950,7 @@ const CardContent = memo(({
                       return (
                         <div
                           key={user.id}
-                          className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${isAssigned ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                          className={`px-2 py-1.5 flex items-center gap-2 rounded-md cursor-pointer transition-colors ${isAssigned ? 'bg-zinc-800/80 text-foreground font-semibold dark:text-white' : 'hover:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100'
                             }`}
                           onClick={() => handleAssigneeToggle(user)}
                         >
@@ -1119,7 +1119,7 @@ const CardContent = memo(({
                   return (
                     <div
                       key={p}
-                      className={`px-2.5 py-2 flex items-center gap-2.5 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-zinc-800/80 text-white' : 'hover:bg-zinc-800/50 text-zinc-300 hover:text-zinc-100'
+                      className={`px-2.5 py-2 flex items-center gap-2.5 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-zinc-800/80 text-foreground font-semibold dark:text-white' : 'hover:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100'
                         }`}
                       onClick={() => handlePriorityChange(p)}
                     >

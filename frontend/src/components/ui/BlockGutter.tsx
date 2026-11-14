@@ -347,69 +347,69 @@ export function BlockGutter({ editor, editorContainerRef, disabled = false }: Bl
           ref={menuRef}
           data-block-gutter
           style={{ top: menuState.top + 24 }}
-          className="absolute left-6 z-[99999] w-48 rounded-xl border border-zinc-800 bg-[#0f0f0f] p-1 shadow-2xl animate-in fade-in zoom-in-95 duration-100"
+          className="absolute left-6 z-[99999] w-48 rounded-xl border border-border bg-popover p-1 shadow-2xl animate-in fade-in zoom-in-95 duration-100"
         >
-          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             Turn into
           </div>
           <button
             type="button"
             onClick={handleSetParagraph}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <AlignLeft className="h-3.5 w-3.5 text-zinc-400" />
+            <AlignLeft className="h-3.5 w-3.5 text-muted-foreground" />
             Paragraph
           </button>
           <button
             type="button"
             onClick={() => handleSetHeading(1)}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <Heading1 className="h-3.5 w-3.5 text-zinc-400" />
+            <Heading1 className="h-3.5 w-3.5 text-muted-foreground" />
             Heading 1
           </button>
           <button
             type="button"
             onClick={() => handleSetHeading(2)}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <Heading2 className="h-3.5 w-3.5 text-zinc-400" />
+            <Heading2 className="h-3.5 w-3.5 text-muted-foreground" />
             Heading 2
           </button>
           <button
             type="button"
             onClick={() => handleSetHeading(3)}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <Heading3 className="h-3.5 w-3.5 text-zinc-400" />
+            <Heading3 className="h-3.5 w-3.5 text-muted-foreground" />
             Heading 3
           </button>
           <button
             type="button"
             onClick={handleSetTaskList}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <CheckSquare className="h-3.5 w-3.5 text-zinc-400" />
+            <CheckSquare className="h-3.5 w-3.5 text-muted-foreground" />
             Checklist
           </button>
           <button
             type="button"
             onClick={handleSetBulletList}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <List className="h-3.5 w-3.5 text-zinc-400" />
+            <List className="h-3.5 w-3.5 text-muted-foreground" />
             Bullet List
           </button>
           <button
             type="button"
             onClick={handleSetToggle}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
-            <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
             Toggle List
           </button>
 
-          <div className="my-1 border-t border-zinc-800/80" />
+          <div className="my-1 border-t border-border" />
 
           <button
             type="button"
@@ -419,10 +419,10 @@ export function BlockGutter({ editor, editorContainerRef, disabled = false }: Bl
                 setMenuState(null);
               }
             }}
-            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
             <div className="flex items-center gap-2">
-              <IndentDecrease className="h-3.5 w-3.5 text-zinc-400" />
+              <IndentDecrease className="h-3.5 w-3.5 text-muted-foreground" />
               Decrease Indent
             </div>
             <kbd className={KBD_CLASS}>{SHORTCUT_OUTDENT}</kbd>
@@ -435,16 +435,16 @@ export function BlockGutter({ editor, editorContainerRef, disabled = false }: Bl
                 setMenuState(null);
               }
             }}
-            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 transition-colors cursor-pointer text-left"
+            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-popover-foreground hover:bg-muted transition-colors cursor-pointer text-left"
           >
             <div className="flex items-center gap-2">
-              <IndentIncrease className="h-3.5 w-3.5 text-zinc-400" />
+              <IndentIncrease className="h-3.5 w-3.5 text-muted-foreground" />
               Increase Indent
             </div>
             <kbd className={KBD_CLASS}>{SHORTCUT_INDENT}</kbd>
           </button>
 
-          <div className="my-1 border-t border-zinc-800/80" />
+          <div className="my-1 border-t border-border" />
 
           <button
             type="button"

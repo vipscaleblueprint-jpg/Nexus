@@ -716,7 +716,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                 onClick={() => onViewChange('BOARD')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${currentView === 'BOARD'
                   ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 font-medium'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
                   }`}
               >
                 <Kanban className="size-3.5" />
@@ -728,7 +728,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                 onClick={() => onViewChange('AUDITING')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${currentView === 'AUDITING'
                   ? 'bg-amber-600 text-white shadow-sm font-semibold'
-                  : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-800/50 font-medium'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-amber-600 dark:hover:text-amber-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
                   }`}
               >
                 <ShieldCheck className="size-3.5" />
@@ -741,7 +741,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                   onClick={() => onViewChange('CRM')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${currentView === 'CRM'
                     ? 'bg-[#22A3AE] text-white shadow-sm font-semibold'
-                    : 'text-zinc-400 hover:text-[#22A3AE] hover:bg-zinc-800/50 font-medium'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-[#22A3AE] hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
                     }`}
                 >
                   <UserCheck className="size-3.5" />
@@ -772,7 +772,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                 value={draftSearch}
                 onChange={(e) => handleSearchInputChange(e.target.value)}
                 placeholder="Search marketing name..."
-                className="w-48 sm:w-64 pl-8 pr-8 py-1.5 bg-card border border-zinc-800/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700 transition-colors"
+                className="w-48 sm:w-64 pl-8 pr-8 py-1.5 bg-card border border-zinc-300 dark:border-zinc-800/80 rounded-xl text-xs text-zinc-900 dark:text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-700 transition-colors"
               />
               {draftSearch && (
                 <button
@@ -945,7 +945,7 @@ export const TaskMapHeader: React.FC<Props> = ({
             )}
 
             {/* Shift pills [All] [Day] [Noon] [Night] [Custom] */}
-            <div className="flex items-center gap-1 bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-medium">
+            <div className="flex items-center gap-1 bg-card border border-zinc-300 dark:border-zinc-800/80 rounded-xl p-1 text-xs font-medium">
               {shiftOptions.map((opt) => {
                 const isCustom = opt.key === 'CUSTOM';
                 const isActive = opt.key === 'ALL'
@@ -980,8 +980,8 @@ export const TaskMapHeader: React.FC<Props> = ({
                         }
                       }}
                       className={`flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg transition-all cursor-pointer ${isActive
-                        ? 'bg-zinc-800 text-zinc-100 shadow-xs font-semibold'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                        ? 'bg-zinc-900 text-white dark:bg-zinc-800 dark:text-zinc-100 shadow-xs font-semibold'
+                        : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50'
                         }`}
                       title={
                         isActive

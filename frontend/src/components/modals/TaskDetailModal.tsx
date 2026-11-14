@@ -50,7 +50,8 @@ import { extractImagesFromComments } from '@/lib/commentImages';
 import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
 import { RecurringConfig } from '@/lib/types';
 import { ActivityDayDivider, getDayKey, isTodayDate } from '../ui/ActivityDayDivider';
-import { openTaskInNewTab } from '@/lib/taskNavigation';
+import { openTaskInNewTab, markPendingModalHistoryBack, isModalHistoryBackPending, clearPendingModalHistoryBack } from '@/lib/taskNavigation';
+export { isModalHistoryBackPending };
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
@@ -4238,17 +4239,17 @@ export function TaskDetailModalContent({
                               }
                               .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
                               .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
-                              .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: #f4f4f5; padding-left: 4px; }
+                              .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: var(--foreground); padding-left: 4px; }
                               .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
-                              .kanban-date-picker .rdp-weekday { color: #a1a1aa; font-weight: 600; font-size: 10px; }
-                              .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; }
+                              .kanban-date-picker .rdp-weekday { color: var(--muted-foreground); font-weight: 600; font-size: 10px; }
+                              .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; color: var(--foreground); }
                               .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
-                              .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: rgba(255, 255, 255, 0.1); }
-                              .kanban-date-picker .rdp-today:not(.rdp-outside) { color: #818cf8; font-weight: 700; }
+                              .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: var(--hover-subtle); }
+                              .kanban-date-picker .rdp-today:not(.rdp-outside) { color: var(--primary, #818cf8); font-weight: 700; }
                               .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
                               .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
-                              .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: rgba(255, 255, 255, 0.1); }
-                              .kanban-date-picker .rdp-chevron { fill: #d4d4d8; width: 12px; height: 12px; }
+                              .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: var(--hover-subtle); }
+                              .kanban-date-picker .rdp-chevron { fill: var(--foreground); width: 12px; height: 12px; }
                             `}</style>
                             <div className="flex justify-between items-center mb-2 px-1">
                               <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
@@ -10065,22 +10066,6 @@ export function SubtaskDetailView({
   );
 }
 
-let pendingModalHistoryBack = false;
-let pendingModalHistoryBackTimer: ReturnType<typeof setTimeout> | null = null;
-
-function markPendingModalHistoryBack() {
-  pendingModalHistoryBack = true;
-  if (pendingModalHistoryBackTimer) clearTimeout(pendingModalHistoryBackTimer);
-  pendingModalHistoryBackTimer = setTimeout(() => {
-    pendingModalHistoryBack = false;
-    pendingModalHistoryBackTimer = null;
-  }, 200);
-}
-
-export function isModalHistoryBackPending(): boolean {
-  return pendingModalHistoryBack;
-}
-
 export function TaskDetailModal(props: Props) {
   const [mounted, setMounted] = useState(false);
   const [fullTask, setFullTask] = useState<Task | null>(props.task ?? null);
@@ -10387,12 +10372,7 @@ export function TaskDetailModal(props: Props) {
     const handlePopState = () => {
       // Absorb stale popstate from an asynchronous history.back() triggered by closing
       // the previous modal moments before the user rapidly opened this new task.
-      if (pendingModalHistoryBack) {
-        pendingModalHistoryBack = false;
-        if (pendingModalHistoryBackTimer) {
-          clearTimeout(pendingModalHistoryBackTimer);
-          pendingModalHistoryBackTimer = null;
-        }
+      if (clearPendingModalHistoryBack()) {
         const url = new URL(window.location.href);
         if (url.searchParams.get('task') !== currentTaskId) {
           url.searchParams.set('task', currentTaskId);

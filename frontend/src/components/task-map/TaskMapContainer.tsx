@@ -18,14 +18,32 @@ import {
   markTaskSavingToDb,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import dynamic from 'next/dynamic';
 import { TaskMapSidebar } from './TaskMapSidebar';
 import { TaskMapHeader } from './TaskMapHeader';
 import { TaskMapBoardView } from './TaskMapBoardView';
-import { TaskMapAuditingView } from './TaskMapAuditingView';
-import { TaskMapCrmView } from './TaskMapCrmView';
-import { TaskMapUpworkView } from './TaskMapUpworkView';
-import { TaskDetailModal, isModalHistoryBackPending } from '@/components/modals/TaskDetailModal';
-import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
+import { isModalHistoryBackPending } from '@/lib/taskNavigation';
+
+const TaskMapAuditingView = dynamic(
+  () => import('./TaskMapAuditingView').then((m) => m.TaskMapAuditingView),
+  { ssr: false }
+);
+const TaskMapCrmView = dynamic(
+  () => import('./TaskMapCrmView').then((m) => m.TaskMapCrmView),
+  { ssr: false }
+);
+const TaskMapUpworkView = dynamic(
+  () => import('./TaskMapUpworkView').then((m) => m.TaskMapUpworkView),
+  { ssr: false }
+);
+const TaskDetailModal = dynamic(
+  () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
+  { ssr: false }
+);
+const UncheckedAuditsModal = dynamic(
+  () => import('@/components/modals/UncheckedAuditsModal').then((m) => m.UncheckedAuditsModal),
+  { ssr: false }
+);
 import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
@@ -497,11 +515,22 @@ export const TaskMapContainer: React.FC = () => {
 
     const handleTaskUpdated = (e: any) => {
       const data = e?.detail || e;
-      const taskId = data?.task?.id || data?.id;
-      if (taskId && pendingUpdatesRef.current.has(taskId)) {
+      const task = data?.task || data;
+      const taskId = task?.id;
+      if (!taskId) {
+        scheduleReload();
         return;
       }
-      scheduleReload();
+      if (pendingUpdatesRef.current.has(taskId)) {
+        return;
+      }
+      // Patch the task in memory to avoid triggering a full network reload
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, ...task } : t))
+      );
+      setAvailablePool((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, ...task } : t))
+      );
     };
 
     const handleTaskMapUpdated = (e: any) => {
@@ -637,7 +666,6 @@ export const TaskMapContainer: React.FC = () => {
     window.addEventListener('task_map:shifts_updated', handleShiftsUpdated);
     window.addEventListener('audit_shifts:updated', handleShiftsUpdated);
     window.addEventListener('task:progress_updated', handleProgressUpdated);
-    window.addEventListener('task_activity', handleTaskUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
     window.addEventListener('ma:session_updated', handleMaSessionUpdated);
 
@@ -648,7 +676,6 @@ export const TaskMapContainer: React.FC = () => {
       window.removeEventListener('task_map:shifts_updated', handleShiftsUpdated);
       window.removeEventListener('audit_shifts:updated', handleShiftsUpdated);
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
-      window.removeEventListener('task_activity', handleTaskUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
       window.removeEventListener('ma:session_updated', handleMaSessionUpdated);
     };

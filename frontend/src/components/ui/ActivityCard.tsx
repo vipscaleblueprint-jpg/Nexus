@@ -637,7 +637,7 @@ export function ActivityCard({
         } ${!isRead
           ? 'bg-[var(--notif-unread-bg)] border-[var(--notif-unread-border)] shadow-[var(--notif-unread-shadow)] ring-1 ring-[var(--notif-unread-ring)] hover:border-[var(--notif-unread-hover-border)] hover:shadow-[var(--notif-unread-hover-shadow)]'
           : isGreyed
-            ? 'bg-card/40 dark:bg-zinc-900/30 border-border/40 hover:bg-card hover:border-border/80 opacity-[0.85] hover:opacity-100'
+            ? 'bg-card/60 border-border/60 hover:bg-card hover:border-border opacity-[0.85] hover:opacity-100'
             : 'bg-card border-border hover:bg-[var(--hover-subtle)] hover:border-border'
         }`}
     >
@@ -717,17 +717,17 @@ export function ActivityCard({
               style={{ maxHeight: !isExpanded && canExpand ? maxHeight : undefined }}
               className={`relative rounded-xl border font-normal transition-all duration-200 overflow-hidden break-words [overflow-wrap:anywhere] ${compact ? 'px-2.5 py-1.5 text-xs leading-normal' : 'px-3 py-2 text-xs sm:text-sm leading-relaxed'
                 } ${isGreyed
-                  ? 'bg-background/40 dark:bg-black/30 border-border/40 text-zinc-400 dark:text-zinc-400'
+                  ? 'bg-muted/40 border-border/60 text-muted-foreground'
                   : !isRead
                     ? 'bg-[var(--notif-quote-bg)] border-[var(--notif-quote-border)] text-foreground shadow-2xs'
-                    : 'bg-background/60 border-border text-foreground'
+                    : 'bg-muted/30 border-border text-foreground'
                 }`}
             >
               <CommentContent
                 content={content}
                 maxLinkLength={effectiveMaxLinkLength}
                 className={`${compact ? 'text-xs' : 'text-xs sm:text-sm'
-                  } ${isGreyed ? 'text-zinc-400 dark:text-zinc-400' : 'text-foreground'
+                  } ${isGreyed ? 'text-muted-foreground' : 'text-foreground'
                   } max-w-full break-words [overflow-wrap:anywhere] prose prose-sm dark:prose-invert prose-p:my-0.5 prose-a:text-blue-500 [.theme-light_&]:prose-a:text-blue-600 prose-a:underline [&_a]:text-blue-500 [.theme-light_&]:[&_a]:text-blue-600 [&_a]:underline [&_a]:break-all [&_a]:[overflow-wrap:anywhere] [&_img]:my-0 [&_img]:inline-block`}
                 onPreviewImage={onPreviewImage}
               />
@@ -735,10 +735,10 @@ export function ActivityCard({
               {/* Bottom gradient fade when truncated */}
               {!isExpanded && canExpand && (
                 <div className={`absolute bottom-0 left-0 right-0 h-6 ${isGreyed
-                    ? 'bg-gradient-to-t from-background/95 dark:from-zinc-950/95 via-background/60 dark:via-zinc-950/60 to-transparent'
+                    ? 'bg-gradient-to-t from-muted/95 via-muted/60 to-transparent'
                     : !isRead
                       ? 'bg-gradient-to-t from-[var(--notif-quote-bg)] via-[var(--notif-quote-bg)]/60 to-transparent'
-                      : 'bg-gradient-to-t from-background/95 via-background/60 to-transparent'
+                      : 'bg-gradient-to-t from-muted/95 via-muted/60 to-transparent'
                   } pointer-events-none rounded-b-xl`} />
               )}
             </div>

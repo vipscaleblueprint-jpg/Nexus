@@ -341,8 +341,7 @@
   .bg-rose-500, .bg-rose-600, .bg-red-500, .bg-red-600,
   .bg-pink-500, .bg-pink-600, .bg-amber-500, .bg-orange-500, .bg-teal-500,
   [class*="bg-[#"]:not([class*="]/"]),
-  [class*="from-purple-"], [class*="from-indigo-"], [class*="from-blue-"], [class*="from-violet-"],
-  [class*="bg-gradient-"]
+  [class*="from-purple-"]:not([class*="/"]), [class*="from-indigo-"]:not([class*="/"]), [class*="from-blue-"]:not([class*="/"]), [class*="from-violet-"]:not([class*="/"])
 ) {
   --color-white: #FFFFFF;
 }

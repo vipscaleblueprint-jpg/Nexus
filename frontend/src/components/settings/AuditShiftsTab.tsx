@@ -273,21 +273,21 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
   return (
     <div className="space-y-6 font-sans">
       {/* Header Banner: Live Manila Clock & Current Active Shift */}
-      <div className="bg-gradient-to-r from-zinc-900 via-zinc-900/90 to-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-card border border-border rounded-2xl p-5 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-base font-bold text-white tracking-tight">Audit Shift Schedules</h2>
+            <h2 className="text-base font-bold text-foreground tracking-tight">Audit Shift Schedules</h2>
             <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/25">
               Database Connected
             </span>
             {readOnly && (
-              <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-muted text-muted-foreground border border-border">
                 View Only
               </span>
             )}
           </div>
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-muted-foreground">
             {readOnly
               ? 'View shift hours and assigned auditors & members. Only Admins can modify shift schedules.'
               : 'Configure shift hours and auto-assigned auditors for In-Review tasks. All times evaluate against Manila Time (UTC+8).'}
@@ -296,9 +296,9 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
 
         <div className="flex items-center gap-3 shrink-0 flex-wrap">
           {/* Live Clock Pill */}
-          <div className="flex items-center gap-2 bg-zinc-800/80 px-3 py-1.5 rounded-xl border border-zinc-700/60 shadow-xs">
+          <div className="flex items-center gap-2 bg-muted/80 px-3 py-1.5 rounded-xl border border-border shadow-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-mono font-medium text-zinc-200">{manilaTime || 'UTC+8 Manila'}</span>
+            <span className="text-xs font-mono font-medium text-foreground">{manilaTime || 'UTC+8 Manila'}</span>
           </div>
 
           {!readOnly && (
@@ -342,28 +342,28 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
               onClick={() => handleSelectShift(shift.shiftKey)}
               className={`relative rounded-2xl p-4 transition-all cursor-pointer border ${isSelected
                   ? `bg-gradient-to-br ${colors.bg} ${colors.border} shadow-lg ring-1 ring-indigo-500/40`
-                  : 'bg-card border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-850/50'
+                  : 'bg-card border-border hover:border-zinc-400 dark:hover:border-zinc-700 hover:bg-muted/50'
                 }`}
             >
               {/* Active Now Ribbon */}
               {isCurrentlyActive && (
-                <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
                   <span>ACTIVE NOW</span>
                 </div>
               )}
 
               <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl bg-zinc-800/80 border border-zinc-700/60 ${colors.text}`}>
+                <div className={`p-2.5 rounded-xl bg-muted/80 border border-border ${colors.text}`}>
                   <ShiftIcon className="w-5 h-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-bold text-white truncate">{shift.name}</h3>
+                  <h3 className="text-sm font-bold text-foreground truncate">{shift.name}</h3>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-semibold ${colors.badge}`}>
                       {shift.shiftKey}
                     </span>
-                    <span className="text-xs text-zinc-400 font-medium">
+                    <span className="text-xs text-muted-foreground font-medium">
                       {formatTime(shift.startHour, shift.startMinute)} – {formatTime(shift.endHour, shift.endMinute)}
                     </span>
                   </div>
@@ -371,15 +371,15 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
               </div>
 
               {/* Member Count & State */}
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-zinc-800/60 text-xs">
-                <div className="flex items-center gap-1.5 text-zinc-300">
-                  <Users className="w-3.5 h-3.5 text-zinc-400" />
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-border text-xs">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Users className="w-3.5 h-3.5 text-muted-foreground" />
                   <span className="font-medium">
                     {shift.memberNames?.length || shift.auditorNames?.length || 0} Members
                   </span>
                 </div>
                 <span
-                  className={`text-[11px] font-semibold ${shift.isActive ? 'text-emerald-400' : 'text-zinc-500'
+                  className={`text-[11px] font-semibold ${shift.isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500'
                     }`}
                 >
                   {shift.isActive ? 'Enabled' : 'Disabled'}
@@ -392,21 +392,21 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
 
       {/* Selected Shift Detail & Editor */}
       {selectedShift && (
-        <div className="bg-card border border-zinc-800 rounded-2xl p-6 space-y-6 shadow-xl">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-800/80 pb-5">
+        <div className="bg-card border border-border rounded-2xl p-6 space-y-6 shadow-xl">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border pb-5">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">{editName}</h3>
-                <span className="text-xs font-mono px-2 py-0.5 rounded font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
+                <h3 className="text-base font-bold text-foreground">{editName}</h3>
+                <span className="text-xs font-mono px-2 py-0.5 rounded font-semibold bg-muted text-muted-foreground border border-border">
                   {selectedShift.shiftKey}
                 </span>
                 {selectedShift.shiftKey === activeShiftKey && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
                     Currently Running in Manila
                   </span>
                 )}
               </div>
-              <p className="text-xs text-zinc-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 {readOnly
                   ? 'Operating hours and automatically assigned auditors & members for this shift.'
                   : 'Edit operating hours and select which auditors are automatically assigned during this shift.'}
@@ -416,8 +416,8 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
             {readOnly ? (
               <span
                 className={`text-xs font-semibold px-3 py-1 rounded-xl border self-end sm:self-center ${editIsActive
-                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                    : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border-emerald-500/30'
+                    : 'bg-muted text-muted-foreground border-border'
                   }`}
               >
                 {editIsActive ? 'Shift Enabled' : 'Shift Disabled'}
@@ -462,13 +462,13 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
             {!readOnly && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Start Time Picker */}
-                <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-3.5 space-y-2">
-                  <label className="text-xs font-semibold text-zinc-300 block">Start Time</label>
+                <div className="bg-muted/40 border border-border rounded-xl p-3.5 space-y-2">
+                  <label className="text-xs font-semibold text-foreground block">Start Time</label>
                   <div className="flex items-center gap-2">
                     <select
                       value={editStartHour}
                       onChange={(e) => setEditStartHour(parseInt(e.target.value, 10))}
-                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                      className="flex-1 bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs font-medium text-foreground focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
                       {Array.from({ length: 24 }).map((_, i) => (
                         <option key={i} value={i}>
@@ -479,7 +479,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                     <select
                       value={editStartMinute}
                       onChange={(e) => setEditStartMinute(parseInt(e.target.value, 10))}
-                      className="w-20 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-medium text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                      className="w-20 bg-muted border border-border rounded-lg px-2 py-1.5 text-xs font-medium text-foreground focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
                       <option value={0}>:00</option>
                       <option value={15}>:15</option>
@@ -490,13 +490,13 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                 </div>
 
                 {/* End Time Picker */}
-                <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-3.5 space-y-2">
-                  <label className="text-xs font-semibold text-zinc-300 block">End Time</label>
+                <div className="bg-muted/40 border border-border rounded-xl p-3.5 space-y-2">
+                  <label className="text-xs font-semibold text-foreground block">End Time</label>
                   <div className="flex items-center gap-2">
                     <select
                       value={editEndHour}
                       onChange={(e) => setEditEndHour(parseInt(e.target.value, 10))}
-                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                      className="flex-1 bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs font-medium text-foreground focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
                       {Array.from({ length: 24 }).map((_, i) => (
                         <option key={i} value={i}>
@@ -507,7 +507,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                     <select
                       value={editEndMinute}
                       onChange={(e) => setEditEndMinute(parseInt(e.target.value, 10))}
-                      className="w-20 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-medium text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                      className="w-20 bg-muted border border-border rounded-lg px-2 py-1.5 text-xs font-medium text-foreground focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
                       <option value={0}>:00</option>
                       <option value={15}>:15</option>
@@ -520,13 +520,13 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
             )}
 
             {/* Helper note explaining shift window */}
-            <div className="p-3 rounded-xl bg-zinc-900/40 border border-zinc-800/80 flex items-center gap-2 text-xs text-zinc-400">
+            <div className="p-3 rounded-xl bg-muted/40 border border-border flex items-center gap-2 text-xs text-muted-foreground">
               <AlertCircle className="w-4 h-4 text-indigo-400 shrink-0" />
               <span>
-                Active from <strong className="text-zinc-200">{formatTime(editStartHour, editStartMinute)}</strong> to{' '}
-                <strong className="text-zinc-200">{formatTime(editEndHour, editEndMinute)}</strong> Manila Time.
+                Active from <strong className="text-foreground">{formatTime(editStartHour, editStartMinute)}</strong> to{' '}
+                <strong className="text-foreground">{formatTime(editEndHour, editEndMinute)}</strong> Manila Time.
                 {isOvernight && (
-                  <span className="text-amber-400 ml-1 font-semibold">
+                  <span className="text-amber-500 dark:text-amber-400 ml-1 font-semibold">
                     (Overnight shift spans past midnight to next day)
                   </span>
                 )}
@@ -537,7 +537,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
           {/* Section 2: Selected Members Chips */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-indigo-400" />
                 <span>Assigned Shift Members & Auditors ({selectedMemberNames.length})</span>
               </h4>
@@ -550,7 +550,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                     setSelectedAuditorIds([]);
                     setSelectedAuditorNames([]);
                   }}
-                  className="text-[11px] text-zinc-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  className="text-[11px] text-muted-foreground hover:text-rose-400 transition-colors cursor-pointer"
                 >
                   Clear all
                 </button>
@@ -558,7 +558,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
             </div>
 
             {selectedMemberNames.length === 0 ? (
-              <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-center text-xs text-zinc-500">
+              <div className="p-4 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground">
                 {readOnly
                   ? 'No members assigned to this shift.'
                   : 'No members selected for this shift. Click directory members below to assign.'}
@@ -572,11 +572,11 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                   return (
                     <span
                       key={name}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-indigo-200 text-xs font-medium"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-indigo-700 dark:text-indigo-200 text-xs font-medium"
                     >
                       <span>{name}</span>
                       {isAuditor ? (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
                           Auditor
                         </span>
                       ) : null}
@@ -607,25 +607,25 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
           {!readOnly && (
             <div className="space-y-3">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                   Select Members & Auditors from Directory
                 </h4>
 
                 <div className="flex items-center gap-3 w-full sm:w-auto">
                   {/* Search Bar */}
                   <div className="relative flex-1 sm:w-64">
-                    <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-2.5" />
+                    <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-2.5" />
                     <input
                       type="text"
                       placeholder="Search by name, email, or role..."
                       value={auditorSearch}
                       onChange={(e) => setAuditorSearch(e.target.value)}
-                      className="w-full bg-zinc-900 border border-zinc-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                      className="w-full bg-background border border-border rounded-xl pl-8 pr-3 py-1.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-indigo-500"
                     />
                     {auditorSearch && (
                       <button
                         onClick={() => setAuditorSearch('')}
-                        className="absolute right-2.5 top-2.5 text-zinc-400 hover:text-white"
+                        className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                       >
                         <X className="w-3 h-3" />
                       </button>
@@ -638,7 +638,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                     onClick={() => setAuditorsOnly(!auditorsOnly)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer whitespace-nowrap ${auditorsOnly
                         ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
-                        : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-white'
+                        : 'bg-muted text-muted-foreground border-border hover:text-foreground'
                       }`}
                   >
                     <Filter className="w-3 h-3" />
@@ -662,19 +662,19 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                       onClick={() => toggleMember(user)}
                       className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${isSelected
                           ? 'bg-indigo-600/15 border-indigo-500/40 shadow-xs'
-                          : 'bg-zinc-900/50 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/50'
+                          : 'bg-muted/30 border-border hover:border-zinc-400 dark:hover:border-zinc-700 hover:bg-muted/60'
                         }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         {user.avatarUrl ? (
                           <img src={user.avatarUrl} alt={user.name} className="w-7 h-7 rounded-full object-cover shrink-0" />
                         ) : (
-                          <div className="w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-[10px] font-bold text-zinc-300 shrink-0">
+                          <div className="w-7 h-7 rounded-full bg-muted border border-border flex items-center justify-center text-[10px] font-bold text-foreground shrink-0">
                             {user.name.slice(0, 2).toUpperCase()}
                           </div>
                         )}
                         <div className="min-w-0">
-                          <div className="text-xs font-semibold text-zinc-200 truncate">{user.name}</div>
+                          <div className="text-xs font-semibold text-foreground truncate">{user.name}</div>
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {auditorRoles.length > 0 ? (
                               auditorRoles.map((r) => (
@@ -686,11 +686,11 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                                 </span>
                               ))
                             ) : nonAuditorRoles.length > 0 ? (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded font-medium bg-zinc-800 text-zinc-400 border border-zinc-700">
+                              <span className="text-[9px] px-1.5 py-0.2 rounded font-medium bg-muted text-muted-foreground border border-border">
                                 {nonAuditorRoles[0]}
                               </span>
                             ) : (
-                              <span className="text-[10px] text-zinc-500 truncate">{user.email}</span>
+                              <span className="text-[10px] text-muted-foreground truncate">{user.email}</span>
                             )}
                           </div>
                         </div>
@@ -699,7 +699,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
                       <div
                         className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ml-2 transition-colors ${isSelected
                             ? 'bg-indigo-600 border-indigo-600 text-white'
-                            : 'border-zinc-600 bg-zinc-800'
+                            : 'border-border bg-muted'
                           }`}
                       >
                         {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}

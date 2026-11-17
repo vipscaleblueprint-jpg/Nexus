@@ -41,14 +41,13 @@ const LaunchScheduleModal = dynamic(
 );
 
 export type CalendarViewMode = 'MONTH' | 'WEEK' | 'AGENDA';
-export type LaunchFilterMode = 'ALL' | 'IN_REVIEW' | 'MILESTONES';
+export type LaunchFilterMode = 'ALL' | 'MILESTONES';
 export type AgendaScopeMode = 'ACTIVE' | 'COMPLETED' | 'ALL';
 
 interface LaunchMapViewProps {
   tasks: LaunchMapLightItem[];
   search?: string;
   loadingRange?: boolean;
-  inReviewCountGlobal?: number;
   toolbarRightSlot?: React.ReactNode;
   onRangeChange: (range: { start?: string; end?: string; mode: CalendarViewMode }) => void;
   onOpenDetail: (task: LaunchMapLightItem) => void;
@@ -278,7 +277,6 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
   tasks,
   search = '',
   loadingRange = false,
-  inReviewCountGlobal,
   toolbarRightSlot,
   onRangeChange,
   onOpenDetail,
@@ -399,9 +397,8 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const searchLower = search.trim().toLowerCase();
 
-  const { allEntries, inReviewLocalCount } = useMemo(() => {
+  const allEntries = useMemo(() => {
     const entries: EnrichedLaunchEntry[] = [];
-    let reviewCount = 0;
 
     for (const task of tasks) {
       const dateKey = getTaskEffectiveLaunchDate(task);
@@ -417,8 +414,6 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       const clientName = task.list?.name || 'General';
       const workstream = task.launchMeta?.workstream || '';
       const notes = task.launchMeta?.notes || '';
-
-      if (inReview) reviewCount++;
 
       if (searchLower) {
         const assigneeNames = (task.assignees || []).map((a) => a?.name || '').join(' ');
@@ -450,11 +445,10 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       return (a.task.title || '').localeCompare(b.task.title || '');
     });
 
-    return { allEntries: entries, inReviewLocalCount: reviewCount };
+    return entries;
   }, [tasks, searchLower]);
 
   const filteredEntries = useMemo(() => {
-    if (filterMode === 'IN_REVIEW') return allEntries.filter((e) => e.isInReview);
     if (filterMode === 'MILESTONES') return allEntries.filter((e) => e.isMilestone);
     return allEntries;
   }, [allEntries, filterMode]);
@@ -645,9 +639,6 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     [onLaunchMetaUpdated]
   );
 
-  const activeAlertBadgeCount =
-    inReviewCountGlobal !== undefined ? inReviewCountGlobal : inReviewLocalCount;
-
   return (
     <div className="launch-map-calendar flex flex-col h-full w-full px-5 pb-4 pt-3 gap-2.5 overflow-hidden select-none">
       <style>{`
@@ -775,22 +766,6 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             </>
           )}
 
-          {activeAlertBadgeCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setFilterMode((prev) => (prev === 'IN_REVIEW' ? 'ALL' : 'IN_REVIEW'))}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
-                filterMode === 'IN_REVIEW'
-                  ? 'bg-orange-500 text-white border-orange-400'
-                  : 'bg-orange-500/15 border-orange-500/40 text-orange-300 hover:bg-orange-500/25 [.theme-light_&]:bg-orange-50 [.theme-light_&]:border-orange-300 [.theme-light_&]:text-orange-800'
-              }`}
-              title="Filter IN REVIEW tasks needing PM & Auditor review"
-            >
-              <AlertTriangle className="size-3 shrink-0" />
-              <span>{activeAlertBadgeCount} IN REVIEW</span>
-            </button>
-          )}
-
           {loadingRange && (
             <Loader2 className="size-3.5 animate-spin text-[var(--accent)] shrink-0" aria-label="Loading" />
           )}
@@ -802,7 +777,6 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             {(
               [
                 { key: 'ALL', label: 'All' },
-                { key: 'IN_REVIEW', label: 'In Review' },
                 { key: 'MILESTONES', label: 'Launches' },
               ] as const
             ).map((opt) => (
@@ -812,9 +786,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                 onClick={() => setFilterMode(opt.key)}
                 className={`px-2 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                   filterMode === opt.key
-                    ? opt.key === 'IN_REVIEW'
-                      ? 'bg-orange-500/25 text-orange-200 font-semibold [.theme-light_&]:bg-orange-100 [.theme-light_&]:text-orange-900'
-                      : opt.key === 'MILESTONES'
+                    ? opt.key === 'MILESTONES'
                       ? 'bg-rose-500/25 text-rose-200 font-semibold [.theme-light_&]:bg-rose-100 [.theme-light_&]:text-rose-900'
                       : 'bg-[var(--hover-subtle)] text-[var(--text)] font-semibold'
                     : 'text-[var(--muted)] hover:text-[var(--text)]'

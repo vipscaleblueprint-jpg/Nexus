@@ -2669,7 +2669,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   ? task.listId
                                   : (task.list?.id && task.list.id !== 'general' ? task.list.id : null);
 
-                              const syncSessionPatch = (patch: Record<string, any>) => {
+                              const syncSessionPatch = (patch: Record<string, unknown>) => {
                                 if (!user?.name) return;
                                 const sKey = (user.name || '').trim().toLowerCase();
                                 const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};

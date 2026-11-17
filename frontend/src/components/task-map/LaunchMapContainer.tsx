@@ -9,10 +9,12 @@ import {
   LaunchMapDataResponse,
   LaunchMeta,
   subscribeTaskMapSaving,
+  collectClientDashboardLists,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { Task } from '@/lib/types';
 import { toast } from '@/lib/toast';
+import { useAppStore } from '@/lib/store';
 import { isModalHistoryBackPending } from '@/lib/taskNavigation';
 import { LaunchMapView, CalendarViewMode } from './LaunchMapView';
 
@@ -25,8 +27,38 @@ const MAX_CACHED_RANGES = 12;
 
 export const LaunchMapContainer: React.FC = () => {
   const [items, setItems] = useState<LaunchMapLightItem[]>([]);
-  const [clients, setClients] = useState<Array<{ id: string; name: string; count: number }>>([]);
-  const [globalInReviewCount, setGlobalInReviewCount] = useState<number>(0);
+  const [apiClients, setApiClients] = useState<Array<{ id: string; name: string; count: number }>>([]);
+
+  const spaces = useAppStore((s) => s.spaces);
+  const allLists = useAppStore((s) => s.allLists);
+  const loadSpaces = useAppStore((s) => s.loadSpaces);
+
+  useEffect(() => {
+    if (!spaces || spaces.length === 0) {
+      loadSpaces();
+    }
+  }, [spaces, loadSpaces]);
+
+  const clients = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; count: number }>();
+
+    for (const c of collectClientDashboardLists(spaces, allLists)) {
+      if (!map.has(c.id)) {
+        map.set(c.id, { id: c.id, name: c.name, count: 0 });
+      }
+    }
+
+    for (const c of apiClients) {
+      const existing = map.get(c.id);
+      if (existing) {
+        existing.count = c.count;
+      } else {
+        map.set(c.id, { id: c.id, name: c.name, count: c.count });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [spaces, allLists, apiClients]);
 
   const [initialLoading, setInitialLoading] = useState(true);
   const [rangeLoading, setRangeLoading] = useState(false);
@@ -86,8 +118,7 @@ export const LaunchMapContainer: React.FC = () => {
 
   const applyPayload = useCallback((res: LaunchMapDataResponse) => {
     setItems(res.items || []);
-    setClients(res.clients || []);
-    setGlobalInReviewCount(res.counts?.inReview ?? 0);
+    setApiClients(res.clients || []);
   }, []);
 
   const fetchRange = useCallback(
@@ -339,7 +370,7 @@ export const LaunchMapContainer: React.FC = () => {
   // Client filter dropdown helpers
   const allClientsChecked =
     selectedClients === 'ALL' ||
-    (Array.isArray(selectedClients) && selectedClients.length === clients.length);
+    (Array.isArray(selectedClients) && clients.length > 0 && selectedClients.length === clients.length);
 
   const isClientChecked = (id: string, name: string) => {
     if (selectedClients === 'ALL') return true;
@@ -563,7 +594,6 @@ export const LaunchMapContainer: React.FC = () => {
           tasks={visibleItems}
           search={debouncedSearch}
           loadingRange={rangeLoading}
-          inReviewCountGlobal={globalInReviewCount}
           toolbarRightSlot={toolbarRightSlot}
           onRangeChange={handleRangeChange}
           onOpenDetail={handleOpenTaskDetail}

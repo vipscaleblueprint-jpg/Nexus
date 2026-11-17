@@ -16,6 +16,7 @@ import {
   applyOptimisticTaskMapAssignment,
   syncTaskPmReviewsWithAssignee,
   markTaskSavingToDb,
+  collectClientDashboardLists,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import dynamic from 'next/dynamic';
@@ -1124,45 +1125,13 @@ export const TaskMapContainer: React.FC = () => {
     const clientMap = new Map<string, { id: string; name: string; count: number }>();
 
     // 1. Seed from all lists under "Client Dashboard" folders/spaces (matching the sidebar)
-    const walkFolders = (folders: any[], inClientTree = false) => {
-      for (const f of folders || []) {
-        const isClient = inClientTree || (f.name || '').trim().toLowerCase().includes('client dashboard');
-        if (isClient) {
-          (f.lists || []).forEach((l: any) => {
-            if (!clientMap.has(l.id)) {
-              clientMap.set(l.id, { id: l.id, name: l.name, count: 0 });
-            }
-          });
-        }
-        if (f.subfolders) walkFolders(f.subfolders, isClient);
-      }
-    };
-
-    for (const s of spaces || []) {
-      const isClientSpace = (s.name || '').trim().toLowerCase().includes('client dashboard');
-      if (isClientSpace) {
-        (s.lists || []).forEach((l: any) => {
-          if (!clientMap.has(l.id)) {
-            clientMap.set(l.id, { id: l.id, name: l.name, count: 0 });
-          }
-        });
-      }
-      walkFolders(s.folders || [], isClientSpace);
-    }
-
-    // 2. Also merge from allLists in store (which contains spaceName and folderName for every list)
-    for (const item of allLists || []) {
-      const folderName = (item.folderName || '').toLowerCase();
-      const spaceName = (item.spaceName || '').toLowerCase();
-      if (folderName.includes('client dashboard') || spaceName.includes('client dashboard')) {
-        const l = item.list;
-        if (l && !clientMap.has(l.id)) {
-          clientMap.set(l.id, { id: l.id, name: l.name, count: 0 });
-        }
+    for (const c of collectClientDashboardLists(spaces, allLists)) {
+      if (!clientMap.has(c.id)) {
+        clientMap.set(c.id, { id: c.id, name: c.name, count: 0 });
       }
     }
 
-    // 3. Also merge clients fetched directly from database API
+    // 2. Also merge clients fetched directly from database API
     for (const c of allDbClients) {
       if (!clientMap.has(c.id)) {
         clientMap.set(c.id, { id: c.id, name: c.name, count: 0 });

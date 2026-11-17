@@ -397,10 +397,10 @@ export function applyOptimisticTaskMapAssignment(
       status: isCadence ? task.status : 'PENDING',
       progress: task.progress
         ? {
-            ...task.progress,
-            timeIn: null,
-            timeOut: task.progress.timeOut || (task.progress.timeIn ? 'HandedOver' : null),
-          }
+          ...task.progress,
+          timeIn: null,
+          timeOut: task.progress.timeOut || (task.progress.timeIn ? 'HandedOver' : null),
+        }
         : null,
       taskMap: {
         ...(task.taskMap || {
@@ -469,15 +469,15 @@ export function applyOptimisticTaskMapAssignment(
   const nextProgress =
     mode === 'IN_PROGRESS'
       ? {
-          ...(task.progress || {}),
-          maName: targetUser.name || task.progress?.maName || 'Team Member',
-          timeOut: null,
-        }
+        ...(task.progress || {}),
+        maName: targetUser.name || task.progress?.maName || 'Team Member',
+        timeOut: null,
+      }
       : task.progress
         ? {
-            ...task.progress,
-            timeIn: null,
-          }
+          ...task.progress,
+          timeIn: null,
+        }
         : null;
 
   return {
@@ -1083,8 +1083,8 @@ export function createEmptyUserBlock(params?: {
   const assumedTitle =
     rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
   const assumedDay = params?.day || new Date().toISOString().split('T')[0];
-  const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
-  const effectiveStatus = params?.taskStatus || assumedStatus;
+  const effectiveStatus =
+    params?.taskStatus || params?.status || (params?.timeOut ? 'Done' : 'In progress');
   const effectiveListId =
     params?.listId && params.listId !== 'general' ? params.listId : 'general';
   const effectiveSubStatuses = Array.isArray(params?.subStatuses)
@@ -1330,6 +1330,78 @@ export function getTaskEffectiveLaunchDate(
     return task.effectiveLaunchDate.slice(0, 10);
   }
   return getManilaDateKey(task.dueDate);
+}
+
+interface ClientTreeList {
+  id?: string;
+  name?: string;
+}
+
+interface ClientTreeFolder {
+  name?: string;
+  lists?: ClientTreeList[];
+  subfolders?: ClientTreeFolder[];
+}
+
+interface ClientTreeSpace {
+  name?: string;
+  lists?: ClientTreeList[];
+  folders?: ClientTreeFolder[];
+}
+
+interface ClientListEntry {
+  folderName?: string;
+  spaceName?: string;
+  list?: ClientTreeList;
+}
+
+/**
+ * Collects all client lists residing under any "Client Dashboard" space/folder in the sidebar tree.
+ */
+export function collectClientDashboardLists(
+  spaces: ClientTreeSpace[] = [],
+  allLists: ClientListEntry[] = []
+): Array<{ id: string; name: string }> {
+  const clientMap = new Map<string, { id: string; name: string }>();
+
+  const walkFolders = (folders: ClientTreeFolder[], inClientTree = false) => {
+    for (const f of folders || []) {
+      const isClient = inClientTree || (f.name || '').trim().toLowerCase().includes('client dashboard');
+      if (isClient) {
+        (f.lists || []).forEach((l) => {
+          if (l?.id && l?.name && !clientMap.has(l.id)) {
+            clientMap.set(l.id, { id: l.id, name: l.name });
+          }
+        });
+      }
+      if (f.subfolders) walkFolders(f.subfolders, isClient);
+    }
+  };
+
+  for (const s of spaces || []) {
+    const isClientSpace = (s.name || '').trim().toLowerCase().includes('client dashboard');
+    if (isClientSpace) {
+      (s.lists || []).forEach((l) => {
+        if (l?.id && l?.name && !clientMap.has(l.id)) {
+          clientMap.set(l.id, { id: l.id, name: l.name });
+        }
+      });
+    }
+    walkFolders(s.folders || [], isClientSpace);
+  }
+
+  for (const item of allLists || []) {
+    const folderName = (item.folderName || '').toLowerCase();
+    const spaceName = (item.spaceName || '').toLowerCase();
+    if (folderName.includes('client dashboard') || spaceName.includes('client dashboard')) {
+      const l = item.list;
+      if (l?.id && l?.name && !clientMap.has(l.id)) {
+        clientMap.set(l.id, { id: l.id, name: l.name });
+      }
+    }
+  }
+
+  return Array.from(clientMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 

@@ -48,50 +48,54 @@ export const TaskDescriptionButton: React.FC<Props> = ({
   const initialPosRef = useRef<{ top: number; left: number } | null>(null);
   const [isLoadingDesc, setIsLoadingDesc] = useState(false);
   const [fetchedDescState, setFetchedDescState] = useState<{ key: string; description: string | null } | null>(null);
-  const onResolvedRef = useRef(onResolvedTaskMeta);
-  onResolvedRef.current = onResolvedTaskMeta;
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const cacheKey = `${taskId || ''}::${taskTitle || ''}::${clientName || ''}`;
 
-  // Fetch description ONLY when the user opens the task description popover
-  useEffect(() => {
-    if (!isOpen || !lazyFetch) return;
-    if (fetchedDescState?.key === cacheKey) return;
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
 
-    let cancelled = false;
-    setIsLoadingDesc(true);
-    taskMapApi
-      .getTaskDescription({
-        taskId: taskId || null,
-        title: taskTitle || null,
-        client: clientName || null,
-      })
-      .then((res) => {
-        if (cancelled) return;
-        setFetchedDescState({ key: cacheKey, description: res?.description ?? null });
-        if (res && onResolvedRef.current) {
-          onResolvedRef.current({
-            taskId: res.taskId,
-            listId: res.listId,
-            status: res.status,
-            priority: res.priority,
-            subStatuses: res.subStatuses,
-          });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFetchedDescState({ key: cacheKey, description: null });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingDesc(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, lazyFetch, cacheKey, taskId, taskTitle, clientName, fetchedDescState?.key]);
+    // Fetch description ONLY when the user clicks to open the task description popover
+    if (nextOpen && lazyFetch && fetchedDescState?.key !== cacheKey && !isLoadingDesc) {
+      const fetchKey = cacheKey;
+      setIsLoadingDesc(true);
+      taskMapApi
+        .getTaskDescription({
+          taskId: taskId || null,
+          title: taskTitle || null,
+          client: clientName || null,
+        })
+        .then((res) => {
+          if (!isMountedRef.current) return;
+          setFetchedDescState({ key: fetchKey, description: res?.description ?? null });
+          if (res && onResolvedTaskMeta) {
+            onResolvedTaskMeta({
+              taskId: res.taskId,
+              listId: res.listId,
+              status: res.status,
+              priority: res.priority,
+              subStatuses: res.subStatuses,
+            });
+          }
+        })
+        .catch(() => {
+          if (!isMountedRef.current) return;
+          setFetchedDescState({ key: fetchKey, description: null });
+        })
+        .finally(() => {
+          if (isMountedRef.current) setIsLoadingDesc(false);
+        });
+    }
+  };
 
   useEffect(() => {
     if (!isOpen || !triggerRef.current) return;
@@ -209,10 +213,7 @@ export const TaskDescriptionButton: React.FC<Props> = ({
         ref={triggerRef}
         type="button"
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
+        onClick={handleToggle}
         className={`p-0.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer shrink-0 ${
           hasDesc || isPendingLazyFetch
             ? 'text-zinc-300 hover:text-white'

@@ -48,6 +48,104 @@ const isClosedStatus = (status?: string | null) => {
   return s === 'CLOSED' || s === 'DONE' || s === 'COMPLETE' || s === 'COMPLETED' || s === 'RESOLVED' || s === 'CANCELLED';
 };
 
+const ADMIN_LIST_NAMES = new Set([
+  'admin | jenesia red',
+  'harmony',
+  'jenesia red',
+  'jenesia red | personal',
+  'snaply',
+  'vip scale',
+  'xfnite',
+]);
+
+/**
+ * Fetch all client lists residing under any "Client Dashboard" folder/space in PostgreSQL.
+ */
+async function fetchClientDashboardLists(): Promise<Array<{ id: string; name: string }>> {
+  const [clientDashboardFolders, clientDashboardSpaces, directClientLists] = await Promise.all([
+    prisma.folder.findMany({
+      where: {
+        name: { contains: 'client dashboard', mode: 'insensitive' },
+      },
+      select: {
+        id: true,
+        name: true,
+        lists: {
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        },
+        subfolders: {
+          select: {
+            id: true,
+            name: true,
+            lists: {
+              select: { id: true, name: true },
+              orderBy: { name: 'asc' },
+            },
+          },
+        },
+      },
+    }),
+    prisma.space.findMany({
+      where: {
+        name: { contains: 'client dashboard', mode: 'insensitive' },
+      },
+      select: {
+        id: true,
+        name: true,
+        lists: {
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        },
+        folders: {
+          select: {
+            id: true,
+            name: true,
+            lists: {
+              select: { id: true, name: true },
+              orderBy: { name: 'asc' },
+            },
+          },
+        },
+      },
+    }),
+    prisma.list.findMany({
+      where: {
+        OR: [
+          { folder: { name: { contains: 'client dashboard', mode: 'insensitive' } } },
+          { folder: { parentFolder: { name: { contains: 'client dashboard', mode: 'insensitive' } } } },
+          { space: { name: { contains: 'client dashboard', mode: 'insensitive' } } },
+          { folder: { space: { name: { contains: 'client dashboard', mode: 'insensitive' } } } },
+        ],
+      },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    }),
+  ]);
+
+  const map = new Map<string, { id: string; name: string }>();
+
+  for (const f of clientDashboardFolders) {
+    (f.lists || []).forEach((l) => map.set(l.id, { id: l.id, name: l.name }));
+    for (const sub of f.subfolders || []) {
+      (sub.lists || []).forEach((l) => map.set(l.id, { id: l.id, name: l.name }));
+    }
+  }
+
+  for (const s of clientDashboardSpaces) {
+    (s.lists || []).forEach((l) => map.set(l.id, { id: l.id, name: l.name }));
+    for (const f of s.folders || []) {
+      (f.lists || []).forEach((l) => map.set(l.id, { id: l.id, name: l.name }));
+    }
+  }
+
+  for (const l of directClientLists) {
+    map.set(l.id, { id: l.id, name: l.name });
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /**
  * Fetch all tasks mapped to Task Map with their status options, shifts, and pool
  */
@@ -909,85 +1007,10 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     // Fetch all client lists under "Client Dashboard" in PostgreSQL
     let allClients: Array<{ id: string; name: string }> = [];
     try {
-      const [clientDashboardFolders, clientDashboardSpaces, directClientLists] = await Promise.all([
-        prisma.folder.findMany({
-          where: {
-            name: { contains: 'client dashboard', mode: 'insensitive' },
-          },
-          select: {
-            id: true,
-            name: true,
-            lists: {
-              select: { id: true, name: true },
-              orderBy: { name: 'asc' },
-            },
-            subfolders: {
-              select: {
-                id: true,
-                name: true,
-                lists: {
-                  select: { id: true, name: true },
-                  orderBy: { name: 'asc' },
-                },
-              },
-            },
-          },
-        }),
-        prisma.space.findMany({
-          where: {
-            name: { contains: 'client dashboard', mode: 'insensitive' },
-          },
-          select: {
-            id: true,
-            name: true,
-            lists: {
-              select: { id: true, name: true },
-              orderBy: { name: 'asc' },
-            },
-            folders: {
-              select: {
-                id: true,
-                name: true,
-                lists: {
-                  select: { id: true, name: true },
-                  orderBy: { name: 'asc' },
-                },
-              },
-            },
-          },
-        }),
-        prisma.list.findMany({
-          where: {
-            OR: [
-              { folder: { name: { contains: 'client dashboard', mode: 'insensitive' } } },
-              { folder: { parentFolder: { name: { contains: 'client dashboard', mode: 'insensitive' } } } },
-              { space: { name: { contains: 'client dashboard', mode: 'insensitive' } } },
-              { folder: { space: { name: { contains: 'client dashboard', mode: 'insensitive' } } } },
-            ],
-          },
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        }),
-      ]);
-
+      const clientDashboardLists = await fetchClientDashboardLists();
       const allClientsMap = new Map<string, { id: string; name: string }>();
-
-      for (const f of clientDashboardFolders) {
-        (f.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
-        for (const sub of f.subfolders || []) {
-          (sub.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
-        }
-      }
-
-      for (const s of clientDashboardSpaces) {
-        (s.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
-        for (const f of s.folders || []) {
-          (f.lists || []).forEach((l) => allClientsMap.set(l.id, { id: l.id, name: l.name }));
-        }
-      }
-
-      for (const l of directClientLists) {
-        allClientsMap.set(l.id, { id: l.id, name: l.name });
+      for (const c of clientDashboardLists) {
+        allClientsMap.set(c.id, c);
       }
 
       // Also include any list from non-admin active tasks
@@ -2527,52 +2550,55 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
     const start = /^\d{4}-\d{2}-\d{2}$/.test(rawStart) ? rawStart : '';
     const end = /^\d{4}-\d{2}-\d{2}$/.test(rawEnd) ? rawEnd : '';
 
-    const cacheKey = `launch_map:data:${start || 'all'}:${end || 'all'}`;
+    const cacheKey = `launch_map:v2:data:${start || 'all'}:${end || 'all'}`;
     const cacheGen = getCacheGeneration(cacheKey);
     const cached = await getCache<any>(cacheKey);
     if (cached) {
       return res.json(cached);
     }
 
-    const rawTasks = await prisma.task.findMany({
-      where: {
-        status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] },
-        OR: [{ dueDate: { not: null } }, { taskMapRecord: { isNot: null } }],
-      },
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        priority: true,
-        dueDate: true,
-        listId: true,
-        updatedAt: true,
-        list: {
-          select: {
-            id: true,
-            name: true,
-            folder: { select: { name: true } },
-          },
+    const [rawTasks, clientDashboardLists] = await Promise.all([
+      prisma.task.findMany({
+        where: {
+          status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] },
+          OR: [{ dueDate: { not: null } }, { taskMapRecord: { isNot: null } }],
         },
-        assignee: { select: { id: true, name: true } },
-        assignees: { select: { id: true, name: true } },
-        taskMapRecord: { select: { pmReviews: true } },
-      },
-      orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
-    });
-
-    const ADMIN_LIST_NAMES = new Set([
-      'admin | jenesia red',
-      'harmony',
-      'jenesia red',
-      'jenesia red | personal',
-      'snaply',
-      'vip scale',
-      'xfnite',
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          priority: true,
+          dueDate: true,
+          listId: true,
+          updatedAt: true,
+          list: {
+            select: {
+              id: true,
+              name: true,
+              folder: { select: { name: true } },
+            },
+          },
+          assignee: { select: { id: true, name: true } },
+          assignees: { select: { id: true, name: true } },
+          taskMapRecord: { select: { pmReviews: true } },
+        },
+        orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
+      }),
+      fetchClientDashboardLists().catch((err) => {
+        logger.warn({ err }, 'Failed to query client dashboard folders for Launch Map');
+        return [] as Array<{ id: string; name: string }>;
+      }),
     ]);
 
     const items: any[] = [];
     const clientMap = new Map<string, { id: string; name: string; count: number }>();
+
+    // Seed all clients from "Client Dashboard" so clients with 0 scheduled tasks still appear
+    for (const c of clientDashboardLists) {
+      if (ADMIN_LIST_NAMES.has(c.name.trim().toLowerCase())) continue;
+      clientMap.set(c.id, { id: c.id, name: c.name, count: 0 });
+    }
+
     let totalScheduled = 0;
     let totalInReview = 0;
     let totalMilestones = 0;

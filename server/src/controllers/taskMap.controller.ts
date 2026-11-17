@@ -326,6 +326,10 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             id: true,
             name: true,
             folder: { select: { id: true, name: true } },
+            statuses: {
+              select: { name: true, color: true, groupName: true, order: true },
+              orderBy: { order: 'asc' },
+            },
           },
         },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
@@ -1063,6 +1067,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             taskId: t.id,
             listId: t.listId || t.list?.id || null,
             listName: t.list?.name || null,
+            listStatuses: Array.isArray(t.list?.statuses) ? t.list.statuses : undefined,
             taskStatus: t.status || null,
             priority: t.priority || null,
             subStatuses: Array.isArray(rec?.statuses) ? rec.statuses : deriveDefaultMapStatuses(t.status),
@@ -1140,6 +1145,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           taskId: matched.id,
           listId: matched.listId || matched.list?.id || sess.listId || null,
           listName: matched.list?.name || sess.listName || null,
+          listStatuses: Array.isArray(matched.list?.statuses)
+            ? matched.list.statuses
+            : sess.listStatuses,
           taskStatus: matched.status || sess.taskStatus || null,
           priority: matched.priority || sess.priority || null,
           subStatuses: Array.isArray(matched.taskMap?.statuses)
@@ -2022,6 +2030,10 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
             id: true,
             name: true,
             folder: { select: { id: true, name: true } },
+            statuses: {
+              select: { name: true, color: true, groupName: true, order: true },
+              orderBy: { order: 'asc' },
+            },
           },
         },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },

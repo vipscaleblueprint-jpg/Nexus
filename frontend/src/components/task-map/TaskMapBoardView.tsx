@@ -33,7 +33,6 @@ import {
   isTaskOnHold,
   sortAvailablePoolTasks,
   groupTasksWithSubtasks,
-  getDotColor,
   resolveTaskStatusColor,
   hexToRgba,
 } from './TaskMapCardControls';
@@ -1311,6 +1310,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           : (matchedLocalTask?.taskMap?.statuses ?? null),
         taskId: activeSession?.taskId || matchedLocalTask?.id || null,
         listId: activeSession?.listId || matchedLocalTask?.listId || matchedLocalTask?.list?.id || null,
+        listStatuses: activeSession?.listStatuses || matchedLocalTask?.list?.statuses,
         isUpwork: Boolean(activeSession?.isUpwork),
         rowNumber: activeSession?.rowNumber,
       });
@@ -2099,7 +2099,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       !isStaleLiveSession(task.progress?.timeIn, task.progress?.date, boardTime)
                     );
 
-                    const taskStatusHex = resolveTaskStatusColor(task.status || 'IN PROGRESS', task.listId || task.list?.id);
+                    const taskStatusHex = resolveTaskStatusColor(
+                      task.status || 'IN PROGRESS',
+                      task.listId || task.list?.id,
+                      task.list?.statuses
+                    );
                     const isCustomLiveBorder = isLive && !(isUpwork && isLive) && !isMissingTime;
                     const cardBorderClass = isUpwork && isLive
                       ? 'border-indigo-500/70 ring-1 ring-indigo-500/20 shadow-[0_0_12px_rgba(99,102,241,0.15)] dark:border-white/60 dark:ring-white/20 dark:shadow-[0_0_12px_rgba(255,255,255,0.08)]'
@@ -2201,6 +2205,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   taskId={task.id}
                                   currentStatus={task.status || 'In progress'}
                                   listId={task.listId || task.list?.id}
+                                  listStatuses={task.list?.statuses}
                                   onSelect={(newStatus: string) => {
                                     let effectiveStatus = newStatus;
                                     if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
@@ -2581,7 +2586,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     !effectiveProgress?.isMissingTime &&
                     (task.isAssumptionBlock || !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, boardTime))
                   );
-                  const taskStatusHex = resolveTaskStatusColor(task.status || 'IN PROGRESS', task.listId || task.list?.id);
+                  const taskStatusHex = resolveTaskStatusColor(
+                    task.status || 'IN PROGRESS',
+                    task.listId || task.list?.id,
+                    task.list?.statuses
+                  );
                   const isCustomLiveWorkingBorder = isLiveWorking && !(isUpwork && isLiveWorking) && !isMissingTime;
                   // Only highlight tasks that are actively live working (with a counting timer)
                   const cardBorderClass = isUpwork && isLiveWorking
@@ -2761,6 +2770,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                       taskId={realTaskId || task.id}
                                       currentStatus={task.status || 'In progress'}
                                       listId={realListId || undefined}
+                                      listStatuses={task.list?.statuses}
                                       onSelect={(newStatus: string) => {
                                         let effectiveStatus = newStatus;
                                         if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
@@ -2887,34 +2897,40 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           const isColumnLiveWorking = Boolean(
                             activeInProgTask && isTaskLiveWorking(activeInProgTask, user.name, boardTime)
                           );
-                          const slotStatusLabel = activeInProgTask
-                            ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
-                            : 'In Progress';
-                          const slotStatusColor = activeInProgTask
-                            ? resolveTaskStatusColor(slotStatusLabel, activeInProgTask.listId || activeInProgTask.list?.id)
-                            : '#D04A7C';
+                          const liveSlotLabel =
+                            isColumnLiveWorking && activeInProgTask
+                              ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
+                              : 'In Progress';
+                          const liveSlotColor =
+                            isColumnLiveWorking && activeInProgTask
+                              ? resolveTaskStatusColor(
+                                  liveSlotLabel,
+                                  activeInProgTask.listId || activeInProgTask.list?.id,
+                                  activeInProgTask.list?.statuses
+                                )
+                              : '#D04A7C';
                           return (
                             <>
                               <div className="flex items-center gap-1.5">
                                 <span
                                   className={`size-2 rounded-full ${isColumnLiveWorking ? 'animate-pulse' : 'bg-zinc-600'}`}
-                                  style={isColumnLiveWorking ? { backgroundColor: slotStatusColor } : undefined}
+                                  style={isColumnLiveWorking ? { backgroundColor: liveSlotColor } : undefined}
                                 />
                                 <span
                                   className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? '' : 'text-zinc-400'}`}
-                                  style={isColumnLiveWorking ? { color: slotStatusColor } : undefined}
+                                  style={isColumnLiveWorking ? { color: liveSlotColor } : undefined}
                                 >
-                                  {slotStatusLabel}
+                                  {liveSlotLabel}
                                 </span>
                               </div>
                               {isColumnLiveWorking && (
                                 <span
                                   className="text-[10px] font-mono font-semibold flex items-center gap-1"
-                                  style={{ color: slotStatusColor }}
+                                  style={{ color: liveSlotColor }}
                                 >
                                   <span
                                     className="size-1.5 rounded-full animate-ping shrink-0"
-                                    style={{ backgroundColor: slotStatusColor }}
+                                    style={{ backgroundColor: liveSlotColor }}
                                   />
                                   Live Working
                                 </span>
@@ -3002,7 +3018,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     ) : (
                       <CustomCircleDot
                         className="size-3.5 shrink-0"
-                        style={{ color: getDotColor(activeDragTask.status) }}
+                        style={{
+                          color: resolveTaskStatusColor(
+                            activeDragTask.status,
+                            activeDragTask.listId || activeDragTask.list?.id,
+                            activeDragTask.list?.statuses
+                          ),
+                        }}
                       />
                     )}
                   </span>

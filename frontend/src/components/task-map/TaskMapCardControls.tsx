@@ -13,6 +13,9 @@ import { useLiveClock } from '@/lib/liveClock';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
 
 const getHexColor = (color: string) => {
+  const trimmed = (color || '').trim();
+  const bracketHex = trimmed.match(/\[(#?[0-9a-fA-F]{3,6})\]/)?.[1];
+  if (bracketHex) return bracketHex.startsWith('#') ? bracketHex : `#${bracketHex}`;
   const colors: Record<string, string> = {
     slate: '#64748b', gray: '#6b7280', zinc: '#71717a', neutral: '#737373', stone: '#78716c',
     red: '#ef4444', orange: '#f97316', amber: '#f59e0b', yellow: '#eab308', lime: '#84cc16',
@@ -20,7 +23,7 @@ const getHexColor = (color: string) => {
     blue: '#3b82f6', indigo: '#6366f1', violet: '#8b5cf6', purple: '#a855f7', fuchsia: '#d946ef',
     pink: '#ec4899', rose: '#f43f5e',
   };
-  return colors[color] || color;
+  return colors[trimmed.toLowerCase()] || trimmed;
 };
 
 
@@ -1163,7 +1166,7 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
 
     // Non-Upwork live task: highlight the time badge using the task's DB status color
     const statusLabel = toCanonicalTaskStatus(task.status) || task.status || 'IN PROGRESS';
-    const statusHex = resolveTaskStatusColor(statusLabel, task.listId || task.list?.id);
+    const statusHex = resolveTaskStatusColor(statusLabel, task.listId || task.list?.id, task.list?.statuses);
     return (
       <div
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-bold text-[10px] select-none truncate max-w-full"

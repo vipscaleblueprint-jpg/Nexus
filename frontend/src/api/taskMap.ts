@@ -97,6 +97,13 @@ export interface LaunchMapDataResponse {
   };
 }
 
+export interface ListStatusToken {
+  name: string;
+  color?: string | null;
+  groupName?: string | null;
+  order?: number;
+}
+
 export interface TaskMapItem {
   id: string;
   isSubtask?: boolean;
@@ -114,7 +121,12 @@ export interface TaskMapItem {
   assigneeId: string | null;
   assigneeRoleRestrictions: string[];
   teamAssignAccessRole: string | null;
-  list: { id: string; name: string; folder?: { id: string; name: string } | null };
+  list: {
+    id: string;
+    name: string;
+    folder?: { id: string; name: string } | null;
+    statuses?: ListStatusToken[];
+  };
   assignee: any;
   assignees: any[];
   creator: any;
@@ -1073,6 +1085,7 @@ export function createEmptyUserBlock(params?: {
   subStatuses?: string[] | null;
   taskId?: string | null;
   listId?: string | null;
+  listStatuses?: ListStatusToken[];
   isUpwork?: boolean;
   rowNumber?: number;
 }): TaskMapItem {
@@ -1105,7 +1118,11 @@ export function createEmptyUserBlock(params?: {
     assigneeId: params?.userId || null,
     assigneeRoleRestrictions: [],
     teamAssignAccessRole: null,
-    list: { id: effectiveListId, name: assumedClient },
+    list: {
+      id: effectiveListId,
+      name: assumedClient,
+      ...(Array.isArray(params?.listStatuses) ? { statuses: params.listStatuses } : {}),
+    },
     assignee: params?.userId ? { id: params.userId, name: params.userName || 'Team Member' } : null,
     assignees: params?.userId ? [{ id: params.userId, name: params.userName || 'Team Member' }] : [],
     creator: null,

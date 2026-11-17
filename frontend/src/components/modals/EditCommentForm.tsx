@@ -6,7 +6,7 @@ import { EmojiPicker } from '../ui/EmojiPicker';
 import { uploadApi } from '@/api/upload';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
-import { isBlankCommentHtml, trimCommentHtml } from '@/lib/links';
+import { isBlankCommentHtml, trimCommentHtml, matchMentionTrigger } from '@/lib/links';
 import { getFileExtension } from '../ui/CommentAttachmentCard';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 
@@ -550,12 +550,12 @@ export function EditCommentForm({
                 ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
                 : textStr;
 
-            // Trigger mention dropdown when '@' follows start of text or whitespace
-            const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
-            if (match) {
+            // Trigger mention dropdown when '@' follows start of text, whitespace, or an emoji
+            const mentionMatch = matchMentionTrigger(textBeforeCursor);
+            if (mentionMatch) {
               updateMenuPosition();
               setShowMentionMenu(true);
-              setMentionSearch(match[1]);
+              setMentionSearch(mentionMatch.query);
               setSelectedIndex(0);
             } else {
               setShowMentionMenu(false);

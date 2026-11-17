@@ -35,7 +35,7 @@ import { UserMentionChip } from '../ui/UserMentionChip';
 import { triggerMentionConfetti, preloadMentionConfettiImage } from '../ui/MentionConfetti';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { LinkWithPreview } from '../ui/LinkHoverPreview';
-import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl } from '@/lib/links';
+import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl, matchMentionTrigger } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { ActionErrorModal, ActionErrorInfo } from './ActionErrorModal';
 import { EditCommentForm } from './EditCommentForm';
@@ -5549,12 +5549,12 @@ export function TaskDetailModalContent({
                           const textBeforeCursor = textBefore !== undefined
                             ? textBefore
                             : (text || "").substring(0, cursorPosition || 0);
-                          const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
+                          const mentionMatch = matchMentionTrigger(textBeforeCursor);
 
-                          if (match) {
+                          if (mentionMatch) {
                             setShowMentionMenu(true);
-                            setMentionSearch(match[1]);
-                            setMentionStartIndex(textBeforeCursor.lastIndexOf('@'));
+                            setMentionSearch(mentionMatch.query);
+                            setMentionStartIndex(mentionMatch.startIndex);
                             setMentionSelectedIndex(0);
                           } else {
                             setShowMentionMenu(false);
@@ -9916,12 +9916,12 @@ export function SubtaskDetailView({
                         const textBeforeCursor = textBefore !== undefined
                           ? textBefore
                           : (text || "").substring(0, cursorPosition || 0);
-                        const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
+                        const mentionMatch = matchMentionTrigger(textBeforeCursor);
 
-                        if (match) {
+                        if (mentionMatch) {
                           setShowMentionMenu(true);
-                          setMentionSearch(match[1]);
-                          setMentionStartIndex(textBeforeCursor.lastIndexOf('@'));
+                          setMentionSearch(mentionMatch.query);
+                          setMentionStartIndex(mentionMatch.startIndex);
                           setMentionSelectedIndex(0);
                         } else {
                           setShowMentionMenu(false);

@@ -595,3 +595,25 @@ export function getNexusTaskPath(
   return `/tasks/${subtaskId || task.id}`;
 }
 
+const MENTION_TRIGGER_RE = new RegExp(
+  '(?:^|\\s|\\p{Extended_Pictographic}|\\uFE0F|\\u20E3|[\\u{1F3FB}-\\u{1F3FF}]|[\\u{1F1E6}-\\u{1F1FF}]|\\u{E007F}|\\uFFFC)@([^\\s@]*)$',
+  'u'
+);
+
+/**
+ * Matches an active `@query` mention trigger at the end of `textBeforeCursor`.
+ * Triggers at start-of-block, after whitespace, after any emoji/pictograph
+ * (including variation selectors, skin-tone modifiers, keycaps, and flags),
+ * or after an inline atom node (`\uFFFC`), while still ignoring emails (`foo@bar`).
+ */
+export function matchMentionTrigger(textBeforeCursor: string): { query: string; startIndex: number } | null {
+  if (!textBeforeCursor) return null;
+  const match = textBeforeCursor.match(MENTION_TRIGGER_RE);
+  if (!match) return null;
+  return {
+    query: match[1],
+    startIndex: textBeforeCursor.lastIndexOf('@'),
+  };
+}
+
+

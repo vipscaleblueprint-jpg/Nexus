@@ -13,7 +13,7 @@ import {
   IMAGE_SOFT_MAX_BYTES,
   MAX_FILES_PER_BATCH,
 } from '@/lib/fileValidation';
-import { isBlankCommentHtml, trimCommentHtml } from '@/lib/links';
+import { isBlankCommentHtml, trimCommentHtml, matchMentionTrigger } from '@/lib/links';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { isSystemUser } from '@/lib/taskTokens';
@@ -453,11 +453,11 @@ export function CommentReplyInput({
               : cursorPosition !== undefined && cursorPosition >= 0
                 ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
                 : textStr;
-          const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
-          if (match) {
+          const mentionMatch = matchMentionTrigger(textBeforeCursor);
+          if (mentionMatch) {
             updateMenuPosition();
             setShowMentionMenu(true);
-            setMentionSearch(match[1]);
+            setMentionSearch(mentionMatch.query);
             setSelectedIndex(0);
           } else {
             setShowMentionMenu(false);

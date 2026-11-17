@@ -1083,8 +1083,8 @@ export function createEmptyUserBlock(params?: {
   const assumedTitle =
     rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
   const assumedDay = params?.day || new Date().toISOString().split('T')[0];
-  const effectiveStatus =
-    params?.taskStatus || params?.status || (params?.timeOut ? 'Done' : 'In progress');
+  const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
+  const effectiveStatus = params?.taskStatus || assumedStatus;
   const effectiveListId =
     params?.listId && params.listId !== 'general' ? params.listId : 'general';
   const effectiveSubStatuses = Array.isArray(params?.subStatuses)

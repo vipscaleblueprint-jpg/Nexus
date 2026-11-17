@@ -239,6 +239,15 @@ export const handleSheetUpdate = async (req: Request, res: Response) => {
   }
 };
 
+const NON_REVIEWABLE_STATUSES = [
+  'CLOSED', 'COMPLETE', 'DONE', 'COMPLETED', 'RESOLVED', 'CANCELLED',
+  'WAITING',
+  'CRM',
+  'CHECKING', 'INCHECKING',
+  'DAILY', 'WEEKLY', 'MONTHLY',
+  'KYC', 'PINBOARD',
+];
+
 function isClosedStatus(status: string | null | undefined): boolean {
   if (!status) return false;
   const s = status.toUpperCase().replace(/[^A-Z]/g, '');
@@ -249,17 +258,15 @@ function isClosedStatus(status: string | null | undefined): boolean {
 function isProtectedStatus(status: string | null | undefined): boolean {
   if (!status) return false;
   const s = status.toUpperCase().replace(/[^A-Z]/g, '');
+  if (s === 'INPROGRESS' || s.includes('REVIEW')) return true;
+  return NON_REVIEWABLE_STATUSES.includes(s);
+}
+
+function isProtectedFromAutoReview(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const s = status.toUpperCase().replace(/[^A-Z]/g, '');
   if (s.includes('REVIEW')) return true;
-  const protectedStatuses = [
-    'INPROGRESS',
-    'CLOSED', 'COMPLETE', 'DONE',
-    'WAITING',
-    'CRM',
-    'CHECKING', 'INCHECKING',
-    'DAILY', 'WEEKLY', 'MONTHLY',
-    'KYC', 'PINBOARD'
-  ];
-  return protectedStatuses.includes(s);
+  return NON_REVIEWABLE_STATUSES.includes(s);
 }
 
 async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Response) {
@@ -292,6 +299,17 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
         success: true,
         updated: false,
         reason: `Subtask is already ${beforeSub.status}; skipped auto-start to IN PROGRESS`,
+        subtask: beforeSub,
+        clickup_link: null,
+      });
+    }
+
+    // Guard 3: never push a subtask that is waiting, in checking, recurring, CRM, etc. to IN REVIEW
+    if (status.includes('REVIEW') && isProtectedFromAutoReview(beforeSub.status)) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Subtask is already ${beforeSub.status}; skipped auto-update to ${status}`,
         subtask: beforeSub,
         clickup_link: null,
       });
@@ -373,6 +391,17 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
         success: true,
         updated: false,
         reason: `Task is already ${before.status}; skipped auto-start to IN PROGRESS`,
+        task: before,
+        clickup_link: null,
+      });
+    }
+
+    // Guard 3: never push a task that is waiting, in checking, recurring, CRM, etc. to IN REVIEW
+    if (normWanted.includes('REVIEW') && isProtectedFromAutoReview(before.status)) {
+      return res.status(200).json({
+        success: true,
+        updated: false,
+        reason: `Task is already ${before.status}; skipped auto-update to ${wanted}`,
         task: before,
         clickup_link: null,
       });

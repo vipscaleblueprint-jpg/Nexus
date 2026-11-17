@@ -17,10 +17,11 @@ import {
   safeCreateClickUpChecklistItem,
 } from '../services/clickupService';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
+import { isReviewStatus } from '../utils/auditChecklist';
+import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { autoAssignAudits, sweepInReviewTasksForShiftAudits } from '../services/auditAutoAssign';
-import { isReviewStatus } from '../utils/auditChecklist';
 import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
@@ -1148,6 +1149,9 @@ export async function updateTask(req: Request, res: Response) {
             usersToNotify.forEach((id: any) => {
               io.to(`user:${id}`).emit('notification_received');
             });
+          }
+          if (isReviewStatus(finalStatus)) {
+            triggerLaunchReviewAlertIfNeeded(task.id, { actingUserId: actor.id }).catch(() => {});
           }
         }
 

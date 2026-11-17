@@ -30,6 +30,8 @@ import { invalidateCache, redis, isRedisReady } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
+import { isReviewStatus } from '../utils/auditChecklist';
+import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign } from '../services/taskMapService';
@@ -428,6 +430,9 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
           usersToNotify.forEach((id: any) => {
             io.to(`user:${id}`).emit('notification_received');
           });
+        }
+        if (isReviewStatus(updated.status)) {
+          triggerLaunchReviewAlertIfNeeded(target.taskId, { actingUserId: actor.id }).catch(() => {});
         }
       } catch (notifErr) {
         console.error('[sheets.applyStatus] notification error:', notifErr);

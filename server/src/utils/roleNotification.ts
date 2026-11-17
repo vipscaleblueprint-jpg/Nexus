@@ -179,6 +179,87 @@ export async function getStatusChangeRecipients(
 }
 
 /**
+ * Returns recipients for Launch Map IN REVIEW alerts:
+ * Project Managers (PM / Project Manager) and Auditors (role matching /audit/i or active AuditShiftConfig auditors),
+ * excluding system accounts and the acting user.
+ */
+export async function getLaunchReviewRecipients(
+  task: {
+    id: string;
+    teamId?: string | null;
+  },
+  actingUserId?: string | null
+): Promise<string[]> {
+  const [allUsers, shiftConfigs] = await Promise.all([
+    prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, email: true, name: true, roles: true, systemRole: true, teamId: true },
+    }),
+    (prisma as any).auditShiftConfig
+      .findMany({
+        where: { isActive: true },
+        select: { auditorIds: true, auditorNames: true },
+      })
+      .catch(() => []),
+  ]);
+
+  const nonSystemUsers = allUsers.filter(
+    (u) => !(u.email || '').toLowerCase().endsWith('@system.local')
+  );
+
+  const shiftAuditorIds = new Set<string>();
+  const shiftAuditorNames = new Set<string>();
+  for (const cfg of shiftConfigs || []) {
+    (cfg.auditorIds || []).forEach((id: string) => id && shiftAuditorIds.add(id.trim()));
+    (cfg.auditorNames || []).forEach((n: string) => n && shiftAuditorNames.add(n.trim().toLowerCase()));
+  }
+
+  const pmPattern = /project\s*manager|^pm$|team\s*lead|\bsenior\b/i;
+  const auditorPattern = /audit/i;
+
+  const recipientIds = new Set<string>();
+
+  // 1. Project Managers / Team Leads / Seniors (team-scoped if task.teamId has them, otherwise workspace-wide) + Admins
+  if (task.teamId) {
+    const teamPms = nonSystemUsers.filter(
+      (u) => u.teamId === task.teamId && userHasRole(u.roles, pmPattern)
+    );
+    if (teamPms.length > 0) {
+      teamPms.forEach((u) => recipientIds.add(u.id));
+    } else {
+      nonSystemUsers
+        .filter((u) => userHasRole(u.roles, pmPattern))
+        .forEach((u) => recipientIds.add(u.id));
+    }
+  } else {
+    nonSystemUsers
+      .filter((u) => userHasRole(u.roles, pmPattern))
+      .forEach((u) => recipientIds.add(u.id));
+  }
+
+  nonSystemUsers
+    .filter((u) => u.systemRole === 'ADMIN')
+    .forEach((u) => recipientIds.add(u.id));
+
+  // 2. Auditors (role matching /audit/i OR configured in AuditShiftConfig)
+  nonSystemUsers.forEach((u) => {
+    const isRoleAuditor = userHasRole(u.roles, auditorPattern);
+    const isShiftAuditor =
+      shiftAuditorIds.has(u.id) ||
+      shiftAuditorNames.has((u.name || '').trim().toLowerCase());
+    if (isRoleAuditor || isShiftAuditor) {
+      recipientIds.add(u.id);
+    }
+  });
+
+  if (actingUserId) {
+    recipientIds.delete(actingUserId);
+  }
+
+  return Array.from(recipientIds);
+}
+
+/**
  * Returns recipients for a checklist / audit check:
  * strictly based on task and subtask assignees (plus checklist item assignee),
  * excluding the acting user.

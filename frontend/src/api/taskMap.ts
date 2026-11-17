@@ -58,6 +58,45 @@ export interface TaskProgress {
   updatedAt?: string;
 }
 
+export interface LaunchMeta {
+  type: 'LAUNCH_META';
+  launchDate: string | null;
+  isLaunchDate: boolean;
+  workstream?: string | null;
+  notes?: string | null;
+  updatedAt: string;
+  updatedById?: string | null;
+}
+
+export interface LaunchMapLightItem {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  listId: string;
+  list: { id: string; name: string; folder?: { name: string } | null } | null;
+  assignee?: { id: string; name: string } | null;
+  assignees?: Array<{ id: string; name: string }>;
+  isClosed?: boolean;
+  isAdminTask?: boolean;
+  launchMeta?: LaunchMeta | null;
+  effectiveLaunchDate?: string | null;
+  isLaunchDate?: boolean;
+  updatedAt?: string;
+}
+
+export interface LaunchMapDataResponse {
+  success: boolean;
+  items: LaunchMapLightItem[];
+  clients: Array<{ id: string; name: string; count: number }>;
+  counts: {
+    scheduled: number;
+    inReview: number;
+    milestones: number;
+  };
+}
+
 export interface TaskMapItem {
   id: string;
   isSubtask?: boolean;
@@ -87,6 +126,9 @@ export interface TaskMapItem {
   isClosed: boolean;
   isAdminTask?: boolean;
   isAssumptionBlock?: boolean;
+  launchMeta?: LaunchMeta | null;
+  effectiveLaunchDate?: string | null;
+  isLaunchDate?: boolean;
   upworkStartedAt?: string | null;
   upworkSession?: UpworkSession | null;
   progress?: TaskProgress | null;
@@ -541,6 +583,7 @@ export interface TaskMapDataResponse {
   snapshotDate?: string;
   latestDate?: string;
   tasks: TaskMapItem[];
+  launchTasks?: TaskMapItem[];
   availablePool: TaskMapItem[];
   allClients?: Array<{ id: string; name: string }>;
   options: TaskMapOption[];
@@ -706,6 +749,62 @@ export const taskMapApi = {
       method: 'PATCH',
       body: JSON.stringify(meta),
     });
+  },
+
+  getLaunchData: async (params?: { start?: string; end?: string; signal?: AbortSignal }): Promise<LaunchMapDataResponse> => {
+    const q = new URLSearchParams();
+    if (params?.start) q.set('start', params.start);
+    if (params?.end) q.set('end', params.end);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return apiClient<LaunchMapDataResponse>(`/api/task-map/launch${qs}`, {
+      ...(params?.signal ? { signal: params.signal } : {}),
+    });
+  },
+
+  getLaunchCandidates: async (params?: { q?: string; limit?: number; signal?: AbortSignal }): Promise<{
+    success: boolean;
+    candidates: LaunchMapLightItem[];
+  }> => {
+    const q = new URLSearchParams();
+    if (params?.q) q.set('q', params.q);
+    if (params?.limit) q.set('limit', String(params.limit));
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`, {
+      ...(params?.signal ? { signal: params.signal } : {}),
+    });
+  },
+
+  updateLaunchMeta: async (
+    taskId: string,
+    payload: {
+      launchDate?: string | null;
+      isLaunchDate?: boolean;
+      workstream?: string | null;
+      notes?: string | null;
+      syncDueDate?: boolean;
+    }
+  ): Promise<{
+    success: boolean;
+    launchMeta: LaunchMeta;
+    effectiveLaunchDate: string | null;
+    dueDate: string | null;
+    alertSent?: boolean;
+  }> => {
+    markTaskSavingToDb(taskId, true);
+    try {
+      return await apiClient<{
+        success: boolean;
+        launchMeta: LaunchMeta;
+        effectiveLaunchDate: string | null;
+        dueDate: string | null;
+        alertSent?: boolean;
+      }>(`/api/task-map/tasks/${taskId}/launch`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
   },
 
   getTimeline: async (taskId: string): Promise<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }> => {
@@ -1142,6 +1241,60 @@ export function isTaskMapItemOnHold(task?: Partial<TaskMapItem> | null): boolean
 export function countNonOnHoldTasks(items?: Array<Partial<TaskMapItem>> | null): number {
   if (!items || items.length === 0) return 0;
   return items.filter((t) => !isTaskMapItemOnHold(t)).length;
+}
+
+/**
+ * Returns true if the task status is strictly an IN REVIEW status.
+ */
+export function isLaunchReviewStatus(status?: string | null): boolean {
+  const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return (
+    s === 'INREVIEW' ||
+    s === 'TOREVIEW' ||
+    s === 'REVIEW' ||
+    s === 'UNDERREVIEW' ||
+    s === 'FORREVIEW'
+  );
+}
+
+/**
+ * Extracts a canonical YYYY-MM-DD key normalized to Asia/Manila (UTC+8)
+ * without off-by-one UTC midnight shifts.
+ */
+export function getManilaDateKey(input?: Date | string | null): string | null {
+  if (!input) return null;
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  }
+  try {
+    const d = typeof input === 'string' ? new Date(input) : input;
+    if (isNaN(d.getTime())) return null;
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+  } catch {
+    return null;
+  }
+}
+
+export function getTaskEffectiveLaunchDate(
+  task?: {
+    launchMeta?: LaunchMeta | null;
+    effectiveLaunchDate?: string | null;
+    dueDate?: string | null;
+  } | null
+): string | null {
+  if (!task) return null;
+  const metaDate = task.launchMeta?.launchDate;
+  if (metaDate && /^\d{4}-\d{2}-\d{2}/.test(metaDate)) return metaDate.slice(0, 10);
+  if (task.effectiveLaunchDate && /^\d{4}-\d{2}-\d{2}/.test(task.effectiveLaunchDate)) {
+    return task.effectiveLaunchDate.slice(0, 10);
+  }
+  return getManilaDateKey(task.dueDate);
 }
 
 

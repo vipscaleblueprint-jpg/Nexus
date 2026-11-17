@@ -2,9 +2,15 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache, getCache, setCache, redis, isRedisReady } from '../services/redisService';
+import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady } from '../services/redisService';
+import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { isAuditorRole } from './auditShift.controller';
+import {
+  extractLaunchMeta,
+  upsertTaskLaunchMeta,
+  triggerLaunchReviewAlertIfNeeded,
+} from '../services/launchMapService';
 import {
   getStatusOptions,
   upsertStatusOption,
@@ -462,6 +468,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const listName = (task.list?.name || '').toLowerCase();
       const isAdminTask = folderName === 'admin' || folderName.includes('admin') || listName === 'admin';
 
+      const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(reviewsList, task.dueDate);
       const parentClosed = isClosedStatus(task.status);
       enrichedTasks.push({
         ...task,
@@ -470,6 +477,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         isWaitingPmReview: pmTags.length > 0,
         isClosed: parentClosed,
         isAdminTask,
+        launchMeta,
+        effectiveLaunchDate,
+        isLaunchDate,
         upworkStartedAt,
         upworkSession,
         progress,
@@ -1042,8 +1052,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
+    // Collect all main tasks with an effective launch date (both open and completed/done launches)
+    const launchTasks = filteredTasks.filter(
+      (t: any) => !t.isSubtask && Boolean(t.effectiveLaunchDate)
+    );
+
     const snapshotPayload = {
       tasks: openTasks,
+      launchTasks,
       availablePool,
       allClients,
       options,
@@ -1071,6 +1087,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       isHistory: isPastDate,
       snapshotDate: isPastDate ? requestedDate : undefined,
       tasks: openTasks,
+      launchTasks,
       availablePool,
       allClients,
       options,
@@ -2416,6 +2433,251 @@ export const updateTaskMeta = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error({ error }, 'Error updating task meta');
     res.status(500).json({ error: 'Failed to update task meta' });
+  }
+};
+
+/**
+ * Lightweight, range-aware Launch Map feed (zero subtasks/checklists/Upwork overhead).
+ * Supports optional ?start=YYYY-MM-DD&end=YYYY-MM-DD lazy loading for month/week ranges.
+ */
+export const getLaunchMapData = async (req: Request, res: Response) => {
+  try {
+    const rawStart = typeof req.query.start === 'string' ? req.query.start.trim().slice(0, 10) : '';
+    const rawEnd = typeof req.query.end === 'string' ? req.query.end.trim().slice(0, 10) : '';
+    const start = /^\d{4}-\d{2}-\d{2}$/.test(rawStart) ? rawStart : '';
+    const end = /^\d{4}-\d{2}-\d{2}$/.test(rawEnd) ? rawEnd : '';
+
+    const cacheKey = `launch_map:data:${start || 'all'}:${end || 'all'}`;
+    const cacheGen = getCacheGeneration(cacheKey);
+    const cached = await getCache<any>(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const rawTasks = await prisma.task.findMany({
+      where: {
+        status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] },
+        OR: [{ dueDate: { not: null } }, { taskMapRecord: { isNot: null } }],
+      },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        dueDate: true,
+        listId: true,
+        updatedAt: true,
+        list: {
+          select: {
+            id: true,
+            name: true,
+            folder: { select: { name: true } },
+          },
+        },
+        assignee: { select: { id: true, name: true } },
+        assignees: { select: { id: true, name: true } },
+        taskMapRecord: { select: { pmReviews: true } },
+      },
+      orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
+    });
+
+    const ADMIN_LIST_NAMES = new Set([
+      'admin | jenesia red',
+      'harmony',
+      'jenesia red',
+      'jenesia red | personal',
+      'snaply',
+      'vip scale',
+      'xfnite',
+    ]);
+
+    const items: any[] = [];
+    const clientMap = new Map<string, { id: string; name: string; count: number }>();
+    let totalScheduled = 0;
+    let totalInReview = 0;
+    let totalMilestones = 0;
+
+    for (const t of rawTasks) {
+      const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(
+        t.taskMapRecord?.pmReviews,
+        t.dueDate
+      );
+      if (!effectiveLaunchDate) continue;
+
+      const folderName = (t.list?.folder?.name || '').trim().toLowerCase();
+      const listName = (t.list?.name || '').trim().toLowerCase();
+      const isAdminTask =
+        folderName === 'admin' ||
+        folderName.includes('admin') ||
+        listName === 'admin' ||
+        ADMIN_LIST_NAMES.has(listName);
+
+      const closed = isClosedStatus(t.status);
+      const inReview = !closed && isReviewStatus(t.status);
+
+      totalScheduled++;
+      if (inReview) totalInReview++;
+      if (isLaunchDate) totalMilestones++;
+
+      if (!isAdminTask && t.list?.id && t.list?.name) {
+        const cur = clientMap.get(t.list.id);
+        if (cur) cur.count++;
+        else clientMap.set(t.list.id, { id: t.list.id, name: t.list.name, count: 1 });
+      }
+
+      if (start && end && (effectiveLaunchDate < start || effectiveLaunchDate > end)) {
+        continue;
+      }
+
+      items.push({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        dueDate: t.dueDate,
+        listId: t.listId,
+        list: t.list,
+        assignee: t.assignee,
+        assignees: t.assignees,
+        isClosed: closed,
+        isAdminTask,
+        launchMeta,
+        effectiveLaunchDate,
+        isLaunchDate,
+        updatedAt: t.updatedAt,
+      });
+    }
+
+    const payload = {
+      success: true,
+      items,
+      clients: Array.from(clientMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      counts: {
+        scheduled: totalScheduled,
+        inReview: totalInReview,
+        milestones: totalMilestones,
+      },
+    };
+
+    await setCache(cacheKey, payload, 30, cacheGen);
+    res.json(payload);
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching Launch Map data');
+    res.status(500).json({ error: 'Failed to load Launch Map data' });
+  }
+};
+
+/**
+ * Lazy-loaded searchable task candidates for the Launch Map "+ Schedule" picker.
+ */
+export const getLaunchCandidates = async (req: Request, res: Response) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 25;
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 40) : 25;
+
+    const where: any = {
+      status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD', 'CLOSED', 'Closed', 'DONE', 'Done'] },
+    };
+    if (q) {
+      where.OR = [
+        { title: { contains: q, mode: 'insensitive' } },
+        { list: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    const rows = await prisma.task.findMany({
+      where,
+      take: limit,
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        dueDate: true,
+        listId: true,
+        list: { select: { id: true, name: true } },
+        taskMapRecord: { select: { pmReviews: true } },
+      },
+    });
+
+    const candidates = rows.map((t) => {
+      const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(
+        t.taskMapRecord?.pmReviews,
+        t.dueDate
+      );
+      return {
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        dueDate: t.dueDate,
+        listId: t.listId,
+        list: t.list,
+        launchMeta,
+        effectiveLaunchDate,
+        isLaunchDate,
+      };
+    });
+
+    res.json({ success: true, candidates });
+  } catch (error: any) {
+    logger.error({ error }, 'Error searching Launch Map candidates');
+    res.status(500).json({ error: 'Failed to search tasks' });
+  }
+};
+
+/**
+ * Update Launch Map metadata (launchDate, isLaunchDate milestone flag, workstream, notes)
+ * and trigger IN REVIEW notification to Project Managers and Auditors if status is IN REVIEW.
+ */
+export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { launchDate, isLaunchDate, workstream, notes, syncDueDate } = req.body || {};
+    const user = (req as any).user;
+
+    const target = parseTaskMapTargetId(id);
+    if (target.isSubtask) {
+      return res.status(400).json({ error: 'Launch Map schedules apply to main tasks' });
+    }
+
+    const result = await upsertTaskLaunchMeta(
+      id,
+      { launchDate, isLaunchDate, workstream, notes, syncDueDate },
+      user?.id || null
+    );
+
+    const alertRes = await triggerLaunchReviewAlertIfNeeded(id, {
+      actingUserId: user?.id || null,
+    });
+
+    io.emit('task_map:updated', {
+      taskId: id,
+      launchMeta: result.launchMeta,
+      effectiveLaunchDate: result.effectiveLaunchDate,
+      dueDate: result.dueDate,
+    });
+    io.emit('task:updated', {
+      id,
+      dueDate: result.dueDate,
+      launchMeta: result.launchMeta,
+      effectiveLaunchDate: result.effectiveLaunchDate,
+    });
+
+    res.json({
+      success: true,
+      launchMeta: result.launchMeta,
+      effectiveLaunchDate: result.effectiveLaunchDate,
+      dueDate: result.dueDate,
+      alertSent: alertRes.sent,
+    });
+  } catch (error: any) {
+    logger.error({ error }, 'Error updating launch metadata');
+    res.status(error?.message === 'Task not found' ? 404 : 400).json({
+      error: error?.message || 'Failed to update launch metadata',
+    });
   }
 };
 

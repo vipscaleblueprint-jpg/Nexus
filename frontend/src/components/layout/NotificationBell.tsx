@@ -505,7 +505,8 @@ export function NotificationBell() {
     isRead: boolean,
     isGreyed: boolean
   ) => {
-    const actorName = n.actor?.name || "Someone";
+    const isLaunchAlert = (n.type || "").toUpperCase() === "LAUNCH_REVIEW_ALERT";
+    const actorName = n.actor?.name || (isLaunchAlert ? "Launch Map" : "Someone");
     const isSubtask = n.title.toLowerCase().includes("subtask");
     const subtaskTitle = extractSubtaskTitle(n.title);
 
@@ -536,6 +537,10 @@ export function NotificationBell() {
           }
           if (n.task?.id) {
             prefetchTaskActivities(n.task.id);
+            if (isLaunchAlert) {
+              router.push(`/activity/launch-map?task=${n.task.id}`);
+              return;
+            }
             const isCommentNotif =
               n.type === "MENTION" || n.type === "COMMENT" || n.type === "REACTION" || n.type === "REPLY" || (n.title || "").includes("comment") || (n.title || "").includes("replied");
             const cId = (n as any).commentId || (n as any).details?.commentId;

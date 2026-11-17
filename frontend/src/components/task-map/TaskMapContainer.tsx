@@ -544,6 +544,9 @@ export const TaskMapContainer: React.FC = () => {
         taskId,
         statuses,
         taskMap,
+        launchMeta,
+        effectiveLaunchDate,
+        dueDate,
         upworkStartedAt,
         upworkSession,
         activeUpworkSessions: incomingActiveSessions,
@@ -563,47 +566,31 @@ export const TaskMapContainer: React.FC = () => {
       const nextStatuses = statuses !== undefined ? statuses : taskMap?.statuses;
       const nextHandedOver = data.handedOver !== undefined ? data.handedOver : taskMap?.handedOver;
 
-      setTasks((prev) =>
-        prev.map((t) => {
-          if (t.id !== taskId) return t;
-          return {
-            ...t,
-            assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
-            assignee: data.assignee !== undefined ? data.assignee : t.assignee,
-            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : t.assignees) : t.assignees,
-            upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
-            upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
-            progress: data.progress !== undefined ? data.progress : t.progress,
-            taskMap: {
-              ...t.taskMap,
-              ...(taskMap || {}),
-              ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
-              statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
-            },
-          };
-        })
-      );
+      const patchItem = (t: TaskMapItem): TaskMapItem => {
+        if (t.id !== taskId) return t;
+        return {
+          ...t,
+          assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
+          assignee: data.assignee !== undefined ? data.assignee : t.assignee,
+          assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : t.assignees) : t.assignees,
+          dueDate: dueDate !== undefined ? dueDate : t.dueDate,
+          launchMeta: launchMeta !== undefined ? launchMeta : t.launchMeta,
+          effectiveLaunchDate: effectiveLaunchDate !== undefined ? effectiveLaunchDate : t.effectiveLaunchDate,
+          isLaunchDate: launchMeta !== undefined ? Boolean(launchMeta?.isLaunchDate) : t.isLaunchDate,
+          upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
+          upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
+          progress: data.progress !== undefined ? data.progress : t.progress,
+          taskMap: {
+            ...t.taskMap,
+            ...(taskMap || {}),
+            ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
+            statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
+          },
+        };
+      };
 
-      setAvailablePool((prev) =>
-        prev.map((t) => {
-          if (t.id !== taskId) return t;
-          return {
-            ...t,
-            assigneeId: data.assigneeId !== undefined ? data.assigneeId : t.assigneeId,
-            assignee: data.assignee !== undefined ? data.assignee : t.assignee,
-            assignees: data.assignee !== undefined ? (data.assignee ? [data.assignee] : t.assignees) : t.assignees,
-            upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
-            upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
-            progress: data.progress !== undefined ? data.progress : t.progress,
-            taskMap: {
-              ...t.taskMap,
-              ...(taskMap || {}),
-              ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
-              statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
-            },
-          };
-        })
-      );
+      setTasks((prev) => prev.map(patchItem));
+      setAvailablePool((prev) => prev.map(patchItem));
 
       if (incomingActiveSessions) {
         setActiveUpworkSessions(incomingActiveSessions);

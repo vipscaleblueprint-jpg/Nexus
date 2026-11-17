@@ -15,6 +15,8 @@ import {
   ChevronUp,
   Smile,
   AtSign,
+  Rocket,
+  CalendarClock,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { CommentContent } from '@/components/ui/CommentContent';
@@ -240,6 +242,8 @@ export function ActivityCard({
     title.toLowerCase().includes('reacted')
   ) {
     MicroIcon = Smile;
+  } else if (normType === 'LAUNCH_REVIEW_ALERT') {
+    MicroIcon = Rocket;
   } else if (
     normType === 'COMMENT' ||
     normType === 'REPLY'
@@ -337,6 +341,46 @@ export function ActivityCard({
           {firstMentionedUser ? `Mentions ${firstMentionedUser.replace(/^@/, '')}` : 'Mentions teammate'}
         </span>
       );
+    }
+
+    // 0. Launch Map IN REVIEW Alert
+    if (normType === 'LAUNCH_REVIEW_ALERT') {
+      const dateMatch = title.match(/\((?:LAUNCH DATE|Scheduled Launch):\s*([^)]+)\)/i);
+      const launchDateLabel = dateMatch ? dateMatch[1].trim() : null;
+      const isLaunchMilestone = /LAUNCH DATE:/i.test(title);
+      const resolvedTaskName =
+        taskTitle && taskTitle !== 'task'
+          ? taskTitle
+          : title.match(/Launch Alert:\s*"([^"]+)"/i)?.[1] || 'Task';
+
+      const pills = (
+        <div className="inline-flex items-center gap-1.5 flex-wrap">
+          <StatusPill status="IN REVIEW" color="#D97B3A" isGreyed={isGreyed} />
+          {launchDateLabel && (
+            <span
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border leading-none ${
+                isLaunchMilestone
+                  ? 'bg-rose-500/15 text-rose-300 border-rose-500/35 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-700 [.theme-light_&]:border-rose-300'
+                  : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/35 [.theme-light_&]:bg-indigo-50 [.theme-light_&]:text-indigo-700 [.theme-light_&]:border-indigo-300'
+              }`}
+            >
+              <CalendarClock className="size-2.5 shrink-0" />
+              <span>{isLaunchMilestone ? `LAUNCH: ${launchDateLabel}` : launchDateLabel}</span>
+            </span>
+          )}
+        </div>
+      );
+
+      const titleNode = (
+        <span className="leading-snug">
+          <span className={actorClass}>Launch Alert</span>
+          <span className={actionClass}> · </span>
+          <span className={taskClass}>{resolvedTaskName}</span>
+          <span className={actionClass}> is sitting in review</span>
+        </span>
+      );
+
+      return { titleNode, statusPills: pills, mentionBadge: badgeNode };
     }
 
     // 1. Status Change

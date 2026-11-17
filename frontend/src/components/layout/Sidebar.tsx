@@ -1602,6 +1602,15 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 <Map className="size-4 shrink-0 text-sky-400" />
                 <span className="truncate">Task Map</span>
               </Link>
+              <Link
+                href="/activity/launch-map"
+                className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground ${
+                  pathname.startsWith('/activity/launch-map') || pathname.startsWith('/launch-map') ? 'bg-accent text-accent-foreground font-medium' : 'text-zinc-100'
+                }`}
+              >
+                <Rocket className="size-4 shrink-0 text-indigo-400" />
+                <span className="truncate">Launch Map</span>
+              </Link>
             </div>
 
 

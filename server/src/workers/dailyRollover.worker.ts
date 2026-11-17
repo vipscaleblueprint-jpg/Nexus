@@ -19,6 +19,7 @@ import { sweepInReviewTasksForShiftAudits } from '../services/auditAutoAssign';
 import { executeTaskMapShiftRollover } from './taskMapRollover.worker';
 import { executeTaskMapDailyRollover } from '../services/taskMapService';
 import { checkAndHandoverInactiveMaTasks } from '../services/maInactivityService';
+import { sweepLaunchInReviewAlerts } from '../services/launchMapService';
 
 // KYC, Closed, and Pin Board items never roll over (status is free text, so match any casing)
 const notKyc = { NOT: { status: { equals: 'KYC', mode: 'insensitive' as const } } };
@@ -328,6 +329,7 @@ export const SHIFT_AUDIT_JOB = 'shiftAuditSweep';
 export const TASK_MAP_SHIFT_ROLLOVER_JOB = 'taskMapShiftRollover';
 export const TASK_MAP_DAILY_ROLLOVER_JOB = 'taskMapDailyRollover';
 export const MA_AUTO_HANDOVER_JOB = 'maAutoHandoverJob';
+export const LAUNCH_REVIEW_SWEEP_JOB = 'launchReviewSweep';
 
 // What the previous catch-up run found missing, per day page. A task is only added once two runs in a row miss it, so
 // the append made when it was created, or a user's erase still being recorded, always finishes first.
@@ -442,6 +444,7 @@ export const dailyRolloverWorker = new Worker(
       }
     }
     if (job.name === MA_AUTO_HANDOVER_JOB) return checkAndHandoverInactiveMaTasks();
+    if (job.name === LAUNCH_REVIEW_SWEEP_JOB) return sweepLaunchInReviewAlerts();
     logger.info('Running DailyRollover job (Dynamic Generation)...');
     await runDailyRollover(job.data);
     logger.info('Running Daily Recurring Tasks Rollover...');
@@ -460,7 +463,7 @@ export const dailyRolloverWorker = new Worker(
 
 // Listeners for logging
 dailyRolloverWorker.on('completed', (job) => {
-  if (job.name === JOURNAL_CATCH_UP_JOB || job.name === SHIFT_AUDIT_JOB || job.name === TASK_MAP_SHIFT_ROLLOVER_JOB || job.name === MA_AUTO_HANDOVER_JOB) return; // runs every few minutes; it logs when it adds something
+  if (job.name === JOURNAL_CATCH_UP_JOB || job.name === SHIFT_AUDIT_JOB || job.name === TASK_MAP_SHIFT_ROLLOVER_JOB || job.name === MA_AUTO_HANDOVER_JOB || job.name === LAUNCH_REVIEW_SWEEP_JOB) return; // runs every few minutes; it logs when it adds something
   logger.info(`DailyRollover job ${job.id} has completed!`);
 });
 

@@ -15,6 +15,9 @@ import {
   runDailyRollover,
   getHistoryDates,
   updateTaskMeta,
+  getLaunchMapData,
+  getLaunchCandidates,
+  updateTaskLaunchMeta,
   getTaskTimeline,
   getUpworkClientsHandler,
   updateUpworkClientsHandler,
@@ -28,6 +31,8 @@ export const taskMapRouter = Router();
 taskMapRouter.use(authenticateToken);
 
 taskMapRouter.get('/data', getTaskMapData);
+taskMapRouter.get('/launch', getLaunchMapData);
+taskMapRouter.get('/launch/candidates', getLaunchCandidates);
 taskMapRouter.get('/options', getOptions);
 taskMapRouter.post('/options', upsertOption);
 taskMapRouter.delete('/options/:id', deleteOption);
@@ -48,4 +53,5 @@ taskMapRouter.post('/rollover', runRollover);
 taskMapRouter.post('/daily-rollover', runDailyRollover);
 taskMapRouter.get('/history-dates', getHistoryDates);
 taskMapRouter.patch('/tasks/:id/meta', updateTaskMeta);
+taskMapRouter.patch('/tasks/:id/launch', updateTaskLaunchMeta);
 taskMapRouter.get('/tasks/:id/timeline', getTaskTimeline);

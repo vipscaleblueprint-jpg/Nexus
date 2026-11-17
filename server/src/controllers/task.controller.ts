@@ -9,6 +9,7 @@ import { redis } from '../config/redis';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { getPositionAfter } from '../services/taskOrderService';
 import { autoAssignAudits } from '../services/auditAutoAssign';
+import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { io } from '../server';
 import {
   safeCreateClickUpTask,
@@ -1020,7 +1021,7 @@ export async function updateTask(req: Request, res: Response) {
       }) : null;
     }
     // Invalidate Redis cache immediately BEFORE socket emit and HTTP response
-    await invalidateCache(`task:${taskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all').catch(() => {});
+    await invalidateCache(`task:${taskId}`, `task:activities:${taskId}`, 'tasks:all', 'dashboard:all', 'lists:all', 'launch_map:all').catch(() => {});
 
     // Broadcast IMMEDIATELY after update
     const roomListId = listId || currentListId || currentTask.listId;
@@ -1181,6 +1182,7 @@ export async function updateTask(req: Request, res: Response) {
               autoAssignAudits(taskId, actingUserId).catch((err) =>
                 console.error('updateTask: audit shift assign failed:', err)
               );
+              triggerLaunchReviewAlertIfNeeded(taskId, { actingUserId }).catch(() => {});
             }
 
             activity = {
@@ -1336,6 +1338,10 @@ export async function updateTask(req: Request, res: Response) {
             };
           }
           if (activity) emitActivity(activity);
+
+          if (dueDate !== undefined && isReviewStatus(updated.status) && !(status && isReviewStatus(status))) {
+            triggerLaunchReviewAlertIfNeeded(taskId, { actingUserId }).catch(() => {});
+          }
 
           if (assigneeRoleRestrictions !== undefined) {
             const roleLog = await prisma.auditLog.create({
@@ -1627,6 +1633,7 @@ export async function moveTask(req: Request, res: Response) {
               autoAssignAudits(id, actingUserId).catch((err) =>
                 console.error('moveTask: audit shift assign failed:', err)
               );
+              triggerLaunchReviewAlertIfNeeded(id, { actingUserId }).catch(() => {});
             }
 
             // Notify role-based recipients + assignees so the change shows in their feed

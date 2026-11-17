@@ -1244,11 +1244,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             active: !cleanTimeOut && Boolean(cleanTimeIn),
           };
           if (isRedisReady()) {
-            if (cleanTimeOut) {
-              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
-            } else {
-              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
-            }
+            // Hold user's last inputted session throughout the day until 12:00 AM rollover
+            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
           }
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
@@ -1316,11 +1313,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           isOlderRowEdit = incomingRowNum > 0 && currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum;
 
           if (!isOlderRowEdit) {
-            if (cleanTimeOut) {
-              await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
-            } else {
-              await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
-            }
+            // Hold user's last inputted session throughout the day until 12:00 AM rollover
+            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
             io.emit('ma:session_updated', sessionData);
             io.emit('task_map:ma_progress_changed', sessionData);
             io.emit('task_map:updated', {
@@ -1629,11 +1623,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           active: !cleanTimeOut && Boolean(cleanTimeIn),
         };
         if (isRedisReady()) {
-          if (cleanTimeOut) {
-            await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
-          } else {
-            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
-          }
+          await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
         }
         io.emit('ma:session_updated', maSession);
         io.emit('task_map:ma_progress_changed', maSession);
@@ -1789,9 +1779,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         active: !cleanTimeOut && Boolean(cleanTimeIn),
       };
       const maKey = maNameStr.toLowerCase().trim();
-      if (cleanTimeOut) {
-        await redis.hdel('task_map:ma_active_sessions', maKey).catch(() => { });
-      } else {
+      if (isRedisReady()) {
         await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
       }
       io.emit('ma:session_updated', maSession);

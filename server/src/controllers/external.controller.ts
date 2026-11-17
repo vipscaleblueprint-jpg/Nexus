@@ -23,6 +23,7 @@ import { autoAssignAudits, sweepInReviewTasksForShiftAudits } from '../services/
 import { isReviewStatus } from '../utils/auditChecklist';
 import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
+import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 import { syncTaskMapOnDirectAssign } from '../services/taskMapService';
 import { getTaskMoverAndUpdaters } from './task.controller';
 
@@ -309,6 +310,7 @@ export async function createExternalList(req: Request, res: Response) {
       return res.status(400).json({ error: 'name is required' });
     }
 
+    const hasExplicitFolder = Boolean(folderId);
     let targetSpaceId = spaceId;
     let targetFolderId = folderId;
     
@@ -326,30 +328,22 @@ export async function createExternalList(req: Request, res: Response) {
       : ['Client Details', 'Recurring', 'Workflow & Progress'];
 
     // /webhooks/sync-clients usually creates the client's list moments before this call,
-    // so match it by VIPScale client id first, then by name within the folder (ignoring
-    // case/whitespace and space), instead of creating a second list next to it.
-    let list = externalId
-      ? await prisma.list.findUnique({ where: { externalId: String(externalId) } })
-      : null;
-
-    if (!list) {
-      list = await prisma.list.findFirst({
-        where: {
-          name: { equals: String(name).trim(), mode: 'insensitive' },
-          folderId: targetFolderId || null,
-          ...(targetFolderId ? {} : { spaceId: targetSpaceId || null }),
-        }
-      });
-      if (list && externalId && !list.externalId) {
-        list = await prisma.list.update({ where: { id: list.id }, data: { externalId: String(externalId) } });
-      }
-    }
+    // so match by externalId / clickUpListId first, then by name (falling back across all
+    // folders when no explicit folderId was passed so Dormant Clients / Startups boards
+    // are reused instead of creating a duplicate in Client Dashboard).
+    let list = await findExistingListByIdentifiers({
+      externalId: externalId ? String(externalId) : null,
+      clickUpListId: clickUpListId ? String(clickUpListId) : null,
+      name: String(name),
+      preferredFolderId: targetFolderId || null,
+      ...(hasExplicitFolder ? { strictFolderId: targetFolderId || null } : {}),
+    });
 
     if (list) {
-      // If list already exists, ensure clickUpListId is updated if passed
-      if (clickUpListId && !list.clickUpListId) {
-        list = await prisma.list.update({ where: { id: list.id }, data: { clickUpListId: String(clickUpListId) } });
-      }
+      list = await linkMissingListIdentifiers(list, {
+        externalId: externalId ? String(externalId) : null,
+        clickUpListId: clickUpListId ? String(clickUpListId) : null,
+      });
       // Return early if the list already exists (to avoid duplicate status seeding).
       // existingTaskTitles lets callers that seed tasks skip the ones already there.
       const existingTasks = await prisma.task.findMany({ where: { listId: list.id }, select: { title: true } });

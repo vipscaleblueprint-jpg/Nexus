@@ -326,6 +326,7 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
 export const JOURNAL_CATCH_UP_JOB = 'journalCatchUp';
 export const SHIFT_AUDIT_JOB = 'shiftAuditSweep';
 export const TASK_MAP_SHIFT_ROLLOVER_JOB = 'taskMapShiftRollover';
+export const TASK_MAP_DAILY_ROLLOVER_JOB = 'taskMapDailyRollover';
 export const MA_AUTO_HANDOVER_JOB = 'maAutoHandoverJob';
 
 // What the previous catch-up run found missing, per day page. A task is only added once two runs in a row miss it, so
@@ -429,6 +430,17 @@ export const dailyRolloverWorker = new Worker(
     if (job.name === JOURNAL_CATCH_UP_JOB) return appendMissingTasksToJournal();
     if (job.name === SHIFT_AUDIT_JOB) return sweepInReviewTasksForShiftAudits(job.data?.shift);
     if (job.name === TASK_MAP_SHIFT_ROLLOVER_JOB) return executeTaskMapShiftRollover(job.data?.fromShift);
+    if (job.name === TASK_MAP_DAILY_ROLLOVER_JOB) {
+      logger.info('Running Task Map Daily Rollover & Snapshot (12:00 AM Manila)...');
+      try {
+        const taskMapRes = await executeTaskMapDailyRollover();
+        logger.info(`Finished Task Map Daily Rollover: rolled ${taskMapRes.rolledCount} tasks to ${taskMapRes.newDate}`);
+        return taskMapRes;
+      } catch (tmErr) {
+        logger.error(`Task Map Daily Rollover failed: ${errMsg(tmErr)}`);
+        throw tmErr;
+      }
+    }
     if (job.name === MA_AUTO_HANDOVER_JOB) return checkAndHandoverInactiveMaTasks();
     logger.info('Running DailyRollover job (Dynamic Generation)...');
     await runDailyRollover(job.data);
@@ -439,13 +451,7 @@ export const dailyRolloverWorker = new Worker(
     } catch (recErr) {
       logger.error(`Recurring Tasks Rollover failed: ${errMsg(recErr)}`);
     }
-    logger.info('Running Task Map Daily Rollover & Snapshot...');
-    try {
-      const taskMapRes = await executeTaskMapDailyRollover();
-      logger.info(`Finished Task Map Daily Rollover: rolled ${taskMapRes.rolledCount} tasks to ${taskMapRes.newDate}`);
-    } catch (tmErr) {
-      logger.error(`Task Map Daily Rollover failed: ${errMsg(tmErr)}`);
-    }
+
 
     logger.info('Finished DailyRollover job.');
   },

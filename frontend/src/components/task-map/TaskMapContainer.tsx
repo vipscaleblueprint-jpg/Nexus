@@ -661,6 +661,20 @@ export const TaskMapContainer: React.FC = () => {
       scheduleReload();
     };
 
+    const handleDailyRollover = (e: any) => {
+      const data = e?.detail || e;
+      useAppStore.getState().setMaActiveSessions({});
+      if (data?.newDate && !userSelectedDateRef.current) {
+        setCurrentDate(data.newDate);
+      }
+      taskMapApi.getHistoryDates().then((res) => {
+        if (res.success && res.dates) {
+          setHistoryDates(res.dates);
+        }
+      }).catch(() => {});
+      scheduleReload();
+    };
+
     window.addEventListener('task:updated', handleTaskUpdated);
     window.addEventListener('task_map:updated', handleTaskMapUpdated);
     window.addEventListener('task_map:shifts_updated', handleShiftsUpdated);
@@ -668,6 +682,7 @@ export const TaskMapContainer: React.FC = () => {
     window.addEventListener('task:progress_updated', handleProgressUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
     window.addEventListener('ma:session_updated', handleMaSessionUpdated);
+    window.addEventListener('task_map:daily_rollover', handleDailyRollover);
 
     return () => {
       if (reloadTimer) clearTimeout(reloadTimer);
@@ -678,6 +693,7 @@ export const TaskMapContainer: React.FC = () => {
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
       window.removeEventListener('ma:session_updated', handleMaSessionUpdated);
+      window.removeEventListener('task_map:daily_rollover', handleDailyRollover);
     };
   }, [loadData]);
 
@@ -1450,32 +1466,6 @@ export const TaskMapContainer: React.FC = () => {
 
       {/* 2. Right: Main Area */}
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
-        {/* Historical Archive Banner */}
-        {isHistoryView && (
-          <div className="w-full px-6 pt-3 pb-0 shrink-0">
-            <div className="w-full flex items-center justify-between gap-3 px-4 py-2 rounded-xl bg-purple-950/40 border border-purple-800/60 text-purple-200 shadow-md">
-              <div className="flex items-center gap-2.5 text-xs sm:text-sm font-medium">
-                <span className="text-base">📜</span>
-                <span>
-                  <strong>Historical Journal Archive</strong> · Viewing preserved board from{' '}
-                  <span className="text-purple-300 font-semibold">{currentDate}</span>. Tasks and statuses are retained as they were.
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  userSelectedDateRef.current = false;
-                  const latest = historyDates[0] || getTodayDateStr();
-                  setCurrentDate(latest);
-                }}
-                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors cursor-pointer shrink-0"
-              >
-                Return to Today
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Top Header Bar: Date, Day, Shift Pills [All] [Day] [Noon] [Night] [Custom], Client selector, View tabs, Search */}
         <TaskMapHeader
           currentDate={currentDate}

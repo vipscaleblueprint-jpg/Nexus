@@ -218,8 +218,8 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
   const statuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
   if (statuses.includes('CLOSED') || statuses.includes('DONE')) return false;
 
-  // 0. Active synthetic assumption block strictly takes the In Progress slot
-  if (task.isAssumptionBlock) return true;
+  // 0. Live synthetic assumption block strictly takes the In Progress slot (clocked-out held blocks sit below dropzone until 12 AM)
+  if (task.isAssumptionBlock) return Boolean(!task.progress?.timeOut);
 
   // On-hold tasks belong at the bottom of Queue unless live clocked in right now
   if (isTaskLiveWorking(task, userName)) return true;
@@ -240,9 +240,9 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
 
 const sortColumnTasks = (items: TaskMapItem[], userName?: string) => {
   const sorted = [...items].sort((a, b) => {
-    // 0. Active synthetic assumption block strictly on top
-    const isAssumpA = a.isAssumptionBlock ? 1 : 0;
-    const isAssumpB = b.isAssumptionBlock ? 1 : 0;
+    // 0. Live synthetic assumption block strictly on top
+    const isAssumpA = a.isAssumptionBlock && !a.progress?.timeOut ? 1 : 0;
+    const isAssumpB = b.isAssumptionBlock && !b.progress?.timeOut ? 1 : 0;
     if (isAssumpA !== isAssumpB) return isAssumpB - isAssumpA;
 
     // 1. Live actively working task (Time In, no Time Out) strictly on top
@@ -1168,9 +1168,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
   });
 
-  // Also ensure any user who has an active sheet session gets a column in userColumnsMap
+  // Also ensure any user who has a held or active sheet session gets a column in userColumnsMap
   Object.values(maActiveSessions || {}).forEach((sess: any) => {
-    if (sess?.maName && sess?.active && allUsers) {
+    if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
       const alreadyHasCol = Object.values(userColumnsMap).some((col) =>
         doesProgressMatchUser(sess.maName, col.user.name)
       );
@@ -1270,10 +1270,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
         doesProgressMatchUser((session as any)?.maName, col.user.name)
     );
     const activeSession = activeSessionEntry ? (activeSessionEntry[1] as any) : null;
-    const isSessionActive = Boolean(
+    const hasHeldSession = Boolean(
       activeSession &&
-      (activeSession.active ?? (!activeSession.timeOut && activeSession.timeIn)) &&
-      !activeSession.timeOut
+      (activeSession.active || activeSession.timeIn || activeSession.timeOut || activeSession.client || activeSession.taskName || activeSession.status)
     );
 
     // Check if user already has an assigned task card actively matching this session (by taskId or active progress)
@@ -1292,9 +1291,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return false;
     });
 
-    // ONLY insert an assumption block if the user has an active session from their sheet that is not attached to an existing task card!
-    // Never insert a fake card if activeSession is null or inactive/timed out!
-    if (isSessionActive && !hasActiveAssignedTask) {
+    // Hold the user's last inputted sheet card throughout the day until 12:00 AM rollover when not already represented by a card in col.tasks
+    if (hasHeldSession && !hasActiveAssignedTask) {
       const rawClient = activeSession?.client;
       const effectiveClient = rawClient && rawClient.toLowerCase() !== 'general' ? rawClient : 'No client inputted';
       const rawTask = activeSession?.taskName;

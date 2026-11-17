@@ -643,32 +643,12 @@ export function getManilaDateStr(date?: Date | string | null): string {
 }
 
 /**
- * Returns operational date in Asia/Manila where each new day begins at 5:00 AM (not midnight).
- * Between 12:00 AM and 4:59 AM, operational date belongs to yesterday's shift.
- * At 5:00 AM, it rolls over to today's date.
+ * Returns operational date in Asia/Manila where each new day begins at 12:00 AM (midnight).
  */
 export function getTaskMapOperationalDateStr(date?: Date | string | null): string {
   const d = date ? (typeof date === 'string' ? new Date(date) : date) : new Date();
   if (isNaN(d.getTime())) return getManilaDateStr();
-
-  try {
-    const manilaHour = Number(
-      new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Manila',
-        hour: 'numeric',
-        hour12: false,
-      }).format(d)
-    );
-
-    // If before 5:00 AM Manila, operational date is yesterday
-    if (manilaHour < 5) {
-      const yesterday = new Date(d.getTime() - 24 * 60 * 60 * 1000);
-      return getManilaDateStr(yesterday);
-    }
-    return getManilaDateStr(d);
-  } catch {
-    return getManilaDateStr(d);
-  }
+  return getManilaDateStr(d);
 }
 
 /**
@@ -856,6 +836,43 @@ export async function getAvailableHistoryDates(): Promise<string[]> {
     .sort((a, b) => b.localeCompare(a));
 }
 
+const normalizeRolloverStatus = (status?: string | null) =>
+  (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+
+const NON_TASK_MAP_SECTION_STATUSES = new Set([
+  'CLOSED',
+  'DONE',
+  'COMPLETE',
+  'COMPLETED',
+  'RESOLVED',
+  'CANCELLED',
+  'CRM',
+  'WAITING',
+  'INREVIEW',
+  'TOREVIEW',
+  'REVIEW',
+  'CHECKING',
+  'INCHECKING',
+  'KYC',
+  'PINBOARD',
+]);
+
+const isNonTaskMapSectionStatus = (status?: string | null) =>
+  NON_TASK_MAP_SECTION_STATUSES.has(normalizeRolloverStatus(status));
+
+const parsePmReviewsSafe = (raw: any): any[] => {
+  if (Array.isArray(raw)) return [...raw];
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 export async function executeTaskMapDailyRollover(params?: {
   fromDate?: string;
   toDate?: string;
@@ -868,7 +885,7 @@ export async function executeTaskMapDailyRollover(params?: {
   newDate: string;
   retainedTasksCount: number;
 }> {
-  // If fromDate is not passed, use yesterday relative to 5:00 AM new day
+  // If fromDate is not passed, use yesterday relative to 12:00 AM midnight Manila new day
   const fromDate = (params?.fromDate || getManilaDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000))).trim().split('T')[0];
 
   // Default toDate is today in Manila
@@ -879,31 +896,188 @@ export async function executeTaskMapDailyRollover(params?: {
     toDate = nextD.toISOString().split('T')[0];
   }
 
-  // 1. Snapshot preservation for the previous date (if not provided, build from current TaskMap state)
-  let retainedTasksCount = 0;
-  let snapshotData = params?.snapshotPayload;
-  if (!snapshotData) {
-    // Query current tasks & pool to preserve yesterday's exact historical assignment
-    const currentTasks = await prisma.task.findMany({
+  // Fetch current tasks, records, users, and configs before mutating anything
+  const [
+    currentTasks,
+    taskMapRecs,
+    rawOptions,
+    shifts,
+    allUsers,
+    activeShift,
+    upworkClients,
+    upworkProjectClients,
+  ] = await Promise.all([
+    prisma.task.findMany({
       where: { status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] } },
       include: {
         list: { select: { id: true, name: true, folder: { select: { id: true, name: true } } } },
         assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        subtasks: {
+          include: {
+            User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
       },
+    }),
+    prisma.taskMapRecord.findMany(),
+    getStatusOptions(),
+    getShiftConfigs(),
+    prisma.user.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true,
+        roles: true,
+        team: { select: { id: true, name: true } },
+        systemRole: true,
+      },
+      orderBy: { name: 'asc' },
+    }),
+    getCurrentActiveShift(),
+    getUpworkClients(),
+    getUpworkProjectClients(),
+  ]);
+
+  const recMap = new Map(taskMapRecs.map((r) => [r.taskId, r]));
+
+  // 1. Snapshot preservation for the previous date (with full users/options/sessions so history renders user columns)
+  let retainedTasksCount = 0;
+  let snapshotData = params?.snapshotPayload;
+  if (!snapshotData) {
+    const options = rawOptions.filter((opt) => {
+      const up = opt.label.toUpperCase().trim();
+      return (
+        up !== 'UPWORK ACTIVE' &&
+        !up.startsWith('UPWORK |') &&
+        !up.startsWith('UPWORK|') &&
+        !up.startsWith('UPWORK_CLIENT:') &&
+        !up.startsWith('UPWORK_PROJECT_CLIENT:')
+      );
     });
-    const taskMapRecs = await prisma.taskMapRecord.findMany();
-    const recMap = new Map(taskMapRecs.map((r) => [r.taskId, r]));
-    const mappedTasks = currentTasks.map((t) => {
+
+    const shiftUsers = allUsers.map((u) => ({
+      ...u,
+      isAudit: (u.roles || []).some((r: string) => /audit/i.test(r)),
+    }));
+
+    const pmUsers = allUsers.filter((u) => {
+      if (u.systemRole === 'ADMIN') return true;
+      const rolesStr = (u.roles || []).join(' ').toLowerCase();
+      if (rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior')) {
+        return true;
+      }
+      const nameUp = (u.name || '').toUpperCase();
+      return nameUp.includes('CHE') || nameUp.includes('PAU') || nameUp.includes('HAN');
+    });
+
+    let maActiveSessions: Record<string, any> = {};
+    if (isRedisReady()) {
+      try {
+        const rawMaMap = await redis.hgetall('task_map:ma_active_sessions');
+        for (const [k, v] of Object.entries(rawMaMap || {})) {
+          try { maActiveSessions[k] = JSON.parse(v); } catch { }
+        }
+      } catch { }
+    }
+
+    const mappedTasks: any[] = [];
+    for (const t of currentTasks as any[]) {
       const rec = recMap.get(t.id);
-      return {
+      const reviewsList = parsePmReviewsSafe(rec?.pmReviews);
+      const progress = reviewsList.find((r: any) => r?.type === 'SHEET_PROGRESS') || null;
+      const upworkSession = reviewsList.find((r: any) => r?.type === 'UPWORK_SESSION' && r?.active) || null;
+      const folderName = (t.list?.folder?.name || '').toLowerCase();
+      const listName = (t.list?.name || '').toLowerCase();
+      const isAdminTask = folderName === 'admin' || folderName.includes('admin') || listName === 'admin';
+      const parentClosed = isClosedStatus(t.status);
+
+      mappedTasks.push({
         ...t,
-        taskMap: rec ? { id: rec.id, taskId: rec.taskId, statuses: rec.statuses, shift: rec.shift, shiftDate: rec.shiftDate } : null,
-      };
-    });
+        isClosed: parentClosed,
+        isAdminTask,
+        progress,
+        upworkSession,
+        upworkStartedAt: upworkSession?.startedAt || null,
+        taskMap: rec
+          ? {
+              id: rec.id,
+              taskId: rec.taskId,
+              statuses: rec.statuses,
+              shift: rec.shift,
+              shiftDate: rec.shiftDate,
+              handedOver: rec.handedOver,
+              pmReviews: rec.pmReviews,
+              rolloverCount: rec.rolloverCount,
+            }
+          : {
+              id: '',
+              taskId: t.id,
+              statuses: ['Available Task'],
+              shift: activeShift || 'ALL',
+              shiftDate: new Date(),
+              handedOver: false,
+              pmReviews: null,
+              rolloverCount: 0,
+            },
+      });
+    }
+
+    const isSnapshotPoolItem = (t: any) => {
+      if (t.isClosed || isClosedStatus(t.status)) return false;
+      const s = normalizeRolloverStatus(t.status);
+      const mapStatuses = (t.taskMap?.statuses || []).map((x: string) => normalizeRolloverStatus(x));
+      if (
+        s === 'WAITING' || s.includes('WAITING') ||
+        s === 'CRM' || s.includes('CRM') ||
+        s === 'INREVIEW' || s === 'TOREVIEW' || s === 'REVIEW' ||
+        s === 'CHECKING' || s === 'INCHECKING' ||
+        s === 'DAILY' || s.includes('DAILY') ||
+        s === 'WEEKLY' || s.includes('WEEKLY') ||
+        s === 'MONTHLY' || s.includes('MONTHLY') ||
+        s === 'RECURRING' || s.includes('RECURRING') ||
+        Boolean(t.recurringConfig) ||
+        mapStatuses.some((st: string) =>
+          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st)
+        )
+      ) {
+        return false;
+      }
+      const revs = parsePmReviewsSafe(t.taskMap?.pmReviews);
+      const isLive = Boolean(t.progress?.maName && !t.progress?.timeOut && t.progress?.timeIn);
+      const hasPmAssign = revs.some((r: any) => r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId && r?.assignedTo);
+      if (isLive || hasPmAssign) return false;
+      const handedOver = Boolean(t.taskMap?.handedOver) || mapStatuses.includes('HANDOVER');
+      if (t.assigneeId && !handedOver) return false;
+      return true;
+    };
+
+    const allClientsMap = new Map<string, { id: string; name: string }>();
+    for (const t of mappedTasks) {
+      if (!t.isAdminTask && t.list?.id && t.list?.name) {
+        allClientsMap.set(t.list.id, { id: t.list.id, name: t.list.name });
+      }
+    }
+
     snapshotData = {
-      tasks: mappedTasks.filter((t) => Boolean(t.assigneeId)),
-      availablePool: mappedTasks.filter((t) => !t.assigneeId),
+      tasks: mappedTasks.filter((t) => !t.isClosed),
+      availablePool: mappedTasks.filter(isSnapshotPoolItem),
+      allClients: Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      options,
+      shifts,
+      activeShift: activeShift || 'ALL',
+      allUsers,
+      shiftUsers,
+      pmUsers,
+      upworkClients,
+      upworkProjectClients,
+      maActiveSessions,
+      activeUpworkSessions: [],
       snapshotDate: fromDate,
     };
   }
@@ -911,88 +1085,175 @@ export async function executeTaskMapDailyRollover(params?: {
   await captureTaskMapDailySnapshot(fromDate, snapshotData, params?.actorId || 'system');
   retainedTasksCount = snapshotData.tasks?.length || 0;
 
-  // 2. Roll over active workflow tasks for the new 5:00 AM Task Map page
-  // Unassign active workflow tasks to return them to Available tasks, with ZERO status changes.
-  // The historical snapshot captures the previous date before rolling over for history purposes.
-  // No status gets changed at all during daily rollover (DAILY, WEEKLY, MONTHLY, and workflow statuses stay intact).
-  await prisma.$executeRawUnsafe(
-    `UPDATE "Task"
-     SET "assigneeId" = NULL,
-         "updatedAt" = NOW()
-     WHERE UPPER("status") NOT IN ('CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING')
-       AND "assigneeId" IS NOT NULL`
-  );
+  // 2. Clear held/unlinked last-inputted sheet sessions in Redis at 12:00 AM rollover
+  if (isRedisReady()) {
+    await redis.del('task_map:ma_active_sessions').catch(() => {});
+  }
 
-  // Update TaskMapRecord for all active tasks: advance shiftDate to new date, roll over back to Available Task, increment rolloverCount
+  // 3. 12:00 AM Daily Rollover for tasks in the Task Map section:
+  //    - Tasks actively being progressed by a user (IN PROGRESS or live sheet timeIn without timeOut, and NOT Paused) STAY with that user.
+  //    - All other assigned/queued Task Map tasks hand over to Available Tasks (statuses = ['Hand-over'], handedOver = true, assigneeId = null), with ZERO main status changes.
+  //    - Already-unassigned tasks in Available Tasks keep their existing sub-statuses untouched.
   const toDateObj = new Date(`${toDate}T08:00:00+08:00`);
-  const updateResult: any = await prisma.$executeRawUnsafe(
-    `UPDATE "TaskMapRecord" tmr
-     SET "shiftDate" = $1,
-         "statuses" = ARRAY['Available Task']::text[],
-         "rolloverCount" = tmr."rolloverCount" + 1,
-         "originShift" = COALESCE(tmr."originShift", tmr."shift"),
-         "originDate" = COALESCE(tmr."originDate", tmr."shiftDate"),
-         "handedOver" = false,
-         "updatedAt" = NOW()
-     FROM "Task" t
-     WHERE tmr."taskId" = t."id"
-       AND UPPER(t."status") NOT IN ('CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING')`,
-    toDateObj
-  );
+  let rolledCount = 0;
 
-  const rolledCount = typeof updateResult === 'number' ? updateResult : 0;
+  for (const t of currentTasks as any[]) {
+    if (isNonTaskMapSectionStatus(t.status)) continue;
 
-  // Strip PM_ASSIGNMENT and reset SUBTASK_STATE from rolled taskMapRecords so columns start clean and empty for the new day
-  try {
-    const activeAssignedSubtasks = await prisma.subtask.findMany({
-      where: {
-        completed: false,
-        OR: [{ assigneeId: { not: null } }, { assignees: { some: {} } }],
-      },
-      select: { id: true, status: true },
-    });
-    for (const st of activeAssignedSubtasks) {
-      const upper = (st.status || '').toUpperCase().trim();
-      if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING'].includes(upper)) {
-        continue;
+    const rec = recMap.get(t.id);
+    const reviewsList = parsePmReviewsSafe(rec?.pmReviews);
+    const hasPmAssignment = reviewsList.some(
+      (r: any) => r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId && r?.assignedTo
+    );
+    const hasAssignedUser = Boolean(
+      t.assigneeId || (Array.isArray(t.assignees) && t.assignees.length > 0) || hasPmAssignment
+    );
+
+    const isPaused = (rec?.statuses || []).some((s: string) => normalizeRolloverStatus(s) === 'PAUSED');
+    const isMainInProgress = normalizeRolloverStatus(t.status) === 'INPROGRESS';
+    const hasLiveSheetProgress = reviewsList.some(
+      (r: any) => r?.type === 'SHEET_PROGRESS' && Boolean(r?.timeIn) && !r?.timeOut && !r?.isMissingTime
+    );
+    const isActivelyProgressed = hasAssignedUser && !isPaused && (isMainInProgress || hasLiveSheetProgress);
+
+    if (hasAssignedUser && !isActivelyProgressed) {
+      // Hand over to Available Tasks without changing Task.status
+      await prisma.task.update({
+        where: { id: t.id },
+        data: {
+          assigneeId: null,
+          assignees: { set: [] },
+        },
+      });
+
+      const nowIso = new Date().toISOString();
+      let reviewsModified = false;
+      const cleanedReviews = reviewsList
+        .filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId))
+        .map((r: any) => {
+          if (r?.type === 'UPWORK_SESSION' && r.active) {
+            reviewsModified = true;
+            return { ...r, active: false, stoppedAt: r.stoppedAt || nowIso };
+          }
+          return r;
+        });
+
+      if (cleanedReviews.length !== reviewsList.length) {
+        reviewsModified = true;
       }
-      await prisma.subtask.update({
-        where: { id: st.id },
-        data: { assigneeId: null, assignees: { set: [] } },
+
+      if (isRedisReady()) {
+        await redis.hdel('task_map:upwork_active', t.id).catch(() => {});
+      }
+
+      await updateTaskMapRecord(t.id, {
+        statuses: ['Hand-over'],
+        handedOver: true,
+        shiftDate: toDateObj,
+        rolloverCount: (rec?.rolloverCount || 0) + 1,
+        originShift: rec?.originShift || rec?.shift || activeShift || 'DAY',
+        originDate: rec?.originDate || rec?.shiftDate || toDateObj,
+        ...(reviewsModified ? { pmReviews: cleanedReviews } : {}),
+      });
+
+      rolledCount++;
+    } else if (rec) {
+      // Keep active progressed tasks with their user and keep unassigned pool tasks' existing sub-statuses
+      await updateTaskMapRecord(t.id, {
+        shiftDate: toDateObj,
+        rolloverCount: (rec.rolloverCount || 0) + 1,
+        originShift: rec.originShift || rec.shift,
+        originDate: rec.originDate || rec.shiftDate,
       });
     }
+  }
 
-    const activeRecords = await prisma.taskMapRecord.findMany({
-      where: {
-        pmReviews: { not: null as any },
-        task: {
-          status: { notIn: ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED', 'CRM', 'WAITING'] },
-        },
+  // 4. Apply the same 12:00 AM handover rule to subtasks in the Task Map section
+  try {
+    const openSubtasks = await prisma.subtask.findMany({
+      where: { completed: false },
+      select: {
+        id: true,
+        taskId: true,
+        status: true,
+        assigneeId: true,
+        assignees: { select: { id: true } },
+        task: { select: { status: true } },
       },
+    });
+
+    const latestRecs = await prisma.taskMapRecord.findMany({
+      where: { pmReviews: { not: null as any } },
       select: { taskId: true, pmReviews: true },
     });
-    for (const r of activeRecords) {
-      let revs: any = r.pmReviews;
-      if (typeof revs === 'string') {
-        try { revs = JSON.parse(revs); } catch { revs = []; }
+    const latestReviewsByTask = new Map<string, any[]>(
+      latestRecs.map((r) => [r.taskId, parsePmReviewsSafe(r.pmReviews)])
+    );
+    const modifiedTaskIds = new Set<string>();
+
+    for (const st of openSubtasks) {
+      if (isNonTaskMapSectionStatus(st.task?.status) || isNonTaskMapSectionStatus(st.status)) {
+        continue;
       }
-      if (Array.isArray(revs) && revs.some((x: any) => x.type === 'PM_ASSIGNMENT' || x.type === 'SUBTASK_STATE')) {
-        const cleaned = revs
-          .filter((x: any) => x.type !== 'PM_ASSIGNMENT')
-          .map((x: any) =>
-            x.type === 'SUBTASK_STATE'
-              ? { ...x, statuses: ['Available Task'], handedOver: false, updatedAt: new Date().toISOString() }
-              : x
-          );
-        await prisma.$executeRawUnsafe(
-          `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
-          JSON.stringify(cleaned),
-          r.taskId
+
+      const taskRevs = latestReviewsByTask.get(st.taskId) || [];
+      const hasSubPmAssignment = taskRevs.some(
+        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id && r?.assignedTo
+      );
+      const hasSubAssignee = Boolean(
+        st.assigneeId || (Array.isArray(st.assignees) && st.assignees.length > 0) || hasSubPmAssignment
+      );
+
+      if (!hasSubAssignee) continue;
+
+      const subState = taskRevs.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id);
+      const isSubPaused = Array.isArray(subState?.statuses) &&
+        subState.statuses.some((s: string) => normalizeRolloverStatus(s) === 'PAUSED');
+      const isSubInProgress = normalizeRolloverStatus(st.status) === 'INPROGRESS';
+      const isSubActivelyProgressed = !isSubPaused && isSubInProgress;
+
+      if (!isSubActivelyProgressed) {
+        if (st.assigneeId || (st.assignees && st.assignees.length > 0)) {
+          await prisma.subtask.update({
+            where: { id: st.id },
+            data: { assigneeId: null, assignees: { set: [] } },
+          });
+        }
+
+        const nextRevs = taskRevs.filter(
+          (r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id)
         );
+        const subIdx = nextRevs.findIndex(
+          (r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id
+        );
+        const nextSubState = {
+          type: 'SUBTASK_STATE',
+          subtaskId: st.id,
+          statuses: ['Hand-over'],
+          handedOver: true,
+          updatedAt: new Date().toISOString(),
+        };
+        if (subIdx !== -1) {
+          nextRevs[subIdx] = nextSubState;
+        } else {
+          nextRevs.push(nextSubState);
+        }
+        latestReviewsByTask.set(st.taskId, nextRevs);
+        modifiedTaskIds.add(st.taskId);
+        rolledCount++;
       }
     }
+
+    for (const parentTaskId of modifiedTaskIds) {
+      const updatedRevs = latestReviewsByTask.get(parentTaskId) || [];
+      await prisma.$executeRawUnsafe(
+        `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+        JSON.stringify(updatedRevs),
+        parentTaskId
+      );
+    }
   } catch (err: any) {
-    logger.warn({ err }, 'Failed to strip PM_ASSIGNMENT during daily rollover');
+    logger.warn({ err }, 'Failed to process subtask rollover during 12:00 AM daily rollover');
   }
 
   // Log daily rollover in AuditLog
@@ -1008,7 +1269,7 @@ export async function executeTaskMapDailyRollover(params?: {
         toDate,
         rolledCount,
         retainedTasksCount,
-        note: '5:00 AM daily rollover: previous date preserved in snapshot for history; active tasks rolled back to Available tasks with zero status changes',
+        note: '12:00 AM daily rollover: previous date preserved in snapshot; non-progressed Task Map tasks handed over to Available tasks while active IN PROGRESS tasks stay with their user',
         timestamp: new Date().toISOString(),
       },
     },

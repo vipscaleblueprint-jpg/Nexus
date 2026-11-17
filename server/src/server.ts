@@ -35,7 +35,7 @@ import { taskMapRouter } from './routes/taskMap.routes';
 // Import workers to initialize them
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
-import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB } from './workers/dailyRollover.worker';
+import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TASK_MAP_DAILY_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
@@ -51,6 +51,9 @@ const server = http.createServer(app);
       if (job.name === 'checkRollovers' && job.pattern !== '0 5 * * *') {
         await dailyRolloverQueue.removeRepeatableByKey(job.key);
       }
+      if (job.name === TASK_MAP_DAILY_ROLLOVER_JOB && job.pattern !== '0 0 * * *') {
+        await dailyRolloverQueue.removeRepeatableByKey(job.key);
+      }
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up stale daily rollover repeatable jobs');
@@ -58,10 +61,19 @@ const server = http.createServer(app);
 
   await dailyRolloverQueue.add('checkRollovers', {}, {
     repeat: {
-      pattern: '0 5 * * *', // Every day at 5:00 AM Manila Time
+      pattern: '0 5 * * *', // Every day at 5:00 AM Manila Time (Docs & Recurring)
       tz: 'Asia/Manila',
     },
     jobId: 'daily-rollover-5am',
+  });
+
+  // Task Map Daily Rollover: Every day at 12:00 AM (midnight) Manila Time
+  await dailyRolloverQueue.add(TASK_MAP_DAILY_ROLLOVER_JOB, {}, {
+    repeat: {
+      pattern: '0 0 * * *',
+      tz: 'Asia/Manila',
+    },
+    jobId: 'task-map-daily-rollover-midnight',
   });
 
   // Safety net for inactive MA shift duty end & inactivity handover (runs every 5 minutes)

@@ -82,6 +82,79 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         let tasks = existingSnapshot.tasks || [];
         let availablePool = existingSnapshot.availablePool || [];
 
+        // Hydrate metadata if snapshot was captured without full user/option/shift context
+        let snapshotAllUsers = existingSnapshot.allUsers || [];
+        let snapshotShiftUsers = existingSnapshot.shiftUsers || [];
+        let snapshotPmUsers = existingSnapshot.pmUsers || [];
+        let snapshotOptions = existingSnapshot.options || [];
+        let snapshotShifts = existingSnapshot.shifts || [];
+
+        const isLegacyBareSnapshot = snapshotAllUsers.length === 0;
+        if (isLegacyBareSnapshot) {
+          const [dbUsers, dbRawOptions, dbShifts] = await Promise.all([
+            prisma.user.findMany({
+              where: { isActive: true },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true,
+                roles: true,
+                team: { select: { id: true, name: true } },
+                systemRole: true,
+              },
+              orderBy: { name: 'asc' },
+            }),
+            getStatusOptions(),
+            getShiftConfigs(),
+          ]);
+
+          snapshotAllUsers = dbUsers;
+          snapshotShiftUsers = dbUsers.map((u) => ({
+            ...u,
+            isAudit: isAuditorRole(u.roles),
+          }));
+          snapshotPmUsers = dbUsers.filter((u) => {
+            if (u.systemRole === 'ADMIN') return true;
+            const rolesStr = (u.roles || []).join(' ').toLowerCase();
+            return rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior');
+          });
+          snapshotOptions = dbRawOptions.filter((opt) => {
+            const up = opt.label.toUpperCase().trim();
+            return (
+              up !== 'UPWORK ACTIVE' &&
+              !up.startsWith('UPWORK |') &&
+              !up.startsWith('UPWORK|') &&
+              !up.startsWith('UPWORK_CLIENT:') &&
+              !up.startsWith('UPWORK_PROJECT_CLIENT:')
+            );
+          });
+          snapshotShifts = dbShifts;
+
+          // Filter out non-Available-pool statuses from legacy snapshots that stored unfiltered unassigned tasks
+          availablePool = availablePool.filter((t: any) => {
+            const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+            const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
+              x.trim().toUpperCase().replace(/[\s_-]+/g, '')
+            );
+            if (isClosedStatus(s)) return false;
+            return !(
+              s === 'WAITING' || s.includes('WAITING') ||
+              s === 'CRM' || s.includes('CRM') ||
+              s === 'INREVIEW' || s === 'TOREVIEW' || s === 'REVIEW' ||
+              s === 'CHECKING' || s === 'INCHECKING' ||
+              s === 'DAILY' || s.includes('DAILY') ||
+              s === 'WEEKLY' || s.includes('WEEKLY') ||
+              s === 'MONTHLY' || s.includes('MONTHLY') ||
+              s === 'RECURRING' || s.includes('RECURRING') ||
+              Boolean(t.recurringConfig) ||
+              mapStatuses.some((st: string) =>
+                ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st)
+              )
+            );
+          });
+        }
+
         if (searchQuery) {
           const filterFn = (task: any) => {
             const titleMatch = (task.title || '').toLowerCase().includes(searchQuery);
@@ -116,18 +189,19 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           tasks,
           availablePool,
           allClients: existingSnapshot.allClients || [],
-          options: existingSnapshot.options || [],
-          shifts: existingSnapshot.shifts || [],
+          options: snapshotOptions,
+          shifts: snapshotShifts,
           statusCounts: existingSnapshot.statusCounts || {},
           overdueCount: existingSnapshot.overdueCount || 0,
           unassignedCount: existingSnapshot.unassignedCount || 0,
           activeShift: existingSnapshot.activeShift || 'DAY',
           currentShift,
-          pmUsers: existingSnapshot.pmUsers || [],
-          allUsers: existingSnapshot.allUsers || [],
-          shiftUsers: existingSnapshot.shiftUsers || [],
+          pmUsers: snapshotPmUsers,
+          allUsers: snapshotAllUsers,
+          shiftUsers: snapshotShiftUsers,
           activeUpworkSessions: existingSnapshot.activeUpworkSessions || [],
           upworkClients: existingSnapshot.upworkClients || [],
+          upworkProjectClients: existingSnapshot.upworkProjectClients || [],
           maActiveSessions: existingSnapshot.maActiveSessions || {},
         };
         await setCache(cacheKey, historyPayload, 3600);

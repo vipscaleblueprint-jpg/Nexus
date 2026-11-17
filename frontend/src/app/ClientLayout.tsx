@@ -583,10 +583,14 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('audit_shifts:updated', { detail: data }));
     });
 
+    s.on('task_map:daily_rollover', (data) => {
+      window.dispatchEvent(new CustomEvent('task_map:daily_rollover', { detail: data }));
+    });
+
     s.on('task_map:ma_progress_changed', (data) => {
       window.dispatchEvent(new CustomEvent('task_map:ma_progress_changed', { detail: data }));
       if (data?.maName) {
-        useAppStore.getState().updateMaActiveSession(data.maName, data.active === false ? null : data);
+        useAppStore.getState().updateMaActiveSession(data.maName, data?.cleared ? null : data);
       }
     });
 
@@ -598,6 +602,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('spaces:reordered', () => {
       useAppStore.getState().loadSpaces();
       window.dispatchEvent(new CustomEvent('spaces:reordered'));
+    });
+
+    s.on('spaces_updated', () => {
+      useAppStore.getState().loadSpaces();
     });
 
     const handleDraftEvent = () => {

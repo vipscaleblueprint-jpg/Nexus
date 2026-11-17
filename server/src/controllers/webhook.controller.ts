@@ -13,6 +13,7 @@ import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractCli
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
 import { aiAuditExternalId, isReviewStatus } from '../utils/auditChecklist';
 import { autoAssignAudits } from '../services/auditAutoAssign';
+import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 
 const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
@@ -135,24 +136,16 @@ export const syncClients = async (req: Request, res: Response) => {
     const createdLists = [];
 
     for (const client of data.clients) {
-      // Check if List exists for this client
-      let list = await prisma.list.findUnique({
-        where: { externalId: client.id }
+      // Match by VIPScale externalId first, otherwise fall back to name across all folders
+      // (so clients moved to Dormant Clients or other folders are linked instead of duplicated).
+      let list = await findExistingListByIdentifiers({
+        externalId: client.id,
+        name: client.name,
+        preferredFolderId: folder.id,
       });
 
-      if (!list) {
-        // Fallback to check if it exists by name (for existing lists before externalId was added)
-        list = await prisma.list.findFirst({
-          where: { name: { equals: client.name.trim(), mode: 'insensitive' }, folderId: folder.id, externalId: null }
-        });
-
-        if (list) {
-          // Update the existing list with the new externalId
-          list = await prisma.list.update({
-            where: { id: list.id },
-            data: { externalId: client.id }
-          });
-        }
+      if (list && !list.externalId) {
+        list = await linkMissingListIdentifiers(list, { externalId: client.id });
       }
 
       if (!list) {
@@ -311,9 +304,23 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
   try {
     const { clients, prompt, priority, assignee, task_link, listed_by, audits } = req.body;
 
-    const clientName = clients?.name;
+    const clientName = typeof clients?.name === 'string' ? clients.name.trim() : '';
     if (!clientName) {
       return res.status(400).json({ error: 'Client name is required in GalaxyTaskPayload.clients.name' });
+    }
+
+    // Deduplicate by ClickUp task link BEFORE resolving/creating any client list so retries
+    // or resyncs for existing tasks (e.g. in Startups/Dormant Clients) never leak orphan boards.
+    if (typeof task_link === 'string' && task_link.trim()) {
+      const existingByLink = await findTaskByClickUpLink(task_link);
+      if (existingByLink) {
+        return res.status(200).json({
+          success: true,
+          task: existingByLink,
+          isDuplicate: true,
+          message: `Task "${existingByLink.title}" already exists`,
+        });
+      }
     }
 
     const typedTitle = typeof req.body.title === 'string' ? req.body.title.trim() : '';
@@ -337,39 +344,40 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     // Look for the client's specific List. Galaxy sends the client's ClickUp list id as
     // clients.id, so prefer the list mapped to it: the client's Galaxy name can differ
     // from the list name (e.g. "Stacy Brogan" vs "Danni Pomplun | Stacy Brogan").
+    // Fall back to name across ALL folders (preferring Client Dashboard, then non-Dormant
+    // folders, then Dormant Clients) so moved lists are never duplicated into Client Dashboard.
     const clientId = clients?.id != null ? String(clients.id).trim() : '';
-    let list =
-      (clientId
-        ? await prisma.list.findFirst({
-            where: { OR: [{ clickUpListId: clientId }, { externalId: `cu:${clientId}` }] },
-          })
-        : null) ??
-      (await prisma.list.findFirst({
-        where: {
-          name: { equals: clientName, mode: 'insensitive' },
-          folderId: folder.id
-        }
-      }));
+    let list = await findExistingListByIdentifiers({
+      clickUpListId: clientId,
+      name: clientName,
+      preferredFolderId: folder.id,
+    });
 
-    // If client list doesn't exist, create it on the fly
+    if (list && clientId && !list.clickUpListId) {
+      list = await linkMissingListIdentifiers(list, { clickUpListId: clientId });
+    }
+
+    // If client list doesn't exist anywhere, create it on the fly
     if (!list) {
       list = await prisma.list.create({
         data: {
           name: clientName,
           folderId: folder.id,
           spaceId: folder.spaceId,
+          ...(clientId ? { clickUpListId: clientId } : {}),
+          customGroups: ['Client Details', 'Recurring', 'Workflow & Progress', 'Management', 'Closed Task'],
         }
       });
-      // Seed default statuses
-      for (const status of DEFAULT_CLIENT_STATUSES) {
-        await prisma.listStatus.create({
-          data: {
-            name: status.name,
-            color: status.color,
-            listId: list.id,
-          }
-        });
-      }
+      await prisma.listStatus.createMany({
+        data: DEFAULT_CLIENT_STATUSES.map((status) => ({
+          name: status.name,
+          color: status.color,
+          groupName: status.groupName,
+          listId: list!.id,
+        })),
+        skipDuplicates: true,
+      });
+      await invalidateCache('spaces:all', 'dashboard:all', 'lists:all');
       io.emit('spaces_updated');
     }
 
@@ -488,7 +496,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
           assigneeId: primaryAssigneeId,
           assignees: { connect: finalAssigneeIds.map(id => ({ id })) }
         } : {}),
-        priority: priority ? priority.toUpperCase() : 'MEDIUM',
+        priority: mappedPriority,
         status: firstStatus?.name || 'Pending',
         externalId: task_link || null
       }

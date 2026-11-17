@@ -33,6 +33,9 @@ import {
   isTaskOnHold,
   sortAvailablePoolTasks,
   groupTasksWithSubtasks,
+  getDotColor,
+  resolveTaskStatusColor,
+  hexToRgba,
 } from './TaskMapCardControls';
 import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
@@ -95,28 +98,6 @@ interface Props {
   isHistory?: boolean;
   search?: string;
 }
-
-const getDotColor = (status?: string) => {
-  if (!status) return '#3b82f6';
-  const up = status.toUpperCase();
-  const hexMap: Record<string, string> = {
-    'IN PROGRESS': '#D04A7C',
-    'IN_PROGRESS': '#D04A7C',
-    PENDING: '#D29A2A',
-    REVISION: '#5B6BD6',
-    WAITING: '#D9534F',
-    'IN REVIEW': '#D97B3A',
-    IN_REVIEW: '#D97B3A',
-    CHECKING: '#A35DB8',
-    CRM: '#22A3AE',
-    CLOSED: '#2FA37A',
-    DONE: '#2FA37A',
-    KYC: '#3A8F55',
-    'PIN BOARD': '#1F8A6E',
-    'ON-HOLD': '#8A8F98',
-  };
-  return hexMap[up] || '#3b82f6';
-};
 
 // Priority ranking for user columns:
 // 1. Instruction -> 2. Designers -> 3. UI/UX -> 4. Funnel -> 5. Auditor -> 6. Other
@@ -2118,12 +2099,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       !isStaleLiveSession(task.progress?.timeIn, task.progress?.date, boardTime)
                     );
 
+                    const taskStatusHex = resolveTaskStatusColor(task.status || 'IN PROGRESS', task.listId || task.list?.id);
+                    const isCustomLiveBorder = isLive && !(isUpwork && isLive) && !isMissingTime;
                     const cardBorderClass = isUpwork && isLive
                       ? 'border-indigo-500/70 ring-1 ring-indigo-500/20 shadow-[0_0_12px_rgba(99,102,241,0.15)] dark:border-white/60 dark:ring-white/20 dark:shadow-[0_0_12px_rgba(255,255,255,0.08)]'
                       : isMissingTime
                         ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
                         : isLive
-                          ? 'border-[#D04A7C]/80 ring-1 ring-[#D04A7C]/30 shadow-[0_0_14px_rgba(208,74,124,0.15)]'
+                          ? ''
                           : isSubtask && hasParentInColumn
                             ? 'border-indigo-500/35 hover:border-indigo-400/60 shadow-md'
                             : isSeparatedSubtask
@@ -2143,7 +2126,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               aria-hidden="true"
                             />
                           )}
-                          <div className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}>
+                          <div
+                            className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}
+                            style={
+                              isCustomLiveBorder
+                                ? {
+                                    borderColor: hexToRgba(taskStatusHex, 0.8),
+                                    boxShadow: `0 0 0 1px ${hexToRgba(taskStatusHex, 0.3)}, 0 0 14px ${hexToRgba(taskStatusHex, 0.15)}`,
+                                  }
+                                : undefined
+                            }
+                          >
                             {/* Left: Task Info (Task title only in title line, circle dot beside bulletin below) */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                               {/* Client Name + Subtask Marker */}
@@ -2170,8 +2163,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                     {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
                                   </span>
                                 ) : isLive ? (
-                                  <span className="text-[#D04A7C] font-semibold truncate flex items-center gap-1">
-                                    <span className="size-1.5 rounded-full bg-[#D04A7C] animate-ping shrink-0" />
+                                  <span
+                                    className="font-semibold truncate flex items-center gap-1"
+                                    style={{ color: taskStatusHex }}
+                                  >
+                                    <span
+                                      className="size-1.5 rounded-full animate-ping shrink-0"
+                                      style={{ backgroundColor: taskStatusHex }}
+                                    />
                                     {task.progress?.client || task.list?.name || 'General'}
                                   </span>
                                 ) : isMissingTime ? (
@@ -2582,13 +2581,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     !effectiveProgress?.isMissingTime &&
                     (task.isAssumptionBlock || !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, boardTime))
                   );
+                  const taskStatusHex = resolveTaskStatusColor(task.status || 'IN PROGRESS', task.listId || task.list?.id);
+                  const isCustomLiveWorkingBorder = isLiveWorking && !(isUpwork && isLiveWorking) && !isMissingTime;
                   // Only highlight tasks that are actively live working (with a counting timer)
                   const cardBorderClass = isUpwork && isLiveWorking
                     ? 'border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.22)] animate-[pulse_3s_ease-in-out_infinite] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.22)]'
                     : isMissingTime
                       ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
                       : isLiveWorking
-                        ? 'border-[#D04A7C] ring-2 ring-[#D04A7C]/50 shadow-[0_0_20px_rgba(208,74,124,0.35)] animate-[pulse_3s_ease-in-out_infinite]'
+                        ? 'animate-[pulse_3s_ease-in-out_infinite]'
                         : isSubtask && hasParentInColumn
                           ? 'border-indigo-500/35 hover:border-indigo-400/60 shadow-sm'
                           : isSeparatedSubtask
@@ -2604,7 +2605,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             aria-hidden="true"
                           />
                         )}
-                        <div className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}>
+                        <div
+                          className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}
+                          style={
+                            isCustomLiveWorkingBorder
+                              ? {
+                                  borderColor: taskStatusHex,
+                                  boxShadow: `0 0 0 2px ${hexToRgba(taskStatusHex, 0.5)}, 0 0 20px ${hexToRgba(taskStatusHex, 0.35)}`,
+                                }
+                              : undefined
+                          }
+                        >
                           {/* LEFT: Task Info (Title only in title line, circle dot beside bulletin below) */}
                           <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                             {/* Client Name + Subtask Marker */}
@@ -2637,10 +2648,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                       {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
                                     </span>
                                   ) : isLiveWorking ? (
-                                    <span className="text-[#D04A7C] font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
+                                    <span
+                                      className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate"
+                                      style={{ color: taskStatusHex }}
+                                    >
                                       <span className="relative flex size-2 shrink-0">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D04A7C] opacity-75" />
-                                        <span className="relative inline-flex rounded-full size-2 bg-[#D04A7C]" />
+                                        <span
+                                          className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                                          style={{ backgroundColor: taskStatusHex }}
+                                        />
+                                        <span
+                                          className="relative inline-flex rounded-full size-2"
+                                          style={{ backgroundColor: taskStatusHex }}
+                                        />
                                       </span>
                                       {displayClientName}
                                     </span>
@@ -2867,23 +2887,35 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           const isColumnLiveWorking = Boolean(
                             activeInProgTask && isTaskLiveWorking(activeInProgTask, user.name, boardTime)
                           );
+                          const slotStatusLabel = activeInProgTask
+                            ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
+                            : 'In Progress';
+                          const slotStatusColor = activeInProgTask
+                            ? resolveTaskStatusColor(slotStatusLabel, activeInProgTask.listId || activeInProgTask.list?.id)
+                            : '#D04A7C';
                           return (
                             <>
                               <div className="flex items-center gap-1.5">
                                 <span
-                                  className={`size-2 rounded-full ${isColumnLiveWorking ? 'bg-[#D04A7C] animate-pulse' : 'bg-zinc-600'
-                                    }`}
+                                  className={`size-2 rounded-full ${isColumnLiveWorking ? 'animate-pulse' : 'bg-zinc-600'}`}
+                                  style={isColumnLiveWorking ? { backgroundColor: slotStatusColor } : undefined}
                                 />
                                 <span
-                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? 'text-[#D04A7C]' : 'text-zinc-400'
-                                    }`}
+                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? '' : 'text-zinc-400'}`}
+                                  style={isColumnLiveWorking ? { color: slotStatusColor } : undefined}
                                 >
-                                  In Progress
+                                  {slotStatusLabel}
                                 </span>
                               </div>
                               {isColumnLiveWorking && (
-                                <span className="text-[10px] font-mono text-[#D04A7C] font-semibold flex items-center gap-1">
-                                  <span className="size-1.5 rounded-full bg-[#D04A7C] animate-ping shrink-0" />
+                                <span
+                                  className="text-[10px] font-mono font-semibold flex items-center gap-1"
+                                  style={{ color: slotStatusColor }}
+                                >
+                                  <span
+                                    className="size-1.5 rounded-full animate-ping shrink-0"
+                                    style={{ backgroundColor: slotStatusColor }}
+                                  />
                                   Live Working
                                 </span>
                               )}

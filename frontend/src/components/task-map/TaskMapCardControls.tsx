@@ -6,7 +6,7 @@ import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem, isTaskMapItemOnHold } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
@@ -47,6 +47,78 @@ export const getDotColor = (status?: string) => {
     'ON-HOLD': '#8A8F98',
   };
   return hexMap[up] || '#3b82f6';
+};
+
+/**
+ * Converts a 3- or 6-digit hex color string into an `rgba(r, g, b, alpha)` CSS value.
+ */
+export const hexToRgba = (hex: string, alpha: number): string => {
+  const clean = (hex || '').trim().replace(/^#/, '');
+  let full = clean;
+  if (clean.length === 3) {
+    full = clean.split('').map((c) => c + c).join('');
+  }
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) {
+    return hex;
+  }
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+interface ListStatusLike {
+  name?: string;
+  status?: string;
+  title?: string;
+  color?: string | null;
+}
+
+interface StoreListEntryLike {
+  list?: {
+    id?: string;
+    statuses?: Array<ListStatusLike | string>;
+  };
+}
+
+/**
+ * Resolves the canonical hex color for a task status, checking custom DB list statuses first
+ * (from provided listStatuses, listStatusCache, or Zustand allLists), then STATUS_COLORS / getDotColor.
+ */
+export const resolveTaskStatusColor = (
+  status?: string | null,
+  listId?: string | null,
+  listStatuses?: Array<ListStatusLike | string>
+): string => {
+  const clean = (status || '').trim();
+  if (!clean) return getDotColor(undefined);
+
+  const upper = clean.toUpperCase();
+  let candidateStatuses: Array<ListStatusLike | string> | undefined =
+    listStatuses && listStatuses.length > 0 ? listStatuses : undefined;
+  if (!candidateStatuses && listId && listId !== 'general') {
+    const cached = getCachedListStatuses(listId) as Array<ListStatusLike | string> | null;
+    if (cached && cached.length > 0) {
+      candidateStatuses = cached;
+    } else {
+      const storeLists = (useAppStore.getState().allLists || []) as StoreListEntryLike[];
+      const matchedList = storeLists.find((entry) => entry?.list?.id === listId);
+      if (Array.isArray(matchedList?.list?.statuses) && matchedList.list.statuses.length > 0) {
+        candidateStatuses = matchedList.list.statuses;
+      }
+    }
+  }
+
+  const customObj = candidateStatuses?.find(
+    (ls): ls is ListStatusLike =>
+      typeof ls === 'object' && ls !== null && (ls.name || ls.status || ls.title)?.toUpperCase() === upper
+  );
+  if (customObj?.color) {
+    return getHexColor(customObj.color);
+  }
+
+  const tokenHex = STATUS_COLORS[upper]?.match(/\[(.*?)\]/)?.[1];
+  return tokenHex || getDotColor(clean);
 };
 
 export const isTaskInProgress = (task: TaskMapItem) => {
@@ -614,22 +686,13 @@ export const CardStatusDropdown: React.FC<{
   const clean = (currentStatus || 'In progress').trim();
   const isClosed = isClosedStatus(clean);
   const isKyc = clean.toUpperCase() === 'KYC';
-  const activeCustomObj = fetchedStatuses?.find((ls: any) =>
-    (typeof ls === 'object') && (ls.name || ls.status || ls.title)?.toUpperCase() === clean.toUpperCase()
-  );
-  const triggerDotColor = activeCustomObj?.color ? getHexColor(activeCustomObj.color) : getDotColor(clean);
+  const triggerDotColor = resolveTaskStatusColor(clean, listId, fetchedStatuses);
 
   const renderItem = (s: string) => {
     const isSelected = clean.toUpperCase() === s.toUpperCase();
-    const customObj = fetchedStatuses?.find((ls: any) =>
-      (typeof ls === 'object') && (ls.name || ls.status || ls.title)?.toUpperCase() === s.toUpperCase()
-    );
     const isClosedItem = isClosedStatus(s);
     const isKycItem = s.toUpperCase() === 'KYC';
-    const statusColorHex = STATUS_COLORS[s.toUpperCase()]?.match(/\[(.*?)\]/)?.[1];
-    const itemColor = customObj?.color
-      ? getHexColor(customObj.color)
-      : (statusColorHex || getDotColor(s));
+    const itemColor = resolveTaskStatusColor(s, listId, fetchedStatuses);
 
     return (
       <button
@@ -1098,15 +1161,29 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
       );
     }
 
-    // Typical In-Progress task: Highlight the time badge in canonical #D04A7C magenta!
+    // Non-Upwork live task: highlight the time badge using the task's DB status color
+    const statusLabel = toCanonicalTaskStatus(task.status) || task.status || 'IN PROGRESS';
+    const statusHex = resolveTaskStatusColor(statusLabel, task.listId || task.list?.id);
     return (
       <div
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D04A7C]/15 border border-[#D04A7C]/40 text-[#D04A7C] font-bold text-[10px] shadow-[0_0_8px_rgba(208,74,124,0.12)] select-none truncate max-w-full"
-        title={`In progress since ${prog.timeIn} (${elapsed} elapsed)`}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-bold text-[10px] select-none truncate max-w-full"
+        style={{
+          backgroundColor: hexToRgba(statusHex, 0.15),
+          borderColor: hexToRgba(statusHex, 0.4),
+          color: statusHex,
+          boxShadow: `0 0 8px ${hexToRgba(statusHex, 0.12)}`,
+        }}
+        title={`${statusLabel} since ${prog.timeIn} (${elapsed} elapsed)`}
       >
         <span className="relative flex size-1.5 shrink-0">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D04A7C] opacity-75" />
-          <span className="relative inline-flex rounded-full size-1.5 bg-[#D04A7C]" />
+          <span
+            className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+            style={{ backgroundColor: statusHex }}
+          />
+          <span
+            className="relative inline-flex rounded-full size-1.5"
+            style={{ backgroundColor: statusHex }}
+          />
         </span>
         <span className="font-mono truncate">{liveText}</span>
       </div>

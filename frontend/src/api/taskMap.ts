@@ -126,6 +126,7 @@ export interface TaskMapItem {
   isClosed: boolean;
   isAdminTask?: boolean;
   isAssumptionBlock?: boolean;
+  linkedTaskId?: string | null;
   launchMeta?: LaunchMeta | null;
   effectiveLaunchDate?: string | null;
   isLaunchDate?: boolean;
@@ -832,6 +833,28 @@ export const taskMapApi = {
   getUpworkActiveSessions: async (): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
     return apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>(`/api/task-map/upwork-active?_t=${Date.now()}`);
   },
+
+  getTaskDescription: async (params: {
+    taskId?: string | null;
+    title?: string | null;
+    client?: string | null;
+  }): Promise<{
+    success: boolean;
+    taskId: string | null;
+    listId: string | null;
+    listName?: string | null;
+    status: string | null;
+    priority: string | null;
+    subStatuses?: string[];
+    description: string | null;
+  }> => {
+    const q = new URLSearchParams();
+    if (params.taskId) q.set('taskId', params.taskId);
+    if (params.title) q.set('title', params.title);
+    if (params.client) q.set('client', params.client);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return apiClient(`/api/task-map/task-description${qs}`);
+  },
 };
 
 // ===========================================================================
@@ -1045,6 +1068,11 @@ export function createEmptyUserBlock(params?: {
   client?: string | null;
   taskTitle?: string | null;
   status?: string | null;
+  taskStatus?: string | null;
+  priority?: string | null;
+  subStatuses?: string[] | null;
+  taskId?: string | null;
+  listId?: string | null;
   isUpwork?: boolean;
   rowNumber?: number;
 }): TaskMapItem {
@@ -1056,31 +1084,37 @@ export function createEmptyUserBlock(params?: {
     rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
   const assumedDay = params?.day || new Date().toISOString().split('T')[0];
   const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
+  const effectiveStatus = params?.taskStatus || assumedStatus;
+  const effectiveListId =
+    params?.listId && params.listId !== 'general' ? params.listId : 'general';
+  const effectiveSubStatuses = Array.isArray(params?.subStatuses)
+    ? params.subStatuses
+    : getDefaultTaskMapSubStatuses(effectiveStatus);
   const id = `general-slot-${params?.userId || 'user'}`;
 
   return {
     id,
     title: assumedTitle,
-    description: 'Auto-generated assumption block for latest daily schedule input',
-    priority: 'NORMAL',
-    listId: 'general',
-    status: assumedStatus,
+    description: null,
+    priority: params?.priority || 'NORMAL',
+    listId: effectiveListId,
+    status: effectiveStatus,
     dueDate: null,
     startDate: null,
     position: -1,
     assigneeId: params?.userId || null,
     assigneeRoleRestrictions: [],
     teamAssignAccessRole: null,
-    list: { id: 'general', name: assumedClient },
+    list: { id: effectiveListId, name: assumedClient },
     assignee: params?.userId ? { id: params.userId, name: params.userName || 'Team Member' } : null,
     assignees: params?.userId ? [{ id: params.userId, name: params.userName || 'Team Member' }] : [],
     creator: null,
     subtasks: [],
     taskMap: {
       id: `map-${id}`,
-      taskId: id,
+      taskId: params?.taskId || id,
       subtaskId: null,
-      statuses: [assumedStatus],
+      statuses: effectiveSubStatuses,
       shift: 'DAY',
       shiftDate: assumedDay,
       rolloverCount: 0,
@@ -1099,6 +1133,7 @@ export function createEmptyUserBlock(params?: {
     isClosed: false,
     isAdminTask: false,
     isAssumptionBlock: true,
+    linkedTaskId: params?.taskId || null,
     progress: {
       type: 'SHEET_PROGRESS',
       timeIn: params?.timeIn || null,

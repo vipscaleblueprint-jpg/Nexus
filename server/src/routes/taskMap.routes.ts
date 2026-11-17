@@ -22,6 +22,7 @@ import {
   getUpworkClientsHandler,
   updateUpworkClientsHandler,
   getActiveUpworkSessionsHandler,
+  getTaskMapTaskDescription,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -55,3 +56,4 @@ taskMapRouter.get('/history-dates', getHistoryDates);
 taskMapRouter.patch('/tasks/:id/meta', updateTaskMeta);
 taskMapRouter.patch('/tasks/:id/launch', updateTaskLaunchMeta);
 taskMapRouter.get('/tasks/:id/timeline', getTaskTimeline);
+taskMapRouter.get('/task-description', getTaskMapTaskDescription);

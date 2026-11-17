@@ -1,11 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { AlignLeft, X, FileText } from 'lucide-react';
+import { AlignLeft, X, FileText, Loader2 } from 'lucide-react';
 import { sanitizeHtml } from '@/components/docs/docTransfer';
+import { taskMapApi } from '@/api/taskMap';
+
+interface ResolvedTaskMeta {
+  taskId?: string | null;
+  listId?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  subStatuses?: string[];
+}
 
 interface Props {
   description?: string | null;
   taskTitle: string;
+  taskId?: string | null;
+  clientName?: string | null;
+  lazyFetch?: boolean;
+  onResolvedTaskMeta?: (meta: ResolvedTaskMeta) => void;
 }
 
 /** True once the trigger is scrolled out of view of a scrolling ancestor (e.g. a TaskMap column or board). */
@@ -20,12 +33,65 @@ function isScrolledOutOfView(el: HTMLElement) {
   return false;
 }
 
-export const TaskDescriptionButton: React.FC<Props> = ({ description, taskTitle }) => {
+export const TaskDescriptionButton: React.FC<Props> = ({
+  description,
+  taskTitle,
+  taskId,
+  clientName,
+  lazyFetch = false,
+  onResolvedTaskMeta,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const initialPosRef = useRef<{ top: number; left: number } | null>(null);
+  const [isLoadingDesc, setIsLoadingDesc] = useState(false);
+  const [fetchedDescState, setFetchedDescState] = useState<{ key: string; description: string | null } | null>(null);
+  const onResolvedRef = useRef(onResolvedTaskMeta);
+  onResolvedRef.current = onResolvedTaskMeta;
+
+  const cacheKey = `${taskId || ''}::${taskTitle || ''}::${clientName || ''}`;
+
+  // Fetch description ONLY when the user opens the task description popover
+  useEffect(() => {
+    if (!isOpen || !lazyFetch) return;
+    if (fetchedDescState?.key === cacheKey) return;
+
+    let cancelled = false;
+    setIsLoadingDesc(true);
+    taskMapApi
+      .getTaskDescription({
+        taskId: taskId || null,
+        title: taskTitle || null,
+        client: clientName || null,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setFetchedDescState({ key: cacheKey, description: res?.description ?? null });
+        if (res && onResolvedRef.current) {
+          onResolvedRef.current({
+            taskId: res.taskId,
+            listId: res.listId,
+            status: res.status,
+            priority: res.priority,
+            subStatuses: res.subStatuses,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFetchedDescState({ key: cacheKey, description: null });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingDesc(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, lazyFetch, cacheKey, taskId, taskTitle, clientName, fetchedDescState?.key]);
 
   useEffect(() => {
     if (!isOpen || !triggerRef.current) return;
@@ -132,7 +198,10 @@ export const TaskDescriptionButton: React.FC<Props> = ({ description, taskTitle 
     };
   }, [isOpen]);
 
-  const hasDesc = Boolean(description && description.trim());
+  const effectiveDescription =
+    lazyFetch && fetchedDescState?.key === cacheKey ? fetchedDescState.description : description;
+  const hasDesc = Boolean(effectiveDescription && effectiveDescription.trim());
+  const isPendingLazyFetch = lazyFetch && fetchedDescState?.key !== cacheKey;
 
   return (
     <>
@@ -145,9 +214,11 @@ export const TaskDescriptionButton: React.FC<Props> = ({ description, taskTitle 
           setIsOpen(!isOpen);
         }}
         className={`p-0.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer shrink-0 ${
-          hasDesc ? 'text-zinc-300 hover:text-white' : 'text-zinc-500 hover:text-zinc-400'
+          hasDesc || isPendingLazyFetch
+            ? 'text-zinc-300 hover:text-white'
+            : 'text-zinc-500 hover:text-zinc-400'
         }`}
-        title={hasDesc ? 'View task description' : 'No description'}
+        title={isPendingLazyFetch ? 'Click to load task description' : hasDesc ? 'View task description' : 'No description'}
       >
         <AlignLeft className="size-3.5" />
       </button>
@@ -183,16 +254,21 @@ export const TaskDescriptionButton: React.FC<Props> = ({ description, taskTitle 
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar text-xs leading-relaxed text-zinc-300 pr-1 max-h-52">
-              {hasDesc ? (
-                description!.includes('<') && description!.includes('>') ? (
+              {isLoadingDesc ? (
+                <div className="flex items-center justify-center gap-2 py-5 text-zinc-400">
+                  <Loader2 className="size-3.5 animate-spin text-indigo-400" />
+                  <span>Loading description...</span>
+                </div>
+              ) : hasDesc ? (
+                effectiveDescription!.includes('<') && effectiveDescription!.includes('>') ? (
                   <div
                     className="prose prose-invert prose-xs max-w-none break-words"
                     dangerouslySetInnerHTML={{
-                      __html: sanitizeHtml(description!).body.innerHTML,
+                      __html: sanitizeHtml(effectiveDescription!).body.innerHTML,
                     }}
                   />
                 ) : (
-                  <p className="whitespace-pre-wrap break-words">{description}</p>
+                  <p className="whitespace-pre-wrap break-words">{effectiveDescription}</p>
                 )
               ) : (
                 <p className="italic text-zinc-500 text-center py-4">No description provided for this task.</p>

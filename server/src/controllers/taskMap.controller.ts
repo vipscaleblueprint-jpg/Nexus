@@ -1038,6 +1038,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           maActiveSessions[maKey] = {
             maName: sheetProg.maName,
             taskId: t.id,
+            listId: t.listId || t.list?.id || null,
+            listName: t.list?.name || null,
+            taskStatus: t.status || null,
+            priority: t.priority || null,
+            subStatuses: Array.isArray(rec?.statuses) ? rec.statuses : deriveDefaultMapStatuses(t.status),
             timeIn: sheetProg.timeIn,
             timeOut: null,
             client: sheetProg.client || t.list?.name || 'General',
@@ -1049,6 +1054,81 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             active: true,
           };
         }
+      }
+    }
+
+    // Enrich all maActiveSessions with lightweight task metadata (excluding description so it only loads on click)
+    const enrichedTaskById = new Map<string, any>();
+    const listByNameLower = new Map<string, { id: string; name: string }>();
+    for (const c of allClients) {
+      listByNameLower.set(c.name.trim().toLowerCase(), c);
+    }
+    for (const et of enrichedTasks) {
+      enrichedTaskById.set(et.id, et);
+      if (et.isSubtask && et.subtaskId) {
+        enrichedTaskById.set(et.subtaskId, et);
+      }
+      if (et.list?.id && et.list?.name) {
+        const lKey = et.list.name.trim().toLowerCase();
+        if (!listByNameLower.has(lKey)) {
+          listByNameLower.set(lKey, { id: et.list.id, name: et.list.name });
+        }
+      }
+    }
+
+    const resolveSessionList = (clientRaw?: string | null) => {
+      const clean = (clientRaw || '').trim().toLowerCase();
+      if (!clean || clean === 'general' || clean === 'no client inputted' || clean === 'upwork') return null;
+      const exact = listByNameLower.get(clean);
+      if (exact) return exact;
+      const prefixMatches = Array.from(listByNameLower.values()).filter(
+        (l) => l.name.trim().toLowerCase().startsWith(clean) || clean.startsWith(l.name.trim().toLowerCase())
+      );
+      return prefixMatches.length === 1 ? prefixMatches[0] : null;
+    };
+
+    for (const [maKey, sess] of Object.entries(maActiveSessions)) {
+      if (!sess || typeof sess !== 'object') continue;
+      let matched = sess.taskId ? enrichedTaskById.get(sess.taskId) : null;
+      const resolvedList = !matched ? resolveSessionList(sess.client) : null;
+
+      if (!matched) {
+        const rawTitle = (sess.taskName || '').trim().replace(/\.{3}$/, '').trim().toLowerCase();
+        if (rawTitle && rawTitle !== 'general task' && rawTitle !== 'no task inputted') {
+          const pool = resolvedList
+            ? enrichedTasks.filter((et) => (et.listId || et.list?.id) === resolvedList.id)
+            : enrichedTasks;
+          matched =
+            pool.find((et) => (et.title || '').trim().toLowerCase() === rawTitle) || null;
+          if (!matched && rawTitle.length >= 4) {
+            const containsMatches = pool.filter((et) =>
+              (et.title || '').trim().toLowerCase().includes(rawTitle)
+            );
+            if (containsMatches.length === 1) {
+              matched = containsMatches[0];
+            }
+          }
+        }
+      }
+
+      if (matched) {
+        maActiveSessions[maKey] = {
+          ...sess,
+          taskId: matched.id,
+          listId: matched.listId || matched.list?.id || sess.listId || null,
+          listName: matched.list?.name || sess.listName || null,
+          taskStatus: matched.status || sess.taskStatus || null,
+          priority: matched.priority || sess.priority || null,
+          subStatuses: Array.isArray(matched.taskMap?.statuses)
+            ? matched.taskMap.statuses
+            : sess.subStatuses,
+        };
+      } else if (resolvedList && !sess.listId) {
+        maActiveSessions[maKey] = {
+          ...sess,
+          listId: resolvedList.id,
+          listName: resolvedList.name,
+        };
       }
     }
 
@@ -3211,6 +3291,190 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error({ error }, 'Error resetting column tasks');
     return res.status(500).json({ error: 'Failed to reset column tasks' });
+  }
+};
+
+/**
+ * GET /api/task-map/task-description?taskId=...&title=...&client=...
+ * Lightweight lazy-lookup used when the user clicks Task Description or opens a session card project link.
+ */
+export const getTaskMapTaskDescription = async (req: Request, res: Response) => {
+  try {
+    const rawTaskId = typeof req.query.taskId === 'string' ? req.query.taskId.trim() : '';
+    const rawTitle = typeof req.query.title === 'string' ? req.query.title.trim().replace(/\.{3}$/, '').trim() : '';
+    const rawClient = typeof req.query.client === 'string' ? req.query.client.trim() : '';
+
+    const cleanClient =
+      rawClient && !['general', 'no client inputted', 'upwork'].includes(rawClient.toLowerCase())
+        ? rawClient
+        : '';
+    const cleanTitle =
+      rawTitle && !['general task', 'no task inputted'].includes(rawTitle.toLowerCase())
+        ? rawTitle
+        : '';
+
+    const resolveRecordSubStatuses = (rec: any, subtaskId?: string | null): string[] | undefined => {
+      if (!rec) return undefined;
+      if (subtaskId) {
+        const revs = parsePmReviewsArray(rec.pmReviews);
+        const subState = revs.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtaskId);
+        return Array.isArray(subState?.statuses) ? subState.statuses : undefined;
+      }
+      return Array.isArray(rec.statuses) ? rec.statuses : undefined;
+    };
+
+    if (rawTaskId && !rawTaskId.startsWith('general-slot-')) {
+      if (rawTaskId.startsWith('subtask:')) {
+        const subId = rawTaskId.slice('subtask:'.length);
+        const sub = await prisma.subtask.findUnique({
+          where: { id: subId },
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            status: true,
+            priority: true,
+            completed: true,
+            taskId: true,
+            task: { select: { listId: true, list: { select: { name: true } } } },
+          },
+        });
+        if (sub) {
+          const rec = await prisma.taskMapRecord.findUnique({
+            where: { taskId: sub.taskId },
+            select: { statuses: true, pmReviews: true },
+          });
+          return res.json({
+            success: true,
+            taskId: rawTaskId,
+            listId: sub.task?.listId || null,
+            listName: sub.task?.list?.name || null,
+            status: sub.status || (sub.completed ? 'CLOSED' : 'PENDING'),
+            priority: sub.priority || 'NORMAL',
+            subStatuses: resolveRecordSubStatuses(rec, sub.id),
+            description: sub.description || null,
+          });
+        }
+      }
+
+      const task = await prisma.task.findUnique({
+        where: { id: rawTaskId },
+        select: {
+          id: true,
+          listId: true,
+          status: true,
+          priority: true,
+          description: true,
+          list: { select: { name: true } },
+        },
+      });
+      if (task) {
+        const rec = await prisma.taskMapRecord.findUnique({
+          where: { taskId: task.id },
+          select: { statuses: true },
+        });
+        return res.json({
+          success: true,
+          taskId: task.id,
+          listId: task.listId || null,
+          listName: task.list?.name || null,
+          status: task.status || null,
+          priority: task.priority || null,
+          subStatuses: Array.isArray(rec?.statuses) ? rec.statuses : undefined,
+          description: task.description || null,
+        });
+      }
+    }
+
+    let matchedList: { id: string; name: string } | null = null;
+    if (cleanClient) {
+      matchedList = await prisma.list.findFirst({
+        where: { name: { equals: cleanClient, mode: 'insensitive' } },
+        select: { id: true, name: true },
+      });
+      if (!matchedList && cleanClient.length >= 3) {
+        const listCandidates = await prisma.list.findMany({
+          where: { name: { startsWith: cleanClient, mode: 'insensitive' } },
+          select: { id: true, name: true },
+          take: 2,
+        });
+        if (listCandidates.length === 1) {
+          matchedList = listCandidates[0];
+        }
+      }
+    }
+
+    let matchedTask: {
+      id: string;
+      listId: string;
+      status: string;
+      priority: string;
+      description: string | null;
+      list: { name: string } | null;
+    } | null = null;
+
+    if (cleanTitle) {
+      if (matchedList) {
+        matchedTask = await prisma.task.findFirst({
+          where: { listId: matchedList.id, title: { equals: cleanTitle, mode: 'insensitive' } },
+          select: { id: true, listId: true, status: true, priority: true, description: true, list: { select: { name: true } } },
+        });
+        if (!matchedTask && cleanTitle.length >= 4) {
+          const candidates = await prisma.task.findMany({
+            where: { listId: matchedList.id, title: { contains: cleanTitle, mode: 'insensitive' } },
+            select: { id: true, listId: true, status: true, priority: true, description: true, list: { select: { name: true } } },
+            take: 2,
+          });
+          if (candidates.length === 1) matchedTask = candidates[0];
+        }
+      }
+
+      if (!matchedTask) {
+        matchedTask = await prisma.task.findFirst({
+          where: { title: { equals: cleanTitle, mode: 'insensitive' } },
+          select: { id: true, listId: true, status: true, priority: true, description: true, list: { select: { name: true } } },
+        });
+        if (!matchedTask && cleanTitle.length >= 4) {
+          const candidates = await prisma.task.findMany({
+            where: { title: { contains: cleanTitle, mode: 'insensitive' } },
+            select: { id: true, listId: true, status: true, priority: true, description: true, list: { select: { name: true } } },
+            take: 2,
+          });
+          if (candidates.length === 1) matchedTask = candidates[0];
+        }
+      }
+    }
+
+    if (matchedTask) {
+      const rec = await prisma.taskMapRecord.findUnique({
+        where: { taskId: matchedTask.id },
+        select: { statuses: true },
+      });
+      return res.json({
+        success: true,
+        taskId: matchedTask.id,
+        listId: matchedTask.listId || matchedList?.id || null,
+        listName: matchedTask.list?.name || matchedList?.name || null,
+        status: matchedTask.status || null,
+        priority: matchedTask.priority || null,
+        subStatuses: Array.isArray(rec?.statuses) ? rec.statuses : undefined,
+        description: matchedTask.description || null,
+      });
+    }
+
+    return res.json({
+      success: true,
+      taskId: null,
+      listId: matchedList?.id || null,
+      listName: matchedList?.name || null,
+      status: null,
+      priority: null,
+      subStatuses: undefined,
+      description: null,
+    });
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching Task Map task description');
+    return res.status(500).json({ error: 'Failed to fetch task description' });
   }
 };
 

@@ -406,6 +406,11 @@ export const TaskMapContainer: React.FC = () => {
               enrichedSessions[key] = {
                 maName: t.progress.maName,
                 taskId: t.id,
+                listId: t.listId || t.list?.id || null,
+                listName: t.list?.name || null,
+                taskStatus: t.status || null,
+                priority: t.priority || null,
+                subStatuses: Array.isArray(t.taskMap?.statuses) ? t.taskMap.statuses : undefined,
                 timeIn: t.progress.timeIn,
                 timeOut: null,
                 client: t.progress.client || t.list?.name || 'No client inputted',

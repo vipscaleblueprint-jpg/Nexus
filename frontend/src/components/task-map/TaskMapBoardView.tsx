@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import {
   TaskMapItem,
   TaskMapOption,
@@ -771,6 +772,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   isHistory = false,
   search = '',
 }) => {
+  const router = useRouter();
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
   const workspaceTeams = useAppStore((s) => s.workspaceTeams) || [];
@@ -1298,6 +1300,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const rawTask = activeSession?.taskName;
       const effectiveTask = rawTask && rawTask.toLowerCase() !== 'general task' ? rawTask : 'No task inputted';
 
+      const cleanSessionTask = effectiveTask.replace(/\.{3}$/, '').trim().toLowerCase();
+      const cleanSessionClient = effectiveClient.trim().toLowerCase();
+      const matchedLocalTask = [...tasks, ...availablePool].find((t) => {
+        if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) {
+          return true;
+        }
+        if (!cleanSessionTask || cleanSessionTask === 'no task inputted') return false;
+        const tTitle = (t.title || '').trim().toLowerCase();
+        if (!tTitle || (tTitle !== cleanSessionTask && !tTitle.includes(cleanSessionTask))) return false;
+        if (!cleanSessionClient || cleanSessionClient === 'no client inputted') return tTitle === cleanSessionTask;
+        const tClient = (t.list?.name || '').trim().toLowerCase();
+        return tClient === cleanSessionClient || tClient.startsWith(cleanSessionClient);
+      });
+
       const generalBlock = createEmptyUserBlock({
         userId,
         userName: col.user.name,
@@ -1307,6 +1323,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
         timeIn: activeSession?.timeIn || null,
         timeOut: activeSession?.timeOut || null,
         status: activeSession?.status || (activeSession?.timeOut ? 'CLOSED' : 'IN PROGRESS'),
+        taskStatus: activeSession?.taskStatus || matchedLocalTask?.status || null,
+        priority: activeSession?.priority || matchedLocalTask?.priority || null,
+        subStatuses: Array.isArray(activeSession?.subStatuses)
+          ? activeSession.subStatuses
+          : (matchedLocalTask?.taskMap?.statuses ?? null),
+        taskId: activeSession?.taskId || matchedLocalTask?.id || null,
+        listId: activeSession?.listId || matchedLocalTask?.listId || matchedLocalTask?.list?.id || null,
         isUpwork: Boolean(activeSession?.isUpwork),
         rowNumber: activeSession?.rowNumber,
       });
@@ -1686,15 +1709,25 @@ export const TaskMapBoardView: React.FC<Props> = ({
     nextStatuses?: string[],
     user?: any
   ) => {
-    if (task.isAssumptionBlock && user) {
+    if (task.isAssumptionBlock) {
       const isSelecting = (nextStatuses || []).includes(label);
       const cleanNext = isSelecting ? [label] : [];
       task.taskMap.statuses = cleanNext;
-      useAppStore.getState().updateMaActiveSession(user.name, {
-        ...(task.progress || {}),
-        status: label,
-      });
-      return;
+      if (user?.name) {
+        const sKey = (user.name || '').trim().toLowerCase();
+        const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
+        useAppStore.getState().updateMaActiveSession(user.name, {
+          ...prevSess,
+          subStatuses: cleanNext,
+          status: cleanNext[0] || prevSess.status,
+        });
+      }
+      const linkedId =
+        task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+          ? task.linkedTaskId
+          : null;
+      if (!linkedId) return;
+      task = { ...task, id: linkedId, isAssumptionBlock: false };
     }
 
     const isSelecting = (nextStatuses || []).includes(label);
@@ -2626,73 +2659,163 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             })()}
 
                             {/* Title */}
-                            <h4
-                              onClick={() => task.isAssumptionBlock ? toast.info('General slot reflects schedule input from MA daily sheet.') : onOpenDetail(task)}
-                              className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
-                              title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
-                            >
-                              {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
-                            </h4>
+                            {(() => {
+                              const realTaskId =
+                                task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+                                  ? task.linkedTaskId
+                                  : (!task.isAssumptionBlock ? task.id : null);
+                              const realListId =
+                                task.listId && task.listId !== 'general'
+                                  ? task.listId
+                                  : (task.list?.id && task.list.id !== 'general' ? task.list.id : null);
 
-                            {/* Controls row: circle dot left of bulletin, priority flag */}
-                            <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
-                              {/* Circle Dot Status Indicator */}
-                              <CardStatusDropdown
-                                taskId={task.id}
-                                currentStatus={task.status || 'In progress'}
-                                listId={task.listId || task.list?.id}
-                                onSelect={(newStatus: string) => {
-                                  let effectiveStatus = newStatus;
-                                  if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                    effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
-                                  }
-                                  if (task.isAssumptionBlock) {
-                                    task.status = effectiveStatus;
-                                    useAppStore.getState().updateMaActiveSession(user.name, {
-                                      ...(task.progress || {}),
-                                      status: effectiveStatus,
+                              const syncSessionPatch = (patch: Record<string, any>) => {
+                                if (!user?.name) return;
+                                const sKey = (user.name || '').trim().toLowerCase();
+                                const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
+                                useAppStore.getState().updateMaActiveSession(user.name, {
+                                  ...prevSess,
+                                  ...patch,
+                                });
+                              };
+
+                              const toRedirectTaskParam = (id?: string | null) =>
+                                id ? (id.startsWith('subtask:') ? id.slice('subtask:'.length) : id) : null;
+
+                              const handleTitleClick = async () => {
+                                if (!task.isAssumptionBlock) {
+                                  onOpenDetail(task);
+                                  return;
+                                }
+                                if (realListId) {
+                                  const redirectId = toRedirectTaskParam(realTaskId);
+                                  router.push(
+                                    redirectId
+                                      ? `/lists/${realListId}?task=${encodeURIComponent(redirectId)}`
+                                      : `/lists/${realListId}`
+                                  );
+                                  return;
+                                }
+                                try {
+                                  const resolved = await taskMapApi.getTaskDescription({
+                                    taskId: realTaskId,
+                                    title: task.title,
+                                    client: effectiveProgress?.client || task.list?.name || null,
+                                  });
+                                  if (resolved?.listId) {
+                                    syncSessionPatch({
+                                      taskId: resolved.taskId || realTaskId,
+                                      listId: resolved.listId,
+                                      taskStatus: resolved.status || undefined,
+                                      priority: resolved.priority || undefined,
+                                      subStatuses: resolved.subStatuses,
                                     });
-                                    toast.success(`General slot status updated to ${effectiveStatus}`);
+                                    const redirectId = toRedirectTaskParam(resolved.taskId);
+                                    router.push(
+                                      redirectId
+                                        ? `/lists/${resolved.listId}?task=${encodeURIComponent(redirectId)}`
+                                        : `/lists/${resolved.listId}`
+                                    );
                                     return;
                                   }
-                                  if (onTaskUpdate) {
-                                    onTaskUpdate(task.id, { status: effectiveStatus });
-                                  } else {
-                                    tasksApi
-                                      .updateTask(task.id, { status: effectiveStatus })
-                                      .then(() => onDataRefresh())
-                                      .catch((e: any) => toast.error(e.message));
-                                  }
-                                }}
-                              />
+                                  toast.info('No matching project found for this task.');
+                                } catch {
+                                  toast.error('Failed to resolve project for this task.');
+                                }
+                              };
 
-                              {/* Bulletin Icon - click shows task description */}
-                              <TaskDescriptionButton
-                                description={task.description}
-                                taskTitle={task.title}
-                              />
+                              return (
+                                <>
+                                  <h4
+                                    onClick={handleTitleClick}
+                                    className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
+                                    title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
+                                  >
+                                    {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
+                                  </h4>
 
-                              {/* Priority Flag and Label */}
-                              <CardPriorityDropdown
-                                taskId={task.id}
-                                priority={task.priority || 'NORMAL'}
-                                onSelect={(newPriority: string) => {
-                                  if (task.isAssumptionBlock) {
-                                    task.priority = newPriority as any;
-                                    toast.success(`Priority updated to ${newPriority}`);
-                                    return;
-                                  }
-                                  if (onTaskUpdate) {
-                                    onTaskUpdate(task.id, { priority: newPriority });
-                                  } else {
-                                    tasksApi
-                                      .updateTask(task.id, { priority: newPriority as any })
-                                      .then(() => onDataRefresh())
-                                      .catch((e: any) => toast.error(e.message));
-                                  }
-                                }}
-                              />
-                            </div>
+                                  {/* Controls row: circle dot left of bulletin, priority flag */}
+                                  <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
+                                    {/* Circle Dot Status Indicator */}
+                                    <CardStatusDropdown
+                                      taskId={realTaskId || task.id}
+                                      currentStatus={task.status || 'In progress'}
+                                      listId={realListId || undefined}
+                                      onSelect={(newStatus: string) => {
+                                        let effectiveStatus = newStatus;
+                                        if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
+                                          effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                        }
+                                        if (task.isAssumptionBlock) {
+                                          task.status = effectiveStatus;
+                                          syncSessionPatch({
+                                            taskStatus: effectiveStatus,
+                                            status: effectiveStatus,
+                                          });
+                                          if (!realTaskId) {
+                                            toast.success(`Status updated to ${effectiveStatus}`);
+                                            return;
+                                          }
+                                        }
+                                        const targetId = realTaskId || task.id;
+                                        if (onTaskUpdate) {
+                                          onTaskUpdate(targetId, { status: effectiveStatus });
+                                        } else {
+                                          tasksApi
+                                            .updateTask(targetId, { status: effectiveStatus })
+                                            .then(() => onDataRefresh())
+                                            .catch((e: any) => toast.error(e.message));
+                                        }
+                                      }}
+                                    />
+
+                                    {/* Bulletin Icon - click shows task description (lazy-fetched on press for session blocks) */}
+                                    <TaskDescriptionButton
+                                      description={task.description}
+                                      taskTitle={task.title}
+                                      taskId={realTaskId}
+                                      clientName={effectiveProgress?.client || task.list?.name || null}
+                                      lazyFetch={Boolean(task.isAssumptionBlock)}
+                                      onResolvedTaskMeta={(meta) => {
+                                        if (!task.isAssumptionBlock) return;
+                                        syncSessionPatch({
+                                          ...(meta.taskId ? { taskId: meta.taskId } : {}),
+                                          ...(meta.listId ? { listId: meta.listId } : {}),
+                                          ...(meta.status ? { taskStatus: meta.status } : {}),
+                                          ...(meta.priority ? { priority: meta.priority } : {}),
+                                          ...(Array.isArray(meta.subStatuses) ? { subStatuses: meta.subStatuses } : {}),
+                                        });
+                                      }}
+                                    />
+
+                                    {/* Priority Flag and Label */}
+                                    <CardPriorityDropdown
+                                      taskId={realTaskId || task.id}
+                                      priority={task.priority || 'NORMAL'}
+                                      onSelect={(newPriority: string) => {
+                                        if (task.isAssumptionBlock) {
+                                          task.priority = newPriority as any;
+                                          syncSessionPatch({ priority: newPriority });
+                                          if (!realTaskId) {
+                                            toast.success(`Priority updated to ${newPriority}`);
+                                            return;
+                                          }
+                                        }
+                                        const targetId = realTaskId || task.id;
+                                        if (onTaskUpdate) {
+                                          onTaskUpdate(targetId, { priority: newPriority });
+                                        } else {
+                                          tasksApi
+                                            .updateTask(targetId, { priority: newPriority as any })
+                                            .then(() => onDataRefresh())
+                                            .catch((e: any) => toast.error(e.message));
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
 
                           {/* SEPARATOR: Vertical line between task info and statuses */}

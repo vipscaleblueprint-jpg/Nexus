@@ -1264,6 +1264,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
           const sessionData = {
             maName: maNameStr,
+            listId: clientList?.id || null,
             timeIn: cleanTimeIn,
             timeOut: cleanTimeOut,
             client: effectiveClientStr || 'UPWORK',
@@ -1316,6 +1317,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
         const sessionData = {
           maName: maNameStr,
+          listId: clientList?.id || null,
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: assumedClient,
@@ -1485,6 +1487,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     // Get or create TaskMapRecord
     const record = await getOrCreateTaskMapRecord(target.taskId);
+    const targetTaskMeta = await prisma.task.findUnique({
+      where: { id: target.taskId },
+      select: { listId: true, status: true, priority: true },
+    });
 
     // If task was manually marked as Upwork on TaskMap (project-based), honor it
     const hasManualUpworkTag = (record.statuses || []).some((s: string) => s.toUpperCase().startsWith('UPWORK'));
@@ -1643,6 +1649,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         const maSession = {
           maName: maNameStr,
           taskId: target.taskId,
+          listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
+          taskStatus: targetTaskMeta?.status || null,
+          priority: targetTaskMeta?.priority || null,
+          subStatuses: Array.isArray(record.statuses) ? record.statuses : undefined,
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
@@ -1799,6 +1809,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       const maSession = {
         maName: maNameStr,
         taskId: target.taskId,
+        listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
+        taskStatus: targetTaskMeta?.status || null,
+        priority: targetTaskMeta?.priority || null,
+        subStatuses: Array.isArray(record.statuses) ? record.statuses : undefined,
         timeIn: cleanTimeIn,
         timeOut: cleanTimeOut,
         client: clientStr || 'General',

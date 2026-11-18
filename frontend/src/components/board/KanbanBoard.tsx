@@ -1206,7 +1206,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     return collisions.filter((c: any) => c.data?.current?.type !== 'Group' && c.data?.current?.type !== 'Column' && c.id !== args.active?.id);
   }, []);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
 
     if (active.data?.current?.type === 'Group') {

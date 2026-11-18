@@ -1061,7 +1061,7 @@ export default function BoardPage() {
           socket={socket}
           listStatuses={list?.statuses || []}
           workspaceRoles={workspaceRoles}
-          onStatusChange={(newStatus: string) => {
+          onStatusChange={async (newStatus: string) => {
             if (selectedTask) {
               const currentTask = useAppStore.getState().tasks.find((t: any) => t.id === selectedTask.id) || selectedTask;
               const check = canUserMoveTask(currentTask, list?.statuses, currentUser, workspaceRoles);

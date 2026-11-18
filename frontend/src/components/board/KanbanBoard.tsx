@@ -32,6 +32,7 @@ import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { tasksApi } from '@/api/tasks';
+import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 const EMPTY_ARRAY: any[] = [];
 
 interface Props {
@@ -244,6 +245,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
   const router = useRouter();
   const boardContainerRef = useRef<HTMLDivElement>(null);
+  useHorizontalScroll(boardContainerRef);
 
   const handleBoardContextMenu = useCallback((e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey || e.button === 1) {
@@ -1483,7 +1485,6 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
       )}
       <div
           ref={boardContainerRef}
-          onWheel={handleWheelScroll}
           onMouseDown={handleBoardMouseDown}
           onAuxClick={handleBoardContextMenu}
           onContextMenu={handleBoardContextMenu}

@@ -43,6 +43,7 @@ import {
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
+import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
   DndContext,
   DragOverlay,
@@ -179,6 +180,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
     openSubtasks: [],
   });
   const boardScrollRef = useRef<HTMLDivElement>(null);
+  useHorizontalScroll(boardScrollRef);
 
   const cleanSearch = (search || '').trim().toLowerCase();
   const isCrmMemberSearchMatch = (u: any) => {

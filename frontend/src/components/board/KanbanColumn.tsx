@@ -423,7 +423,6 @@ export const KanbanColumn = memo(function KanbanColumn({
           className={`px-2 pb-24 sm:pb-2 flex flex-col gap-2 overflow-y-auto overflow-x-hidden transition-colors custom-scrollbar ${colors.scrollThumb} flex-1 min-h-0 ${
             isOver ? 'bg-black/5' : ''
           }`}
-          onWheel={(e) => e.stopPropagation()}
         >
           <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
             {visibleTasks.map((task) => (

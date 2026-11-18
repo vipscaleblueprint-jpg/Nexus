@@ -37,6 +37,7 @@ import { format } from 'date-fns';
 import { isAuditorUser, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { toast } from '@/lib/toast';
+import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
@@ -318,6 +319,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     openSubtasks: [],
   });
   const boardScrollRef = useRef<HTMLDivElement>(null);
+  useHorizontalScroll(boardScrollRef);
 
   const cleanSearch = (search || '').trim().toLowerCase();
   const isAuditorSearchMatch = (u: any) => {

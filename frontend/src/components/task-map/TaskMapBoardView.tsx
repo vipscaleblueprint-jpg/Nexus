@@ -40,6 +40,7 @@ import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnTaskTypeDropdown, matchesTaskTypeFilter } from './ColumnTaskTypeDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
+import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 
 export function doesProgressMatchUser(progMaName?: string | null, userName?: string | null): boolean {
   if (!progMaName || !userName) return false;
@@ -762,6 +763,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const isPmUser = isProjectManagerOrAdmin(currentUser);
 
   const boardScrollRef = useRef<HTMLDivElement>(null);
+  useHorizontalScroll(boardScrollRef);
 
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
   const [activeOverId, setActiveOverId] = useState<string | null>(null);

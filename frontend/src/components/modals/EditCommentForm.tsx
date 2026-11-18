@@ -659,14 +659,14 @@ export function EditCommentForm({
                       onClick={() => onPreviewImage?.(att.url)}
                       title="Click to preview"
                     />
-                    <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                    <span className="absolute bottom-0 inset-x-0 bg-[#09090b]/75 text-[8px] text-[#ffffff] font-medium text-center py-0.5">
                       Image
                     </span>
                   </>
                 ) : att.type === 'video' ? (
                   <>
                     <video src={att.url} className="w-full h-full object-cover" />
-                    <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                    <span className="absolute bottom-0 inset-x-0 bg-[#09090b]/75 text-[8px] text-[#ffffff] font-medium text-center py-0.5">
                       Video
                     </span>
                   </>
@@ -683,7 +683,7 @@ export function EditCommentForm({
                   type="button"
                   onClick={() => setExistingAttachments(prev => prev.filter(a => a.id !== att.id))}
                   title="Remove attachment"
-                  className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                  className="absolute top-1 right-1 p-0.5 bg-[#09090b]/80 hover:bg-red-600 border !border-[#ffffff]/15 rounded-full text-[#d4d4d8] hover:text-[#ffffff] shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -717,10 +717,7 @@ export function EditCommentForm({
                       onClick={() => onPreviewImage?.(previewUrl)}
                       title="Click to preview"
                     />
-                    <span
-                      style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 85%, black)' }}
-                      className="absolute bottom-0 inset-x-0 text-[8px] text-white font-medium text-center py-0.5"
-                    >
+                    <span className="absolute bottom-0 inset-x-0 bg-[#09090b]/75 text-[8px] text-[#ffffff] font-medium text-center py-0.5">
                       {sizeFormatted}
                     </span>
                     {isSoftWarning && (
@@ -759,7 +756,7 @@ export function EditCommentForm({
                   type="button"
                   onClick={() => setStagedFiles(prev => prev.filter((_, i) => i !== idx))}
                   title="Remove"
-                  className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                  className="absolute top-1 right-1 p-0.5 bg-[#09090b]/80 hover:bg-red-600 border !border-[#ffffff]/15 rounded-full text-[#d4d4d8] hover:text-[#ffffff] shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                 >
                   <X className="w-3 h-3" />
                 </button>

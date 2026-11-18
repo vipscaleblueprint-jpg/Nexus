@@ -61,28 +61,46 @@ export interface TaskProgress {
 export interface LaunchMeta {
   type: 'LAUNCH_META';
   launchDate: string | null;
+  targetPeriod?: string | null;
   isLaunchDate: boolean;
   workstream?: string | null;
+  details?: string | null;
   notes?: string | null;
   updatedAt: string;
   updatedById?: string | null;
 }
 
+export interface LaunchMapAssignee {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+  imageUrl?: string | null;
+}
+
 export interface LaunchMapLightItem {
   id: string;
   title: string;
+  description?: string | null;
   status: string;
   priority: string;
   dueDate: string | null;
   listId: string;
-  list: { id: string; name: string; folder?: { name: string } | null } | null;
-  assignee?: { id: string; name: string } | null;
-  assignees?: Array<{ id: string; name: string }>;
+  list: {
+    id: string;
+    name: string;
+    folder?: { name: string } | null;
+    statuses?: ListStatusToken[];
+  } | null;
+  assignee?: LaunchMapAssignee | null;
+  assignees?: LaunchMapAssignee[];
+  taskMapStatuses?: string[];
   isClosed?: boolean;
   isAdminTask?: boolean;
   launchMeta?: LaunchMeta | null;
   effectiveLaunchDate?: string | null;
+  targetPeriod?: string | null;
   isLaunchDate?: boolean;
+  createdAt?: string;
   updatedAt?: string;
 }
 
@@ -94,6 +112,7 @@ export interface LaunchMapDataResponse {
     scheduled: number;
     inReview: number;
     milestones: number;
+    tbd?: number;
   };
 }
 
@@ -774,13 +793,14 @@ export const taskMapApi = {
     });
   },
 
-  getLaunchCandidates: async (params?: { q?: string; limit?: number; signal?: AbortSignal }): Promise<{
+  getLaunchCandidates: async (params?: { q?: string; limit?: number; includeClosed?: boolean; signal?: AbortSignal }): Promise<{
     success: boolean;
     candidates: LaunchMapLightItem[];
   }> => {
     const q = new URLSearchParams();
     if (params?.q) q.set('q', params.q);
     if (params?.limit) q.set('limit', String(params.limit));
+    if (params?.includeClosed) q.set('includeClosed', 'true');
     const qs = q.toString() ? `?${q.toString()}` : '';
     return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`, {
       ...(params?.signal ? { signal: params.signal } : {}),
@@ -791,8 +811,10 @@ export const taskMapApi = {
     taskId: string,
     payload: {
       launchDate?: string | null;
+      targetPeriod?: string | null;
       isLaunchDate?: boolean;
       workstream?: string | null;
+      details?: string | null;
       notes?: string | null;
       syncDueDate?: boolean;
     }
@@ -800,6 +822,7 @@ export const taskMapApi = {
     success: boolean;
     launchMeta: LaunchMeta;
     effectiveLaunchDate: string | null;
+    targetPeriod?: string | null;
     dueDate: string | null;
     alertSent?: boolean;
   }> => {
@@ -809,6 +832,7 @@ export const taskMapApi = {
         success: boolean;
         launchMeta: LaunchMeta;
         effectiveLaunchDate: string | null;
+        targetPeriod?: string | null;
         dueDate: string | null;
         alertSent?: boolean;
       }>(`/api/task-map/tasks/${taskId}/launch`, {
@@ -1343,10 +1367,39 @@ export function getTaskEffectiveLaunchDate(
   if (!task) return null;
   const metaDate = task.launchMeta?.launchDate;
   if (metaDate && /^\d{4}-\d{2}-\d{2}/.test(metaDate)) return metaDate.slice(0, 10);
+  if (task.launchMeta?.targetPeriod) return null;
   if (task.effectiveLaunchDate && /^\d{4}-\d{2}-\d{2}/.test(task.effectiveLaunchDate)) {
     return task.effectiveLaunchDate.slice(0, 10);
   }
   return getManilaDateKey(task.dueDate);
+}
+
+export function getTaskLaunchTargetPeriod(
+  task?: {
+    launchMeta?: LaunchMeta | null;
+    targetPeriod?: string | null;
+  } | null
+): string | null {
+  if (!task) return null;
+  const tp = task.launchMeta?.targetPeriod || task.targetPeriod;
+  return tp && tp.trim() ? tp.trim() : null;
+}
+
+export function mergeTaskAssignees(
+  task?: {
+    assignee?: LaunchMapAssignee | null;
+    assignees?: LaunchMapAssignee[] | null;
+  } | null
+): LaunchMapAssignee[] {
+  if (!task) return [];
+  const map = new Map<string, LaunchMapAssignee>();
+  for (const a of task.assignees || []) {
+    if (a?.id) map.set(a.id, a);
+  }
+  if (task.assignee?.id && !map.has(task.assignee.id)) {
+    map.set(task.assignee.id, task.assignee);
+  }
+  return Array.from(map.values());
 }
 
 interface ClientTreeList {

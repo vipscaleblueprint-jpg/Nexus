@@ -118,8 +118,8 @@ export function AttachmentsGrid({
                       decoding="async"
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px]">
-                      <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">
+                    <div className="absolute inset-0 bg-[#000000]/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px]">
+                      <span className="text-xs font-medium text-[#ffffff] bg-[#09090b]/80 border !border-[#ffffff]/15 px-2.5 py-1 rounded-md shadow-md">
                         Click to preview
                       </span>
                     </div>

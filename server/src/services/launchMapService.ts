@@ -17,11 +17,28 @@ function getIo() {
 export interface LaunchMeta {
   type: 'LAUNCH_META';
   launchDate: string | null;
+  targetPeriod?: string | null;
   isLaunchDate: boolean;
   workstream?: string | null;
+  details?: string | null;
   notes?: string | null;
   updatedAt: string;
   updatedById?: string | null;
+}
+
+const LAUNCH_STATUS_REGEX = /\blaunch\s*date\b/i;
+
+export function hasLaunchDateMarker(
+  taskStatus?: string | null,
+  taskMapStatuses?: string[] | null,
+  launchMeta?: Partial<LaunchMeta> | null
+): boolean {
+  if (launchMeta?.isLaunchDate) return true;
+  if (taskStatus && LAUNCH_STATUS_REGEX.test(taskStatus)) return true;
+  if (Array.isArray(taskMapStatuses) && taskMapStatuses.some((s) => s && LAUNCH_STATUS_REGEX.test(s))) {
+    return true;
+  }
+  return false;
 }
 
 const isClosedStatus = (status?: string | null) => {
@@ -54,6 +71,7 @@ export function extractLaunchMeta(
 ): {
   launchMeta: LaunchMeta | null;
   effectiveLaunchDate: string | null;
+  targetPeriod: string | null;
   isLaunchDate: boolean;
 } {
   const reviewsList = parseReviewsList(pmReviews);
@@ -64,22 +82,30 @@ export function extractLaunchMeta(
       ? String(raw.launchDate).slice(0, 10)
       : null;
 
+  const targetPeriod =
+    raw?.targetPeriod && String(raw.targetPeriod).trim()
+      ? String(raw.targetPeriod).trim()
+      : null;
+
   const fallbackStr = fallbackDueDate ? getManilaDateStr(fallbackDueDate) : null;
-  const effectiveLaunchDate = normalizedStoredDate || fallbackStr || null;
+  const effectiveLaunchDate = normalizedStoredDate || (targetPeriod ? null : fallbackStr) || null;
 
   return {
     launchMeta: raw
       ? {
           type: 'LAUNCH_META',
           launchDate: normalizedStoredDate,
+          targetPeriod,
           isLaunchDate: Boolean(raw.isLaunchDate),
           workstream: raw.workstream || null,
+          details: raw.details || null,
           notes: raw.notes || null,
           updatedAt: raw.updatedAt || new Date().toISOString(),
           updatedById: raw.updatedById || null,
         }
       : null,
     effectiveLaunchDate,
+    targetPeriod,
     isLaunchDate: Boolean(raw?.isLaunchDate),
   };
 }
@@ -88,13 +114,20 @@ export async function upsertTaskLaunchMeta(
   taskId: string,
   input: {
     launchDate?: string | null;
+    targetPeriod?: string | null;
     isLaunchDate?: boolean;
     workstream?: string | null;
+    details?: string | null;
     notes?: string | null;
     syncDueDate?: boolean;
   },
   actorId?: string | null
-): Promise<{ launchMeta: LaunchMeta; effectiveLaunchDate: string | null; dueDate: Date | null }> {
+): Promise<{
+  launchMeta: LaunchMeta;
+  effectiveLaunchDate: string | null;
+  targetPeriod: string | null;
+  dueDate: Date | null;
+}> {
   const existingTask = await prisma.task.findUnique({
     where: { id: taskId },
     select: { id: true, dueDate: true },
@@ -119,12 +152,21 @@ export async function upsertTaskLaunchMeta(
     throw new Error('Invalid launchDate format (expected YYYY-MM-DD)');
   }
 
+  const cleanTargetPeriod =
+    input.targetPeriod !== undefined
+      ? (input.targetPeriod ? String(input.targetPeriod).trim() : null)
+      : cleanDate
+      ? null
+      : (prevMeta?.targetPeriod ?? null);
+
   const nextMeta: LaunchMeta = {
     type: 'LAUNCH_META',
     launchDate: cleanDate,
+    targetPeriod: cleanTargetPeriod,
     isLaunchDate:
       input.isLaunchDate !== undefined ? Boolean(input.isLaunchDate) : Boolean(prevMeta?.isLaunchDate),
     workstream: input.workstream !== undefined ? (input.workstream || null) : (prevMeta?.workstream ?? null),
+    details: input.details !== undefined ? (input.details || null) : (prevMeta?.details ?? null),
     notes: input.notes !== undefined ? (input.notes || null) : (prevMeta?.notes ?? null),
     updatedAt: new Date().toISOString(),
     updatedById: actorId || null,
@@ -152,8 +194,8 @@ export async function upsertTaskLaunchMeta(
 
   await invalidateCache(`task:${taskId}`, 'tasks:all', 'task_map:all', 'task_map:*', 'launch_map:all', 'lists:all').catch(() => {});
 
-  const { effectiveLaunchDate } = extractLaunchMeta(nextReviews, nextDueDate);
-  return { launchMeta: nextMeta, effectiveLaunchDate, dueDate: nextDueDate };
+  const { effectiveLaunchDate, targetPeriod } = extractLaunchMeta(nextReviews, nextDueDate);
+  return { launchMeta: nextMeta, effectiveLaunchDate, targetPeriod, dueDate: nextDueDate };
 }
 
 function formatReadableLaunchDate(dateStr: string): string {

@@ -228,7 +228,16 @@ export const LaunchMapContainer: React.FC = () => {
         return;
       }
       rangeCacheRef.current.clear();
-      setItems((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...task } : t)));
+      setItems((prev) => {
+        const exists = prev.some((t) => t.id === task.id);
+        if (!exists) {
+          if (/\blaunch\s*date\b/i.test(task.status || '')) {
+            scheduleReload();
+          }
+          return prev;
+        }
+        return prev.map((t) => (t.id === task.id ? { ...t, ...task } : t));
+      });
     };
 
     const handleTaskMapUpdated = (e: Event) => {
@@ -241,7 +250,9 @@ export const LaunchMapContainer: React.FC = () => {
       if (
         data.launchMeta !== undefined ||
         data.effectiveLaunchDate !== undefined ||
-        data.dueDate !== undefined
+        data.targetPeriod !== undefined ||
+        data.dueDate !== undefined ||
+        Array.isArray(data.statuses)
       ) {
         scheduleReload();
       }
@@ -345,7 +356,12 @@ export const LaunchMapContainer: React.FC = () => {
   const handleLaunchMetaUpdated = useCallback(
     (
       taskId: string,
-      data: { launchMeta: LaunchMeta; effectiveLaunchDate: string | null; dueDate: string | null }
+      data: {
+        launchMeta: LaunchMeta;
+        effectiveLaunchDate: string | null;
+        targetPeriod?: string | null;
+        dueDate: string | null;
+      }
     ) => {
       rangeCacheRef.current.clear();
       setItems((prev) =>
@@ -357,11 +373,21 @@ export const LaunchMapContainer: React.FC = () => {
                   dueDate: data.dueDate,
                   launchMeta: data.launchMeta,
                   effectiveLaunchDate: data.effectiveLaunchDate,
+                  targetPeriod: data.targetPeriod ?? data.launchMeta?.targetPeriod ?? null,
                   isLaunchDate: Boolean(data.launchMeta?.isLaunchDate),
                 }
               : t
           )
-          .filter((t) => Boolean(t.effectiveLaunchDate || t.launchMeta?.launchDate || t.dueDate))
+          .filter((t) => {
+            const hasMarker =
+              Boolean(t.launchMeta?.isLaunchDate) ||
+              /\blaunch\s*date\b/i.test(t.status || '') ||
+              (t.taskMapStatuses || []).some((s) => /\blaunch\s*date\b/i.test(s || ''));
+            const hasDateOrPeriod = Boolean(
+              t.effectiveLaunchDate || t.launchMeta?.launchDate || t.targetPeriod || t.launchMeta?.targetPeriod
+            );
+            return hasMarker && hasDateOrPeriod;
+          })
       );
     },
     []

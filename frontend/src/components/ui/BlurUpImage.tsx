@@ -196,8 +196,8 @@ export function BlurUpImage({
 
       {/* Hover preview badge */}
       {thumbLoaded && (
-        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
-          <span className="text-xs font-medium text-white bg-black/75 border border-white/10 px-2.5 py-1 rounded-md shadow-md flex items-center gap-1.5">
+        <span className="absolute inset-0 bg-[#000000]/40 flex items-center justify-center opacity-0 group-hover/image:opacity-100 transition-opacity backdrop-blur-[1px] rounded-lg pointer-events-none">
+          <span className="text-xs font-medium text-[#ffffff] bg-[#09090b]/80 border !border-[#ffffff]/15 px-2.5 py-1 rounded-md shadow-md flex items-center gap-1.5">
             <Maximize2 className="w-3.5 h-3.5" />
             Click to preview
           </span>

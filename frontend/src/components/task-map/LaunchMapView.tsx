@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import {
   Rocket,
   ChevronLeft,
@@ -15,6 +16,12 @@ import {
   Calendar as CalendarIcon,
   Clock,
   Loader2,
+  Table2,
+  Building2,
+  Flag,
+  Trash2,
+  ExternalLink,
+  CalendarClock,
 } from 'lucide-react';
 import {
   LaunchMapLightItem,
@@ -23,12 +30,15 @@ import {
   isLaunchReviewStatus,
   getManilaDateKey,
   getTaskEffectiveLaunchDate,
+  getTaskLaunchTargetPeriod,
+  mergeTaskAssignees,
   isClosedStatus,
   toCanonicalTaskStatus,
 } from '@/api/taskMap';
 import { STATUS_COLORS } from '@/lib/taskTokens';
 import { toast } from '@/lib/toast';
 import type { EnrichedLaunchEntry } from './LaunchMapDayDrawer';
+import { LaunchAssigneeChips, LaunchTextWithLinks } from './LaunchTextWithLinks';
 
 const LaunchMapDayDrawer = dynamic(
   () => import('./LaunchMapDayDrawer').then((m) => m.LaunchMapDayDrawer),
@@ -40,9 +50,38 @@ const LaunchScheduleModal = dynamic(
   { ssr: false }
 );
 
-export type CalendarViewMode = 'MONTH' | 'WEEK' | 'AGENDA';
-export type LaunchFilterMode = 'ALL' | 'MILESTONES';
+export type CalendarViewMode = 'JOURNAL' | 'MONTH' | 'WEEK' | 'AGENDA';
 export type AgendaScopeMode = 'ACTIVE' | 'COMPLETED' | 'ALL';
+export type JournalGroupMode = 'CLIENT' | 'DATE';
+
+const VIEW_MODE_STORAGE_KEY = 'nexus_launch_map_view_mode';
+const VIEW_MODE_EVENT = 'nexus:launch-map-view-mode';
+
+function subscribeViewMode(cb: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener('storage', cb);
+  window.addEventListener(VIEW_MODE_EVENT, cb);
+  return () => {
+    window.removeEventListener('storage', cb);
+    window.removeEventListener(VIEW_MODE_EVENT, cb);
+  };
+}
+
+function getClientViewMode(): CalendarViewMode {
+  try {
+    const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (saved === 'JOURNAL' || saved === 'MONTH' || saved === 'WEEK' || saved === 'AGENDA') {
+      return saved;
+    }
+  } catch {
+    // Ignore storage failures
+  }
+  return 'JOURNAL';
+}
+
+function getServerViewMode(): CalendarViewMode {
+  return 'JOURNAL';
+}
 
 interface LaunchMapViewProps {
   tasks: LaunchMapLightItem[];
@@ -53,7 +92,12 @@ interface LaunchMapViewProps {
   onOpenDetail: (task: LaunchMapLightItem) => void;
   onLaunchMetaUpdated?: (
     taskId: string,
-    data: { launchMeta: LaunchMeta; effectiveLaunchDate: string | null; dueDate: string | null }
+    data: {
+      launchMeta: LaunchMeta;
+      effectiveLaunchDate: string | null;
+      targetPeriod?: string | null;
+      dueDate: string | null;
+    }
   ) => void;
   onDataRefresh?: () => void;
 }
@@ -106,9 +150,35 @@ function formatReadableDate(dateKey: string): string {
   }
 }
 
-function getStatusColorHex(status?: string | null): string {
-  const canonical = toCanonicalTaskStatus(status);
-  return STATUS_COLORS[canonical] || STATUS_COLORS[(status || '').toUpperCase()] || '#64748b';
+function formatShortDate(dateKey: string): string {
+  try {
+    const d = new Date(`${dateKey}T12:00:00+08:00`);
+    if (isNaN(d.getTime())) return dateKey;
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(d);
+  } catch {
+    return dateKey;
+  }
+}
+
+function resolveStatusColorHex(task: LaunchMapLightItem): string {
+  const statusStr = (task.status || '').trim();
+  const upper = statusStr.toUpperCase();
+  const listMatch = (task.list?.statuses || []).find(
+    (s) => (s.name || '').trim().toUpperCase() === upper
+  );
+  if (listMatch?.color && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(listMatch.color.trim())) {
+    return listMatch.color.trim();
+  }
+  const canonical = toCanonicalTaskStatus(statusStr);
+  const raw = STATUS_COLORS[canonical] || STATUS_COLORS[upper] || '#64748b';
+  if (raw.startsWith('#')) return raw;
+  const bracketMatch = raw.match(/bg-\[([^\]]+)\]/);
+  return bracketMatch ? bracketMatch[1] : '#64748b';
 }
 
 function isRoutineRecurringStatus(status?: string | null): boolean {
@@ -214,45 +284,50 @@ const MonthDayCell = React.memo<MonthCellProps>(
         </div>
 
         <div className="flex flex-col gap-1 min-w-0 flex-1 overflow-hidden">
-          {visiblePills.map((entry) => (
-            <button
-              key={entry.task.id}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenDetail(entry.task);
-              }}
-              title={`${entry.task.title} · ${entry.clientName} · ${entry.canonicalStatus}${
-                entry.isMilestone ? ' · LAUNCH DATE' : ''
-              }`}
-              className={`w-full text-left flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-pointer truncate ${
-                entry.isInReview
-                  ? 'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500'
-                  : entry.isMilestone
-                  ? 'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500'
-                  : entry.isClosed
-                  ? 'launch-pill-closed text-[var(--muted)]'
-                  : 'launch-pill-default text-[var(--text)] border border-[var(--border)]'
-              }`}
-            >
-              {entry.isInReview ? (
-                <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
-              ) : entry.isMilestone ? (
-                <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
-              ) : entry.isClosed ? (
-                <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
-              ) : (
-                <span
-                  className="size-2 rounded-full shrink-0"
-                  style={{ backgroundColor: entry.statusColor }}
-                />
-              )}
-              <span className="truncate font-medium flex-1 min-w-0">{entry.task.title}</span>
-              <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
-                {entry.clientName}
-              </span>
-            </button>
-          ))}
+          {visiblePills.map((entry) => {
+            const assigneeNames = entry.assignees.map((a) => a.name).join(', ');
+            return (
+              <button
+                key={entry.task.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenDetail(entry.task);
+                }}
+                title={`${entry.task.title} · ${entry.clientName} · ${entry.canonicalStatus}${
+                  assigneeNames ? ` · ${assigneeNames}` : ''
+                }${entry.isUrgent ? ' · URGENT' : ''}`}
+                className={`w-full text-left flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-pointer truncate ${
+                  entry.isInReview
+                    ? 'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500'
+                    : entry.isMilestone
+                    ? 'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500'
+                    : entry.isClosed
+                    ? 'launch-pill-closed text-[var(--muted)]'
+                    : 'launch-pill-default text-[var(--text)] border border-[var(--border)]'
+                }`}
+              >
+                {entry.isInReview ? (
+                  <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
+                ) : entry.isUrgent ? (
+                  <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />
+                ) : entry.isMilestone ? (
+                  <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
+                ) : entry.isClosed ? (
+                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                ) : (
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ backgroundColor: entry.statusColor }}
+                  />
+                )}
+                <span className="truncate font-medium flex-1 min-w-0">{entry.task.title}</span>
+                <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
+                  {entry.clientName}
+                </span>
+              </button>
+            );
+          })}
 
           {overflowCount > 0 && (
             <button
@@ -289,9 +364,14 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
   const [cursorYear, setCursorYear] = useState<number>(todayParts.year);
   const [cursorMonth, setCursorMonth] = useState<number>(todayParts.month);
   const [cursorDay, setCursorDay] = useState<number>(todayParts.day);
-  const [viewMode, setViewMode] = useState<CalendarViewMode>('MONTH');
-  const [filterMode, setFilterMode] = useState<LaunchFilterMode>('ALL');
+  const viewMode = React.useSyncExternalStore(
+    subscribeViewMode,
+    getClientViewMode,
+    getServerViewMode
+  );
   const [agendaScope, setAgendaScope] = useState<AgendaScopeMode>('ACTIVE');
+  const [journalGroupMode, setJournalGroupMode] = useState<JournalGroupMode>('CLIENT');
+  const [collapsedClients, setCollapsedClients] = useState<Record<string, boolean>>({});
   const [pastOpenExpanded, setPastOpenExpanded] = useState<boolean>(true);
 
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
@@ -300,6 +380,17 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     task: LaunchMapLightItem | null;
     dateKey: string;
   }>({ open: false, task: null, dateKey: todayKey });
+
+  const handleSetViewMode = useCallback((mode: CalendarViewMode) => {
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch {
+      // Ignore
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(VIEW_MODE_EVENT));
+    }
+  }, []);
 
   // Build Month & Week grids
   const monthGridDays = useMemo(() => {
@@ -378,7 +469,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
         mode: 'WEEK',
       });
     } else {
-      onRangeChange({ start: undefined, end: undefined, mode: 'AGENDA' });
+      onRangeChange({ start: undefined, end: undefined, mode: viewMode });
     }
   }, [viewMode, monthGridDays, weekGridDays, onRangeChange]);
 
@@ -402,99 +493,152 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
     for (const task of tasks) {
       const dateKey = getTaskEffectiveLaunchDate(task);
-      if (!dateKey) continue;
+      const rawPeriod = getTaskLaunchTargetPeriod(task);
+      const targetPeriod = !dateKey ? rawPeriod || 'TBD' : null;
+      if (!dateKey && !targetPeriod) continue;
 
       const closed = Boolean(task.isClosed || isClosedStatus(task.status));
       const inReview = !closed && isLaunchReviewStatus(task.status);
+      const subStatuses = (task.taskMapStatuses || []).filter((s) => !/\blaunch\s*date\b/i.test(s || ''));
       const milestone = Boolean(
         task.launchMeta?.isLaunchDate ??
           task.isLaunchDate ??
-          /\blaunch\s*date\b/i.test(`${task.title || ''} ${task.launchMeta?.notes || ''}`)
+          (/\blaunch\s*date\b/i.test(task.status || '') ||
+            (task.taskMapStatuses || []).some((s) => /\blaunch\s*date\b/i.test(s || '')))
       );
+      const urgent = (task.priority || '').toUpperCase() === 'URGENT';
       const clientName = task.list?.name || 'General';
       const workstream = task.launchMeta?.workstream || '';
-      const notes = task.launchMeta?.notes || '';
+      const details = (task.launchMeta?.details ?? task.description ?? '').trim();
+      const notes = (task.launchMeta?.notes || '').trim();
+      const assignees = mergeTaskAssignees(task);
 
       if (searchLower) {
-        const assigneeNames = (task.assignees || []).map((a) => a?.name || '').join(' ');
-        const haystack = `${task.title || ''} ${clientName} ${workstream} ${notes} ${task.status || ''} ${assigneeNames}`.toLowerCase();
+        const assigneeNames = assignees.map((a) => a.name || '').join(' ');
+        const haystack = `${task.title || ''} ${clientName} ${workstream} ${details} ${notes} ${
+          task.status || ''
+        } ${subStatuses.join(' ')} ${assigneeNames} ${dateKey || ''} ${targetPeriod || ''}`.toLowerCase();
         if (!haystack.includes(searchLower)) continue;
       }
 
       entries.push({
         task,
         dateKey,
+        targetPeriod,
         isInReview: inReview,
         isMilestone: milestone,
         isClosed: closed,
+        isUrgent: urgent,
         clientName,
         workstream,
+        details,
         notes,
-        statusColor: getStatusColorHex(task.status),
+        assignees,
+        subStatuses,
+        statusColor: resolveStatusColorHex(task),
         canonicalStatus: toCanonicalTaskStatus(task.status) || task.status || 'PENDING',
       });
     }
 
     entries.sort((a, b) => {
       if (a.isInReview !== b.isInReview) return a.isInReview ? -1 : 1;
+      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
       if (a.isMilestone !== b.isMilestone) return a.isMilestone ? -1 : 1;
       if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1;
-      const urgentA = (a.task.priority || '').toUpperCase() === 'URGENT' ? 1 : 0;
-      const urgentB = (b.task.priority || '').toUpperCase() === 'URGENT' ? 1 : 0;
-      if (urgentA !== urgentB) return urgentB - urgentA;
       return (a.task.title || '').localeCompare(b.task.title || '');
     });
 
     return entries;
   }, [tasks, searchLower]);
 
-  const filteredEntries = useMemo(() => {
-    if (filterMode === 'MILESTONES') return allEntries.filter((e) => e.isMilestone);
-    return allEntries;
-  }, [allEntries, filterMode]);
+  const tbdEntries = useMemo(
+    () => allEntries.filter((e) => !e.dateKey && Boolean(e.targetPeriod)),
+    [allEntries]
+  );
 
   const entriesByDate = useMemo(() => {
     const map = new Map<string, EnrichedLaunchEntry[]>();
-    for (const e of filteredEntries) {
+    for (const e of allEntries) {
+      if (!e.dateKey) continue;
       const list = map.get(e.dateKey) || [];
       list.push(e);
       map.set(e.dateKey, list);
     }
     return map;
-  }, [filteredEntries]);
+  }, [allEntries]);
+
+  const timelineStats = useMemo(() => {
+    const isActiveLaunch = (e: EnrichedLaunchEntry) =>
+      !e.isClosed && (e.isMilestone || e.isInReview || !isRoutineRecurringStatus(e.task.status));
+
+    const activeList = allEntries.filter(isActiveLaunch);
+    const completedList = allEntries.filter((e) => e.isClosed);
+
+    const scopedList =
+      agendaScope === 'ACTIVE' ? activeList : agendaScope === 'COMPLETED' ? completedList : allEntries;
+
+    const datedActive = activeList.filter((e) => Boolean(e.dateKey));
+    const pastOpenCount = datedActive.filter((e) => (e.dateKey as string) < todayKey).length;
+    const todayCount = datedActive.filter((e) => e.dateKey === todayKey).length;
+    const upcomingCount = datedActive.filter((e) => (e.dateKey as string) > todayKey).length;
+    const scopedTbdCount = scopedList.filter((e) => !e.dateKey).length;
+
+    return {
+      activeList,
+      completedList,
+      scopedList,
+      activeCount: activeList.length,
+      completedCount: completedList.length,
+      allCount: allEntries.length,
+      pastOpenCount,
+      todayCount,
+      upcomingCount,
+      scopedTbdCount,
+    };
+  }, [allEntries, agendaScope, todayKey]);
 
   const agendaData = useMemo(() => {
     if (viewMode !== 'AGENDA') {
       return {
-        pastOpenGroups: [] as Array<{ dateKey: string; items: EnrichedLaunchEntry[]; isToday: boolean; isPast: boolean; relativeTag: string | null }>,
-        upcomingGroups: [] as Array<{ dateKey: string; items: EnrichedLaunchEntry[]; isToday: boolean; isPast: boolean; relativeTag: string | null }>,
-        historyGroups: [] as Array<{ dateKey: string; items: EnrichedLaunchEntry[]; isToday: boolean; isPast: boolean; relativeTag: string | null }>,
-        activeCount: 0,
-        completedCount: 0,
-        allCount: 0,
-        pastOpenCount: 0,
-        todayCount: 0,
-        upcomingCount: 0,
+        pastOpenGroups: [] as Array<{
+          dateKey: string;
+          items: EnrichedLaunchEntry[];
+          isToday: boolean;
+          isPast: boolean;
+          relativeTag: string | null;
+        }>,
+        upcomingGroups: [] as Array<{
+          dateKey: string;
+          items: EnrichedLaunchEntry[];
+          isToday: boolean;
+          isPast: boolean;
+          relativeTag: string | null;
+        }>,
+        historyGroups: [] as Array<{
+          dateKey: string;
+          items: EnrichedLaunchEntry[];
+          isToday: boolean;
+          isPast: boolean;
+          relativeTag: string | null;
+        }>,
+        tbdItems: [] as EnrichedLaunchEntry[],
       };
     }
 
-    const isRelevantLaunchEntry = (e: EnrichedLaunchEntry) =>
-      !e.isClosed && (e.isMilestone || e.isInReview || !isRoutineRecurringStatus(e.task.status));
-
-    const activeEntries = filteredEntries.filter(isRelevantLaunchEntry);
-    const completedEntries = filteredEntries.filter((e) => e.isClosed);
-
     const groupByDate = (list: EnrichedLaunchEntry[], direction: 'ASC' | 'DESC') => {
-      const sorted = [...list].sort((a, b) =>
-        direction === 'ASC'
-          ? a.dateKey.localeCompare(b.dateKey)
-          : b.dateKey.localeCompare(a.dateKey)
-      );
+      const sorted = [...list]
+        .filter((e) => Boolean(e.dateKey))
+        .sort((a, b) =>
+          direction === 'ASC'
+            ? (a.dateKey as string).localeCompare(b.dateKey as string)
+            : (b.dateKey as string).localeCompare(a.dateKey as string)
+        );
       const map = new Map<string, EnrichedLaunchEntry[]>();
       for (const entry of sorted) {
-        const arr = map.get(entry.dateKey) || [];
+        const dk = entry.dateKey as string;
+        const arr = map.get(dk) || [];
         arr.push(entry);
-        map.set(entry.dateKey, arr);
+        map.set(dk, arr);
       }
       return Array.from(map.entries()).map(([dateKey, items]) => ({
         dateKey,
@@ -505,29 +649,81 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       }));
     };
 
-    const upcomingList = activeEntries.filter((e) => e.dateKey >= todayKey);
-    const pastOpenList = activeEntries.filter((e) => e.dateKey < todayKey);
+    const upcomingList = timelineStats.activeList.filter(
+      (e) => e.dateKey && e.dateKey >= todayKey
+    );
+    const pastOpenList = timelineStats.activeList.filter(
+      (e) => e.dateKey && e.dateKey < todayKey
+    );
+
+    const tbdItems = timelineStats.scopedList.filter((e) => !e.dateKey);
 
     return {
-      // Show newest overdue / IN REVIEW past items first
       pastOpenGroups: groupByDate(pastOpenList, 'DESC'),
-      // Today first, then chronological upcoming launches
       upcomingGroups: groupByDate(upcomingList, 'ASC'),
-      // Completed or All sorted newest-first so latest launches appear at top
       historyGroups:
         agendaScope === 'COMPLETED'
-          ? groupByDate(completedEntries, 'DESC')
+          ? groupByDate(timelineStats.completedList, 'DESC')
           : agendaScope === 'ALL'
-          ? groupByDate(filteredEntries, 'DESC')
+          ? groupByDate(allEntries, 'DESC')
           : [],
-      activeCount: activeEntries.length,
-      completedCount: completedEntries.length,
-      allCount: filteredEntries.length,
-      pastOpenCount: pastOpenList.length,
-      todayCount: upcomingList.filter((e) => e.dateKey === todayKey).length,
-      upcomingCount: upcomingList.filter((e) => e.dateKey > todayKey).length,
+      tbdItems,
     };
-  }, [viewMode, filteredEntries, todayKey, agendaScope]);
+  }, [viewMode, timelineStats, allEntries, todayKey, agendaScope]);
+
+  const journalGroups = useMemo(() => {
+    if (viewMode !== 'JOURNAL') return { clientGroups: [], datedRows: [], tbdRows: [] };
+
+    const sortEntriesChronologically = (a: EnrichedLaunchEntry, b: EnrichedLaunchEntry) => {
+      if (a.dateKey && b.dateKey) {
+        const cmp = a.dateKey.localeCompare(b.dateKey);
+        if (cmp !== 0) return cmp;
+      } else if (a.dateKey && !b.dateKey) {
+        return -1;
+      } else if (!a.dateKey && b.dateKey) {
+        return 1;
+      } else {
+        const periodCmp = (a.targetPeriod || '').localeCompare(b.targetPeriod || '');
+        if (periodCmp !== 0) return periodCmp;
+      }
+      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
+      return (a.task.title || '').localeCompare(b.task.title || '');
+    };
+
+    const byClient = new Map<string, EnrichedLaunchEntry[]>();
+    for (const entry of timelineStats.scopedList) {
+      const arr = byClient.get(entry.clientName) || [];
+      arr.push(entry);
+      byClient.set(entry.clientName, arr);
+    }
+
+    const clientGroups = Array.from(byClient.entries())
+      .sort(([aName], [bName]) => aName.localeCompare(bName))
+      .map(([clientName, items]) => ({
+        clientName,
+        items: [...items].sort(sortEntriesChronologically),
+      }));
+
+    const datedRows = timelineStats.scopedList
+      .filter((e) => Boolean(e.dateKey))
+      .sort((a, b) => {
+        if (agendaScope === 'COMPLETED') {
+          const cmp = (b.dateKey as string).localeCompare(a.dateKey as string);
+          return cmp !== 0 ? cmp : (a.task.title || '').localeCompare(b.task.title || '');
+        }
+        return sortEntriesChronologically(a, b);
+      });
+
+    const tbdRows = timelineStats.scopedList
+      .filter((e) => !e.dateKey)
+      .sort((a, b) => {
+        const pCmp = (a.targetPeriod || '').localeCompare(b.targetPeriod || '');
+        if (pCmp !== 0) return pCmp;
+        return a.clientName.localeCompare(b.clientName);
+      });
+
+    return { clientGroups, datedRows, tbdRows };
+  }, [viewMode, timelineStats.scopedList, agendaScope]);
 
   const yearOptions = useMemo(() => {
     const base = todayParts.year;
@@ -595,6 +791,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       try {
         const res = await taskMapApi.updateLaunchMeta(taskId, {
           launchDate: null,
+          targetPeriod: null,
           isLaunchDate: false,
           syncDueDate: true,
         });
@@ -602,6 +799,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           onLaunchMetaUpdated?.(taskId, {
             launchMeta: res.launchMeta,
             effectiveLaunchDate: res.effectiveLaunchDate,
+            targetPeriod: res.targetPeriod ?? null,
             dueDate: res.dueDate,
           });
           toast.success('Removed from Launch Map');
@@ -621,6 +819,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
         const nextFlag = !entry.isMilestone;
         const res = await taskMapApi.updateLaunchMeta(entry.task.id, {
           launchDate: entry.dateKey,
+          targetPeriod: entry.targetPeriod,
           isLaunchDate: nextFlag,
           syncDueDate: false,
         });
@@ -628,15 +827,210 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           onLaunchMetaUpdated?.(entry.task.id, {
             launchMeta: res.launchMeta,
             effectiveLaunchDate: res.effectiveLaunchDate,
+            targetPeriod: res.targetPeriod ?? null,
             dueDate: res.dueDate,
           });
-          toast.success(nextFlag ? 'Marked as LAUNCH DATE milestone' : 'Unmarked LAUNCH DATE milestone');
+          toast.success(nextFlag ? 'Marked as LAUNCH DATE' : 'Removed LAUNCH DATE status');
+          onDataRefresh?.();
         }
       } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : 'Failed to update milestone flag');
+        toast.error(err instanceof Error ? err.message : 'Failed to update Launch Date status');
       }
     },
-    [onLaunchMetaUpdated]
+    [onLaunchMetaUpdated, onDataRefresh]
+  );
+
+  const renderJournalRow = (entry: EnrichedLaunchEntry, showClientTag: boolean) => {
+    const relTag = entry.dateKey ? formatRelativeDayTag(entry.dateKey, todayKey) : null;
+    const isOverdue = Boolean(entry.dateKey && entry.dateKey < todayKey && !entry.isClosed);
+    const isTodayRow = entry.dateKey === todayKey;
+
+    return (
+      <tr
+        key={entry.task.id}
+        onClick={() => onOpenDetail(entry.task)}
+        className={`group border-b border-[var(--border)]/65 transition-colors cursor-pointer hover:bg-[var(--hover-subtle)] ${
+          entry.isInReview
+            ? 'bg-orange-500/[0.05] [.theme-light_&]:bg-orange-50/70'
+            : isTodayRow
+            ? 'bg-[color-mix(in_srgb,var(--accent,#4F46E5)_7%,transparent)]'
+            : ''
+        }`}
+      >
+        {/* 1. Date */}
+        <td className="px-3.5 py-2.5 align-top whitespace-nowrap w-[155px]">
+          {entry.dateKey ? (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-semibold text-[var(--text)]">
+                {formatShortDate(entry.dateKey)}
+              </span>
+              {relTag && (
+                <span
+                  className={`text-[10.5px] font-medium ${
+                    isTodayRow
+                      ? 'text-[var(--accent)] font-bold'
+                      : isOverdue
+                      ? 'text-amber-400 [.theme-light_&]:text-amber-700'
+                      : 'text-[var(--muted)]'
+                  }`}
+                >
+                  {relTag}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/35 [.theme-light_&]:bg-indigo-50 [.theme-light_&]:text-indigo-800 [.theme-light_&]:border-indigo-300">
+              <CalendarClock className="size-3 shrink-0" />
+              {entry.targetPeriod || 'TBD'}
+            </span>
+          )}
+        </td>
+
+        {/* 2. Task */}
+        <td className="px-3.5 py-2.5 align-top min-w-[220px] max-w-[300px]">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-start gap-1.5">
+              <span className="text-xs font-semibold text-[var(--text)] group-hover:text-[var(--accent)] transition-colors leading-snug">
+                {entry.task.title}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1">
+              {showClientTag && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
+                  {entry.clientName}
+                </span>
+              )}
+              {entry.workstream && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] text-[10px] text-[var(--muted)]">
+                  <Layers className="size-2.5 shrink-0" />
+                  <span className="truncate max-w-[180px]">{entry.workstream}</span>
+                </span>
+              )}
+              {entry.task.listId && (
+                <Link
+                  href={`/lists/${entry.task.listId}?task=${entry.task.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  title="Open task in client board"
+                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium text-[var(--accent)] hover:underline transition-opacity"
+                >
+                  <span>Board</span>
+                  <ExternalLink className="size-2.5" />
+                </Link>
+              )}
+            </div>
+          </div>
+        </td>
+
+        {/* 3. Details */}
+        <td className="px-3.5 py-2.5 align-top min-w-[220px] max-w-[340px] text-xs text-[var(--text)]/90">
+          <LaunchTextWithLinks text={entry.details} />
+        </td>
+
+        {/* 4. Status */}
+        <td className="px-3.5 py-2.5 align-top whitespace-nowrap">
+          <div className="flex flex-wrap items-center gap-1 max-w-[200px]">
+            {entry.isUrgent && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-300 border border-red-500/40 [.theme-light_&]:bg-red-50 [.theme-light_&]:text-red-700 [.theme-light_&]:border-red-300">
+                <Flag className="size-2.5" />
+                URGENT
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-500/15 text-rose-300 border border-rose-500/35 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-700 [.theme-light_&]:border-rose-300">
+              <Rocket className="size-2.5" />
+              LAUNCH DATE
+            </span>
+            {!/\blaunch\s*date\b/i.test(entry.canonicalStatus) && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border"
+                style={{
+                  backgroundColor: `${entry.statusColor}20`,
+                  color: entry.statusColor,
+                  borderColor: `${entry.statusColor}45`,
+                }}
+              >
+                {entry.isInReview && <AlertTriangle className="size-2.5" />}
+                {entry.canonicalStatus}
+              </span>
+            )}
+            {entry.subStatuses.map((sub) => (
+              <span
+                key={sub}
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)]"
+              >
+                {sub}
+              </span>
+            ))}
+          </div>
+        </td>
+
+        {/* 5. Assignees */}
+        <td className="px-3.5 py-2.5 align-top min-w-[150px] max-w-[230px]">
+          <LaunchAssigneeChips assignees={entry.assignees} maxVisible={3} />
+        </td>
+
+        {/* 6. Notes */}
+        <td className="px-3.5 py-2.5 align-top min-w-[200px] max-w-[320px] text-xs text-[var(--muted)]">
+          <LaunchTextWithLinks text={entry.notes} />
+        </td>
+
+        {/* Actions */}
+        <td className="px-2.5 py-2.5 align-top whitespace-nowrap text-right w-[68px]">
+          <div className="inline-flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                openScheduleModal({ task: entry.task });
+              }}
+              className="p-1.5 rounded-md hover:bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
+              title="Edit Launch Details"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleUnscheduleTask(entry.task.id);
+              }}
+              className="p-1.5 rounded-md hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 cursor-pointer"
+              title="Remove from Launch Map"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const renderAgendaScopeTabs = () => (
+    <div className="flex items-center gap-1 rounded-lg bg-[var(--bg)]/60 border border-[var(--border)] p-0.5 text-[11px] font-medium">
+      {(
+        [
+          { key: 'ACTIVE', label: 'Active', count: timelineStats.activeCount },
+          { key: 'COMPLETED', label: 'Completed', count: timelineStats.completedCount },
+          { key: 'ALL', label: 'All', count: timelineStats.allCount },
+        ] as const
+      ).map((tab) => {
+        const isActive = agendaScope === tab.key;
+        return (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setAgendaScope(tab.key)}
+            className={`inline-flex items-baseline gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+              isActive
+                ? 'bg-[var(--accent)] text-[var(--on-accent)] font-semibold shadow-xs'
+                : 'text-[var(--muted)] hover:text-[var(--text)]'
+            }`}
+          >
+            <span>{tab.label}</span>
+            {isActive && <span className="tabular-nums opacity-85">{tab.count}</span>}
+          </button>
+        );
+      })}
+    </div>
   );
 
   return (
@@ -686,9 +1080,9 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
         }
       `}</style>
 
-      {/* Single Unified, De-cluttered Header + Toolbar */}
+      {/* Single Unified Header + Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
-        {/* Left: Title + Month/Year Navigation + Today + Alert Chip */}
+        {/* Left: Title + Month/Year Navigation (when in Month/Week) */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 mr-1">
             <div
@@ -700,12 +1094,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             >
               <Rocket className="size-3.5 text-[var(--accent)]" />
             </div>
-            <h1 className="text-base sm:text-lg font-bold text-foreground tracking-tight">
+            <h1 className="text-base sm:text-lg font-bold text-[var(--text)] tracking-tight">
               Launch Map
             </h1>
           </div>
 
-          {viewMode !== 'AGENDA' && (
+          {(viewMode === 'MONTH' || viewMode === 'WEEK') && (
             <>
               <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] rounded-lg p-0.5">
                 <button
@@ -771,47 +1165,46 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           )}
         </div>
 
-        {/* Right: Filter + View Switcher + Search/Client slot + Schedule Button */}
+        {/* Right: TBD pill + View Switcher + Search/Client slot + Schedule Button */}
         <div className="flex flex-wrap items-center gap-2">
+          {(viewMode === 'MONTH' || viewMode === 'WEEK') && tbdEntries.length > 0 && (
+            <button
+              type="button"
+              onClick={() => handleSetViewMode('JOURNAL')}
+              title="View Year-Level / TBD launches in Journal"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/35 [.theme-light_&]:bg-indigo-50 [.theme-light_&]:text-indigo-800 [.theme-light_&]:border-indigo-300 hover:opacity-90 cursor-pointer"
+            >
+              <CalendarClock className="size-3" />
+              <span>{tbdEntries.length} TBD</span>
+            </button>
+          )}
+
           <div className="flex items-center bg-[var(--surface)] border border-[var(--border)] rounded-lg p-0.5 text-[11px] font-medium">
             {(
               [
-                { key: 'ALL', label: 'All' },
-                { key: 'MILESTONES', label: 'Launches' },
+                { key: 'JOURNAL', label: 'Journal', icon: Table2 },
+                { key: 'MONTH', label: 'Month', icon: null },
+                { key: 'WEEK', label: 'Week', icon: null },
+                { key: 'AGENDA', label: 'Agenda', icon: null },
               ] as const
-            ).map((opt) => (
-              <button
-                key={opt.key}
-                type="button"
-                onClick={() => setFilterMode(opt.key)}
-                className={`px-2 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                  filterMode === opt.key
-                    ? opt.key === 'MILESTONES'
-                      ? 'bg-rose-500/25 text-rose-200 font-semibold [.theme-light_&]:bg-rose-100 [.theme-light_&]:text-rose-900'
-                      : 'bg-[var(--hover-subtle)] text-[var(--text)] font-semibold'
-                    : 'text-[var(--muted)] hover:text-[var(--text)]'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center bg-[var(--surface)] border border-[var(--border)] rounded-lg p-0.5 text-[11px] font-medium">
-            {(['MONTH', 'WEEK', 'AGENDA'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setViewMode(m)}
-                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                  viewMode === m
-                    ? 'bg-[var(--accent)] text-[var(--on-accent)] font-semibold shadow-xs'
-                    : 'text-[var(--muted)] hover:text-[var(--text)]'
-                }`}
-              >
-                {m === 'MONTH' ? 'Month' : m === 'WEEK' ? 'Week' : 'Agenda'}
-              </button>
-            ))}
+            ).map((opt) => {
+              const Icon = opt.icon;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => handleSetViewMode(opt.key)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    viewMode === opt.key
+                      ? 'bg-[var(--accent)] text-[var(--on-accent)] font-semibold shadow-xs'
+                      : 'text-[var(--muted)] hover:text-[var(--text)]'
+                  }`}
+                >
+                  {Icon && <Icon className="size-3" />}
+                  <span>{opt.label}</span>
+                </button>
+              );
+            })}
           </div>
 
           {toolbarRightSlot}
@@ -827,8 +1220,172 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
         </div>
       </div>
 
-      {/* Calendar Surface — Palette-Adaptive Nexus Theme */}
+      {/* Main Content Surface */}
       <div className="flex-1 min-h-0 rounded-xl overflow-hidden flex flex-col border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+        {/* JOURNAL TABLE VIEW */}
+        {viewMode === 'JOURNAL' && (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {/* Journal Scope & Grouping Strip */}
+            <div className="launch-map-header-bar shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-[var(--border)]">
+              <div className="flex flex-wrap items-center gap-2">
+                {renderAgendaScopeTabs()}
+
+                <div className="flex items-center gap-1 rounded-lg bg-[var(--bg)]/60 border border-[var(--border)] p-0.5 text-[11px] font-medium">
+                  {(
+                    [
+                      { key: 'CLIENT', label: 'By Client' },
+                      { key: 'DATE', label: 'By Date' },
+                    ] as const
+                  ).map((g) => (
+                    <button
+                      key={g.key}
+                      type="button"
+                      onClick={() => setJournalGroupMode(g.key)}
+                      className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                        journalGroupMode === g.key
+                          ? 'bg-[var(--surface)] text-[var(--text)] font-semibold border border-[var(--border)] shadow-2xs'
+                          : 'text-[var(--muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 text-[11px] text-[var(--muted)]">
+                <span>
+                  <strong className="text-[var(--text)] font-semibold">{timelineStats.todayCount}</strong> Today
+                </span>
+                <span>
+                  <strong className="text-[var(--text)] font-semibold">{timelineStats.upcomingCount}</strong> Upcoming
+                </span>
+                {timelineStats.pastOpenCount > 0 && (
+                  <span className="text-amber-400 [.theme-light_&]:text-amber-700">
+                    <strong className="font-semibold">{timelineStats.pastOpenCount}</strong> Past Open
+                  </span>
+                )}
+                {timelineStats.scopedTbdCount > 0 && (
+                  <span className="text-indigo-300 [.theme-light_&]:text-indigo-700">
+                    <strong className="font-semibold">{timelineStats.scopedTbdCount}</strong> TBD
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Table Scroller */}
+            <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
+              {timelineStats.scopedList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 px-4 text-center gap-2">
+                  <Rocket className="size-8 text-[var(--accent)]/60" />
+                  <p className="text-sm font-semibold text-[var(--text)]">
+                    No tasks with LAUNCH DATE status match this filter
+                  </p>
+                  <p className="text-xs text-[var(--muted)] max-w-md">
+                    Schedule a Nexus task with LAUNCH DATE status to track its Date, Task, Details, Status, Assignees, and Notes here.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openScheduleModal()}
+                    className="mt-2 px-3.5 py-1.5 rounded-lg bg-[var(--accent)] text-[var(--on-accent)] text-xs font-semibold cursor-pointer"
+                  >
+                    + Schedule Launch Date
+                  </button>
+                </div>
+              ) : (
+                <table className="w-full border-collapse text-left">
+                  <thead className="sticky top-0 z-10 bg-[var(--surface)] border-b border-[var(--border)] shadow-2xs">
+                    <tr className="launch-map-header-bar text-[11px] font-bold uppercase tracking-wider text-[var(--muted)]">
+                      <th className="px-3.5 py-2.5">Date</th>
+                      <th className="px-3.5 py-2.5">Task</th>
+                      <th className="px-3.5 py-2.5">Details</th>
+                      <th className="px-3.5 py-2.5">Status</th>
+                      <th className="px-3.5 py-2.5">Assignees</th>
+                      <th className="px-3.5 py-2.5">Notes</th>
+                      <th className="px-2.5 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journalGroupMode === 'CLIENT' ? (
+                      journalGroups.clientGroups.map((group) => {
+                        const isCollapsed = Boolean(collapsedClients[group.clientName]);
+                        return (
+                          <React.Fragment key={group.clientName}>
+                            <tr
+                              onClick={() =>
+                                setCollapsedClients((prev) => ({
+                                  ...prev,
+                                  [group.clientName]: !prev[group.clientName],
+                                }))
+                              }
+                              className="bg-[color-mix(in_srgb,var(--bg)_65%,var(--surface))] border-b border-[var(--border)] cursor-pointer hover:bg-[var(--hover-subtle)] transition-colors"
+                            >
+                              <td colSpan={7} className="px-3.5 py-2">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <ChevronDown
+                                      className={`size-3.5 text-[var(--muted)] transition-transform ${
+                                        isCollapsed ? '-rotate-90' : ''
+                                      }`}
+                                    />
+                                    <Building2 className="size-3.5 text-[var(--accent)]" />
+                                    <span className="text-xs font-bold text-[var(--text)]">
+                                      {group.clientName}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)]">
+                                      {group.items.length}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openScheduleModal();
+                                    }}
+                                    className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--muted)] hover:text-[var(--accent)] cursor-pointer"
+                                  >
+                                    <Plus className="size-3" />
+                                    <span>Schedule</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                            {!isCollapsed &&
+                              group.items.map((entry) => renderJournalRow(entry, false))}
+                          </React.Fragment>
+                        );
+                      })
+                    ) : (
+                      <>
+                        {journalGroups.datedRows.map((entry) => renderJournalRow(entry, true))}
+                        {journalGroups.tbdRows.length > 0 && (
+                          <>
+                            <tr className="bg-[color-mix(in_srgb,var(--bg)_65%,var(--surface))] border-b border-[var(--border)]">
+                              <td colSpan={7} className="px-3.5 py-2">
+                                <div className="flex items-center gap-2">
+                                  <CalendarClock className="size-3.5 text-indigo-400" />
+                                  <span className="text-xs font-bold text-[var(--text)] uppercase tracking-wide">
+                                    TBD / Year-Level Target Dates
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)]">
+                                    {journalGroups.tbdRows.length}
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                            {journalGroups.tbdRows.map((entry) => renderJournalRow(entry, true))}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* MONTH VIEW */}
         {viewMode === 'MONTH' && (
           <div className="flex flex-col flex-1 min-h-0 overflow-auto custom-scrollbar">
             <div className="launch-map-header-bar grid grid-cols-7 border-b border-[var(--border)] shrink-0">
@@ -866,6 +1423,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           </div>
         )}
 
+        {/* WEEK VIEW */}
         {viewMode === 'WEEK' && (
           <div className="grid grid-cols-1 md:grid-cols-7 flex-1 min-h-0 overflow-auto custom-scrollbar">
             {weekGridDays.map((day) => {
@@ -934,6 +1492,9 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                               {entry.clientName}
                             </span>
                             <div className="flex items-center gap-1">
+                              {entry.isUrgent && (
+                                <Flag className="size-3 text-red-400 [.theme-light_&]:text-red-600" />
+                              )}
                               {entry.isMilestone && (
                                 <Rocket className="size-3 text-rose-400 [.theme-light_&]:text-rose-600" />
                               )}
@@ -953,6 +1514,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                           <p className="text-xs font-semibold text-[var(--text)] line-clamp-2 leading-snug">
                             {entry.task.title}
                           </p>
+
+                          {entry.details && (
+                            <p className="text-[10.5px] text-[var(--muted)] line-clamp-2 leading-snug">
+                              {entry.details}
+                            </p>
+                          )}
 
                           {entry.workstream && (
                             <span className="inline-flex items-center gap-1 text-[10px] text-[var(--muted)]">
@@ -974,9 +1541,9 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                               {entry.canonicalStatus}
                             </span>
 
-                            {(entry.task.assignees?.length || entry.task.assignee) && (
-                              <span className="text-[10px] text-[var(--muted)] truncate max-w-[90px]">
-                                {entry.task.assignees?.[0]?.name || entry.task.assignee?.name}
+                            {entry.assignees.length > 0 && (
+                              <span className="text-[10px] text-[var(--muted)] truncate max-w-[95px]">
+                                {entry.assignees.map((a) => a.name).join(', ')}
                               </span>
                             )}
                           </div>
@@ -990,51 +1557,29 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           </div>
         )}
 
+        {/* AGENDA VIEW */}
         {viewMode === 'AGENDA' && (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Compact Agenda Scope Strip */}
             <div className="launch-map-header-bar shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-[var(--border)]">
-              <div className="flex items-center gap-1 rounded-lg bg-[var(--bg)]/60 border border-[var(--border)] p-0.5 text-[11px] font-medium">
-                {(
-                  [
-                    { key: 'ACTIVE', label: 'Active', count: agendaData.activeCount },
-                    { key: 'COMPLETED', label: 'Completed', count: agendaData.completedCount },
-                    { key: 'ALL', label: 'All', count: agendaData.allCount },
-                  ] as const
-                ).map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setAgendaScope(tab.key)}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                      agendaScope === tab.key
-                        ? 'bg-[var(--accent)] text-[var(--on-accent)] font-semibold shadow-xs'
-                        : 'text-[var(--muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    <span>{tab.label}</span>
-                    <span
-                      className={`text-[10px] font-mono ${
-                        agendaScope === tab.key ? 'opacity-85' : 'text-[var(--muted)]'
-                      }`}
-                    >
-                      {tab.count}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {renderAgendaScopeTabs()}
 
               {agendaScope === 'ACTIVE' && (
                 <div className="flex items-center gap-3 text-[11px] text-[var(--muted)]">
                   <span>
-                    <strong className="text-[var(--text)] font-semibold">{agendaData.todayCount}</strong> Today
+                    <strong className="text-[var(--text)] font-semibold">{timelineStats.todayCount}</strong> Today
                   </span>
                   <span>
-                    <strong className="text-[var(--text)] font-semibold">{agendaData.upcomingCount}</strong> Upcoming
+                    <strong className="text-[var(--text)] font-semibold">{timelineStats.upcomingCount}</strong> Upcoming
                   </span>
-                  {agendaData.pastOpenCount > 0 && (
+                  {timelineStats.pastOpenCount > 0 && (
                     <span className="text-amber-400 [.theme-light_&]:text-amber-700">
-                      <strong className="font-semibold">{agendaData.pastOpenCount}</strong> Past Open
+                      <strong className="font-semibold">{timelineStats.pastOpenCount}</strong> Past Open
+                    </span>
+                  )}
+                  {timelineStats.scopedTbdCount > 0 && (
+                    <span className="text-indigo-300 [.theme-light_&]:text-indigo-700">
+                      <strong className="font-semibold">{timelineStats.scopedTbdCount}</strong> TBD
                     </span>
                   )}
                 </div>
@@ -1044,6 +1589,114 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             {/* Block Scroll Timeline — No Flex Height Compression */}
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               {(() => {
+                const renderAgendaItem = (entry: EnrichedLaunchEntry) => (
+                  <div
+                    key={entry.task.id}
+                    onClick={() => onOpenDetail(entry.task)}
+                    className={`group flex items-start justify-between gap-4 px-4 py-2.5 transition-colors cursor-pointer hover:bg-[var(--hover-subtle)] ${
+                      entry.isInReview
+                        ? 'border-l-2 border-l-orange-400 bg-orange-500/[0.06] [.theme-light_&]:bg-orange-50/70'
+                        : entry.isMilestone
+                        ? 'border-l-2 border-l-rose-400 bg-rose-500/[0.05] [.theme-light_&]:bg-rose-50/60'
+                        : ''
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="mt-1 shrink-0">
+                        {entry.isInReview ? (
+                          <AlertTriangle className="size-3.5 text-orange-400 [.theme-light_&]:text-orange-600" />
+                        ) : entry.isUrgent ? (
+                          <Flag className="size-3.5 text-red-400 [.theme-light_&]:text-red-600" />
+                        ) : entry.isMilestone ? (
+                          <Rocket className="size-3.5 text-rose-400 [.theme-light_&]:text-rose-600" />
+                        ) : entry.isClosed ? (
+                          <CheckCircle2 className="size-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                        ) : (
+                          <span
+                            className="block size-2.5 rounded-full mt-0.5"
+                            style={{ backgroundColor: entry.statusColor }}
+                          />
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1 flex flex-col gap-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[13px] font-semibold text-[var(--text)] leading-snug">
+                            {entry.task.title}
+                          </span>
+                          {entry.targetPeriod && !entry.dateKey && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/35 [.theme-light_&]:bg-indigo-50 [.theme-light_&]:text-indigo-800 [.theme-light_&]:border-indigo-300">
+                              {entry.targetPeriod}
+                            </span>
+                          )}
+                          {entry.isUrgent && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-300 border border-red-500/40 [.theme-light_&]:bg-red-50 [.theme-light_&]:text-red-700 [.theme-light_&]:border-red-300 shrink-0">
+                              URGENT
+                            </span>
+                          )}
+                          {entry.isMilestone && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-700 [.theme-light_&]:border-rose-300 shrink-0">
+                              <Rocket className="size-2.5" />
+                              LAUNCH DATE
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-[var(--muted)]">
+                          <span className="font-medium text-[var(--text)]/80">
+                            {entry.clientName}
+                          </span>
+                          {entry.workstream && (
+                            <span className="truncate max-w-[220px]">· {entry.workstream}</span>
+                          )}
+                        </div>
+
+                        {entry.details && (
+                          <div className="text-xs text-[var(--text)]/85">
+                            <LaunchTextWithLinks text={entry.details} />
+                          </div>
+                        )}
+
+                        {entry.notes && (
+                          <div className="text-[11px] text-[var(--muted)] italic">
+                            <LaunchTextWithLinks text={entry.notes} />
+                          </div>
+                        )}
+
+                        {entry.assignees.length > 0 && (
+                          <div className="pt-0.5">
+                            <LaunchAssigneeChips assignees={entry.assignees} maxVisible={4} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase border whitespace-nowrap"
+                        style={{
+                          backgroundColor: `${entry.statusColor}20`,
+                          color: entry.statusColor,
+                          borderColor: `${entry.statusColor}45`,
+                        }}
+                      >
+                        {entry.canonicalStatus}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openScheduleModal({ task: entry.task });
+                        }}
+                        className="p-1.5 rounded-md opacity-60 group-hover:opacity-100 hover:bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--text)] transition-all cursor-pointer"
+                        title="Edit launch date"
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+
                 const renderDateGroup = (group: {
                   dateKey: string;
                   items: EnrichedLaunchEntry[];
@@ -1101,102 +1754,33 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                     </div>
 
                     <div className="divide-y divide-[var(--border)]/60">
-                      {group.items.map((entry) => {
-                        const assigneeName =
-                          entry.task.assignees?.[0]?.name || entry.task.assignee?.name || '';
-                        return (
-                          <div
-                            key={entry.task.id}
-                            onClick={() => onOpenDetail(entry.task)}
-                            className={`group flex items-center justify-between gap-4 px-4 py-2.5 transition-colors cursor-pointer hover:bg-[var(--hover-subtle)] ${
-                              entry.isInReview
-                                ? 'border-l-2 border-l-orange-400 bg-orange-500/[0.06] [.theme-light_&]:bg-orange-50/70'
-                                : entry.isMilestone
-                                ? 'border-l-2 border-l-rose-400 bg-rose-500/[0.05] [.theme-light_&]:bg-rose-50/60'
-                                : ''
-                            }`}
-                          >
-                            <div className="flex items-start gap-3 min-w-0 flex-1">
-                              <div className="mt-1 shrink-0">
-                                {entry.isInReview ? (
-                                  <AlertTriangle className="size-3.5 text-orange-400 [.theme-light_&]:text-orange-600" />
-                                ) : entry.isMilestone ? (
-                                  <Rocket className="size-3.5 text-rose-400 [.theme-light_&]:text-rose-600" />
-                                ) : entry.isClosed ? (
-                                  <CheckCircle2 className="size-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
-                                ) : (
-                                  <span
-                                    className="block size-2.5 rounded-full mt-0.5"
-                                    style={{ backgroundColor: entry.statusColor }}
-                                  />
-                                )}
-                              </div>
-
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[13px] font-semibold text-[var(--text)] leading-snug">
-                                    {entry.task.title}
-                                  </span>
-                                  {entry.isMilestone && (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-700 [.theme-light_&]:border-rose-300 shrink-0">
-                                      <Rocket className="size-2.5" />
-                                      LAUNCH DATE
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-[var(--muted)] mt-0.5">
-                                  <span className="font-medium text-[var(--text)]/80">
-                                    {entry.clientName}
-                                  </span>
-                                  {entry.workstream && (
-                                    <span className="truncate max-w-[220px]">· {entry.workstream}</span>
-                                  )}
-                                  {assigneeName && (
-                                    <span className="truncate max-w-[160px]">· {assigneeName}</span>
-                                  )}
-                                  {entry.notes && (
-                                    <span className="truncate max-w-[320px] italic">
-                                      — {entry.notes}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase border whitespace-nowrap"
-                                style={{
-                                  backgroundColor: `${entry.statusColor}20`,
-                                  color: entry.statusColor,
-                                  borderColor: `${entry.statusColor}45`,
-                                }}
-                              >
-                                {entry.canonicalStatus}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openScheduleModal({ task: entry.task });
-                                }}
-                                className="p-1.5 rounded-md opacity-60 group-hover:opacity-100 hover:bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--text)] transition-all cursor-pointer"
-                                title="Edit launch date"
-                              >
-                                <Pencil className="size-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {group.items.map(renderAgendaItem)}
                     </div>
                   </section>
                 );
 
+                const renderTbdSection = () =>
+                  agendaData.tbdItems.length > 0 ? (
+                    <section className="border-t border-[var(--border)]">
+                      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]/70 bg-indigo-500/[0.08] [.theme-light_&]:bg-indigo-50">
+                        <div className="flex items-center gap-2">
+                          <CalendarClock className="size-3.5 text-indigo-400 [.theme-light_&]:text-indigo-700" />
+                          <span className="text-xs font-bold text-indigo-300 [.theme-light_&]:text-indigo-800 uppercase tracking-wide">
+                            TBD / Year-Level Target Dates ({agendaData.tbdItems.length})
+                          </span>
+                        </div>
+                      </div>
+                      <div className="divide-y divide-[var(--border)]/60">
+                        {agendaData.tbdItems.map(renderAgendaItem)}
+                      </div>
+                    </section>
+                  ) : null;
+
                 if (agendaScope === 'ACTIVE') {
                   const hasAnyActive =
-                    agendaData.upcomingGroups.length > 0 || agendaData.pastOpenGroups.length > 0;
+                    agendaData.upcomingGroups.length > 0 ||
+                    agendaData.pastOpenGroups.length > 0 ||
+                    agendaData.tbdItems.length > 0;
 
                   if (!hasAnyActive) {
                     return (
@@ -1206,7 +1790,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                           All launch deliverables are caught up
                         </p>
                         <p className="text-xs text-[var(--muted)] max-w-sm">
-                          No active or upcoming launches match the current filter.
+                          No active or upcoming launches with LAUNCH DATE status match the current filter.
                         </p>
                         <div className="flex items-center gap-2 mt-2">
                           <button
@@ -1216,13 +1800,13 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                           >
                             + Schedule Launch
                           </button>
-                          {agendaData.completedCount > 0 && (
+                          {timelineStats.completedCount > 0 && (
                             <button
                               type="button"
                               onClick={() => setAgendaScope('COMPLETED')}
                               className="px-3 py-1.5 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-xs font-medium text-[var(--text)] hover:bg-[var(--hover-subtle)] cursor-pointer"
                             >
-                              View Completed ({agendaData.completedCount})
+                              View Completed ({timelineStats.completedCount})
                             </button>
                           )}
                         </div>
@@ -1242,7 +1826,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                             <div className="flex items-center gap-2">
                               <Clock className="size-3.5 text-amber-400 [.theme-light_&]:text-amber-700" />
                               <span className="text-xs font-bold text-amber-300 [.theme-light_&]:text-amber-800 uppercase tracking-wide">
-                                Needs Attention · Past Target ({agendaData.pastOpenCount})
+                                Needs Attention · Past Target ({timelineStats.pastOpenCount})
                               </span>
                             </div>
                             <ChevronDown
@@ -1260,11 +1844,13 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                       {agendaData.upcomingGroups.length > 0 && (
                         <div>{agendaData.upcomingGroups.map(renderDateGroup)}</div>
                       )}
+
+                      {renderTbdSection()}
                     </div>
                   );
                 }
 
-                if (agendaData.historyGroups.length === 0) {
+                if (agendaData.historyGroups.length === 0 && agendaData.tbdItems.length === 0) {
                   return (
                     <div className="flex flex-col items-center justify-center py-16 px-4 text-center gap-2">
                       <CalendarIcon className="size-8 text-[var(--muted)]" />
@@ -1278,7 +1864,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                   );
                 }
 
-                return <div>{agendaData.historyGroups.map(renderDateGroup)}</div>;
+                return (
+                  <div>
+                    {agendaData.historyGroups.map(renderDateGroup)}
+                    {renderTbdSection()}
+                  </div>
+                );
               })()}
             </div>
           </div>

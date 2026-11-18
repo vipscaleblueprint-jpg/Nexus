@@ -8,6 +8,7 @@ import { canUserSetAssignees } from '../utils/assignPermission';
 import { isAuditorRole } from './auditShift.controller';
 import {
   extractLaunchMeta,
+  hasLaunchDateMarker,
   upsertTaskLaunchMeta,
   triggerLaunchReviewAlertIfNeeded,
 } from '../services/launchMapService';
@@ -1702,7 +1703,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     });
 
     // Invalidate Redis task and task_map caches
-    await invalidateCache('task:*', 'tasks:all', `task:${id}`, 'task_map:*');
+    await invalidateCache('task:*', 'tasks:all', `task:${id}`, 'task_map:*', 'launch_map:all');
 
     // Collect latest active Upwork sessions from Redis or current session
     let activeUpworkSessions: any[] = [];
@@ -2553,6 +2554,8 @@ export const updateTaskMeta = async (req: Request, res: Response) => {
 
 /**
  * Lightweight, range-aware Launch Map feed (zero subtasks/checklists/Upwork overhead).
+ * Strictly includes tasks with a Launch Date status/marker (`isLaunchDate`, `LAUNCH DATE` status,
+ * or `LAUNCH DATE` sub-status), supporting exact dates and year-level/TBD target periods.
  * Supports optional ?start=YYYY-MM-DD&end=YYYY-MM-DD lazy loading for month/week ranges.
  */
 export const getLaunchMapData = async (req: Request, res: Response) => {
@@ -2562,7 +2565,7 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
     const start = /^\d{4}-\d{2}-\d{2}$/.test(rawStart) ? rawStart : '';
     const end = /^\d{4}-\d{2}-\d{2}$/.test(rawEnd) ? rawEnd : '';
 
-    const cacheKey = `launch_map:v2:data:${start || 'all'}:${end || 'all'}`;
+    const cacheKey = `launch_map:v3:data:${start || 'all'}:${end || 'all'}`;
     const cacheGen = getCacheGeneration(cacheKey);
     const cached = await getCache<any>(cacheKey);
     if (cached) {
@@ -2573,26 +2576,36 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
       prisma.task.findMany({
         where: {
           status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] },
-          OR: [{ dueDate: { not: null } }, { taskMapRecord: { isNot: null } }],
+          OR: [
+            { dueDate: { not: null } },
+            { taskMapRecord: { isNot: null } },
+            { status: { contains: 'launch', mode: 'insensitive' } },
+          ],
         },
         select: {
           id: true,
           title: true,
+          description: true,
           status: true,
           priority: true,
           dueDate: true,
           listId: true,
+          createdAt: true,
           updatedAt: true,
           list: {
             select: {
               id: true,
               name: true,
               folder: { select: { name: true } },
+              statuses: {
+                select: { name: true, color: true, groupName: true, order: true },
+                orderBy: { order: 'asc' },
+              },
             },
           },
-          assignee: { select: { id: true, name: true } },
-          assignees: { select: { id: true, name: true } },
-          taskMapRecord: { select: { pmReviews: true } },
+          assignee: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+          assignees: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+          taskMapRecord: { select: { statuses: true, pmReviews: true } },
         },
         orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
       }),
@@ -2614,13 +2627,21 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
     let totalScheduled = 0;
     let totalInReview = 0;
     let totalMilestones = 0;
+    let totalTbd = 0;
 
     for (const t of rawTasks) {
-      const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(
+      const taskMapStatuses = Array.isArray(t.taskMapRecord?.statuses) ? t.taskMapRecord!.statuses : [];
+      const { launchMeta, effectiveLaunchDate, targetPeriod, isLaunchDate } = extractLaunchMeta(
         t.taskMapRecord?.pmReviews,
         t.dueDate
       );
-      if (!effectiveLaunchDate) continue;
+
+      // Strictly include only tasks with a Launch Date status/marker
+      const hasLaunchStatus = hasLaunchDateMarker(t.status, taskMapStatuses, launchMeta);
+      if (!hasLaunchStatus) continue;
+
+      const resolvedTargetPeriod = !effectiveLaunchDate ? (targetPeriod || 'TBD') : null;
+      if (!effectiveLaunchDate && !resolvedTargetPeriod) continue;
 
       const folderName = (t.list?.folder?.name || '').trim().toLowerCase();
       const listName = (t.list?.name || '').trim().toLowerCase();
@@ -2635,7 +2656,8 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
 
       totalScheduled++;
       if (inReview) totalInReview++;
-      if (isLaunchDate) totalMilestones++;
+      if (isLaunchDate || hasLaunchStatus) totalMilestones++;
+      if (!effectiveLaunchDate && resolvedTargetPeriod) totalTbd++;
 
       if (!isAdminTask && t.list?.id && t.list?.name) {
         const cur = clientMap.get(t.list.id);
@@ -2643,25 +2665,55 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
         else clientMap.set(t.list.id, { id: t.list.id, name: t.list.name, count: 1 });
       }
 
-      if (start && end && (effectiveLaunchDate < start || effectiveLaunchDate > end)) {
+      // Range filter applies to exact-dated items; TBD/year-level items stay available for the TBD pill
+      if (effectiveLaunchDate && start && end && (effectiveLaunchDate < start || effectiveLaunchDate > end)) {
         continue;
       }
+
+      // Merge scalar assignee + multi-assignees deduplicated by id
+      const mergedAssigneesMap = new Map<
+        string,
+        { id: string; name: string; avatarUrl?: string | null; imageUrl?: string | null }
+      >();
+      for (const a of t.assignees || []) {
+        if (a?.id) mergedAssigneesMap.set(a.id, a);
+      }
+      if (t.assignee?.id && !mergedAssigneesMap.has(t.assignee.id)) {
+        mergedAssigneesMap.set(t.assignee.id, t.assignee);
+      }
+      const mergedAssignees = Array.from(mergedAssigneesMap.values());
 
       items.push({
         id: t.id,
         title: t.title,
+        description: t.description,
         status: t.status,
         priority: t.priority,
         dueDate: t.dueDate,
         listId: t.listId,
         list: t.list,
-        assignee: t.assignee,
-        assignees: t.assignees,
+        assignee: t.assignee || mergedAssignees[0] || null,
+        assignees: mergedAssignees,
+        taskMapStatuses,
         isClosed: closed,
         isAdminTask,
-        launchMeta,
+        launchMeta: launchMeta
+          ? { ...launchMeta, isLaunchDate: true }
+          : {
+              type: 'LAUNCH_META',
+              launchDate: effectiveLaunchDate,
+              targetPeriod: resolvedTargetPeriod,
+              isLaunchDate: true,
+              workstream: null,
+              details: null,
+              notes: null,
+              updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : new Date().toISOString(),
+              updatedById: null,
+            },
         effectiveLaunchDate,
-        isLaunchDate,
+        targetPeriod: resolvedTargetPeriod,
+        isLaunchDate: true,
+        createdAt: t.createdAt,
         updatedAt: t.updatedAt,
       });
     }
@@ -2674,6 +2726,7 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
         scheduled: totalScheduled,
         inReview: totalInReview,
         milestones: totalMilestones,
+        tbd: totalTbd,
       },
     };
 
@@ -2687,21 +2740,31 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
 
 /**
  * Lazy-loaded searchable task candidates for the Launch Map "+ Schedule" picker.
+ * Supports searching by Task title, Client/List name, or exact Task UUID.
  */
 export const getLaunchCandidates = async (req: Request, res: Response) => {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const includeClosed = req.query.includeClosed === 'true';
     const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 25;
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 40) : 25;
 
+    const excludedStatuses = includeClosed
+      ? ['KYC', 'PIN BOARD', 'PINBOARD']
+      : ['KYC', 'PIN BOARD', 'PINBOARD', 'CLOSED', 'Closed', 'DONE', 'Done'];
+
     const where: any = {
-      status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD', 'CLOSED', 'Closed', 'DONE', 'Done'] },
+      status: { notIn: excludedStatuses },
     };
     if (q) {
-      where.OR = [
+      const orClauses: any[] = [
         { title: { contains: q, mode: 'insensitive' } },
         { list: { name: { contains: q, mode: 'insensitive' } } },
       ];
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q)) {
+        orClauses.unshift({ id: q });
+      }
+      where.OR = orClauses;
     }
 
     const rows = await prisma.task.findMany({
@@ -2711,31 +2774,63 @@ export const getLaunchCandidates = async (req: Request, res: Response) => {
       select: {
         id: true,
         title: true,
+        description: true,
         status: true,
         priority: true,
         dueDate: true,
         listId: true,
-        list: { select: { id: true, name: true } },
-        taskMapRecord: { select: { pmReviews: true } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            statuses: {
+              select: { name: true, color: true, groupName: true, order: true },
+              orderBy: { order: 'asc' },
+            },
+          },
+        },
+        assignee: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+        assignees: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+        taskMapRecord: { select: { statuses: true, pmReviews: true } },
       },
     });
 
     const candidates = rows.map((t) => {
-      const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(
+      const taskMapStatuses = Array.isArray(t.taskMapRecord?.statuses) ? t.taskMapRecord!.statuses : [];
+      const { launchMeta, effectiveLaunchDate, targetPeriod, isLaunchDate } = extractLaunchMeta(
         t.taskMapRecord?.pmReviews,
         t.dueDate
       );
+      const hasLaunchStatus = hasLaunchDateMarker(t.status, taskMapStatuses, launchMeta);
+
+      const mergedAssigneesMap = new Map<
+        string,
+        { id: string; name: string; avatarUrl?: string | null; imageUrl?: string | null }
+      >();
+      for (const a of t.assignees || []) {
+        if (a?.id) mergedAssigneesMap.set(a.id, a);
+      }
+      if (t.assignee?.id && !mergedAssigneesMap.has(t.assignee.id)) {
+        mergedAssigneesMap.set(t.assignee.id, t.assignee);
+      }
+      const mergedAssignees = Array.from(mergedAssigneesMap.values());
+
       return {
         id: t.id,
         title: t.title,
+        description: t.description,
         status: t.status,
         priority: t.priority,
         dueDate: t.dueDate,
         listId: t.listId,
         list: t.list,
+        assignee: t.assignee || mergedAssignees[0] || null,
+        assignees: mergedAssignees,
+        taskMapStatuses,
         launchMeta,
         effectiveLaunchDate,
-        isLaunchDate,
+        targetPeriod,
+        isLaunchDate: isLaunchDate || hasLaunchStatus,
       };
     });
 
@@ -2747,13 +2842,13 @@ export const getLaunchCandidates = async (req: Request, res: Response) => {
 };
 
 /**
- * Update Launch Map metadata (launchDate, isLaunchDate milestone flag, workstream, notes)
+ * Update Launch Map metadata (launchDate, targetPeriod, isLaunchDate milestone flag, workstream, details, notes)
  * and trigger IN REVIEW notification to Project Managers and Auditors if status is IN REVIEW.
  */
 export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { launchDate, isLaunchDate, workstream, notes, syncDueDate } = req.body || {};
+    const { launchDate, targetPeriod, isLaunchDate, workstream, details, notes, syncDueDate } = req.body || {};
     const user = (req as any).user;
 
     const target = parseTaskMapTargetId(id);
@@ -2763,7 +2858,7 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
 
     const result = await upsertTaskLaunchMeta(
       id,
-      { launchDate, isLaunchDate, workstream, notes, syncDueDate },
+      { launchDate, targetPeriod, isLaunchDate, workstream, details, notes, syncDueDate },
       user?.id || null
     );
 
@@ -2775,6 +2870,7 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
       taskId: id,
       launchMeta: result.launchMeta,
       effectiveLaunchDate: result.effectiveLaunchDate,
+      targetPeriod: result.targetPeriod,
       dueDate: result.dueDate,
     });
     io.emit('task:updated', {
@@ -2782,12 +2878,14 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
       dueDate: result.dueDate,
       launchMeta: result.launchMeta,
       effectiveLaunchDate: result.effectiveLaunchDate,
+      targetPeriod: result.targetPeriod,
     });
 
     res.json({
       success: true,
       launchMeta: result.launchMeta,
       effectiveLaunchDate: result.effectiveLaunchDate,
+      targetPeriod: result.targetPeriod,
       dueDate: result.dueDate,
       alertSent: alertRes.sent,
     });

@@ -238,8 +238,8 @@ function LazyMarkdownVideo({ src, onPreview }: { src: string; onPreview: (src: s
         }}
       >
         <File className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-secondary/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
-          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load video</span>
+        <span className="absolute inset-0 bg-[#000000]/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-[#ffffff] bg-[#09090b]/80 border !border-[#ffffff]/15 px-2.5 py-1 rounded-md shadow-md">Click to load video</span>
         </span>
       </span>
     );
@@ -5362,7 +5362,7 @@ export function TaskDetailModalContent({
                         {isImage && previewUrl ? (
                           <>
                             <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
-                            <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                            <span className="absolute bottom-0 inset-x-0 bg-[#09090b]/75 text-[8px] text-[#ffffff] font-medium text-center py-0.5">
                               {sizeFormatted}
                             </span>
                             {isSoftWarning && (
@@ -5393,7 +5393,7 @@ export function TaskDetailModalContent({
                         <button
                           onClick={() => setStagedFiles(prev => prev.filter((_, i) => i !== idx))}
                           title="Remove"
-                          className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          className="absolute top-1 right-1 p-0.5 bg-[#09090b]/80 hover:bg-red-600 border !border-[#ffffff]/15 rounded-full text-[#d4d4d8] hover:text-[#ffffff] shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -9728,7 +9728,7 @@ export function SubtaskDetailView({
                         {isImage && previewUrl ? (
                           <>
                             <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
-                            <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[8px] text-white font-medium text-center py-0.5">
+                            <span className="absolute bottom-0 inset-x-0 bg-[#09090b]/75 text-[8px] text-[#ffffff] font-medium text-center py-0.5">
                               {sizeFormatted}
                             </span>
                             {isSoftWarning && (
@@ -9759,7 +9759,7 @@ export function SubtaskDetailView({
                         <button
                           onClick={() => setStagedFiles(prev => prev.filter((_, idx) => idx !== i))}
                           title="Remove"
-                          className="absolute top-1 right-1 p-0.5 bg-black/80 hover:bg-red-600 border border-zinc-700/80 rounded-full text-zinc-300 hover:text-white shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          className="absolute top-1 right-1 p-0.5 bg-[#09090b]/80 hover:bg-red-600 border !border-[#ffffff]/15 rounded-full text-[#d4d4d8] hover:text-[#ffffff] shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                         >
                           <X className="w-3 h-3" />
                         </button>

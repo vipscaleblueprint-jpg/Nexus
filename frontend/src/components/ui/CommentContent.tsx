@@ -93,8 +93,8 @@ function PreloadableMarkdownVideo({ src }: { src: string }) {
         title="Click to load video"
       >
         <Film className="w-10 h-10 text-zinc-500 opacity-50" />
-        <span className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/video-load:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
-          <span className="text-xs font-medium text-white bg-black/60 px-2 py-1 rounded-md">Click to load video</span>
+        <span className="absolute inset-0 bg-[#000000]/40 flex items-center justify-center opacity-0 group-hover/video-load:opacity-100 transition-opacity backdrop-blur-[2px] rounded-lg">
+          <span className="text-xs font-medium text-[#ffffff] bg-[#09090b]/80 border !border-[#ffffff]/15 px-2.5 py-1 rounded-md shadow-md">Click to load video</span>
         </span>
       </span>
     );

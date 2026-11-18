@@ -457,7 +457,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
       toast.info('Task moved to General CRM Pool');
       onStatusChange(taskId, updatedStatuses);
       if ((task.status || '').toUpperCase() !== 'CRM') {
-        const transitionCheck = canTransitionTaskStatus(task, 'CRM');
+        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+        const transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
         if (!transitionCheck.allowed) {
           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
             window.dispatchEvent(
@@ -497,7 +498,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
       }
 
       // 2. Status transition check for Waiting
-      const transitionCheck = canTransitionTaskStatus(task, 'Waiting');
+      const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+      const transitionCheck = canTransitionTaskStatus(currentTask, 'Waiting');
       if (!transitionCheck.allowed) {
         if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
           window.dispatchEvent(
@@ -543,7 +545,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
       }
 
       // 2. Status transition rulings: all subtasks closed, all required audits checked!
-      const transitionCheck = canTransitionTaskStatus(task, 'CLOSED');
+      const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+      const transitionCheck = canTransitionTaskStatus(currentTask, 'CLOSED');
       if (!transitionCheck.allowed) {
         if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
           window.dispatchEvent(
@@ -1055,7 +1058,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                   currentStatus={task.status || 'In progress'}
                                   listId={task.listId || task.list?.id}
                                   onSelect={async (newStatus) => {
-                                    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+                                    const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                                    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
                                     if (!transitionCheck.allowed) {
                                       if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                         window.dispatchEvent(
@@ -1144,7 +1148,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
                                     if (label === 'To send') {
                                       if (isSelecting) {
-                                        const transitionCheck = canTransitionTaskStatus(task, 'CRM');
+                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(
@@ -1190,7 +1195,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                       }
                                     } else if (label === 'Sent') {
                                       if (isSelecting) {
-                                        const transitionCheck = canTransitionTaskStatus(task, 'WAITING');
+                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'WAITING');
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(
@@ -1236,7 +1242,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                       }
                                     } else if (label === 'Closed') {
                                       if (isSelecting) {
-                                        const transitionCheck = canTransitionTaskStatus(task, 'CLOSED');
+                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'CLOSED');
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(

@@ -194,7 +194,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
   const getAuditItem = (text: string) => {
     const norm = normalizeAuditName(text);
     const matches = auditChecklists.flatMap((c: any) => c.items || []).filter((i: any) => normalizeAuditName(i.text) === norm);
-    return matches.find((i: any) => i.assigneeId?.length || i.completed) || matches[0];
+    return matches.find((i: any) => i.completed) || matches.find((i: any) => i.assigneeId?.length) || matches[0];
   };
 
   const uncheckedAudits: string[] = [];

@@ -199,7 +199,8 @@ const CardContent = memo(({
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
 
-    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+    const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
     if (!transitionCheck.allowed) {
       closeDropdown();
       window.dispatchEvent(new CustomEvent('card:shake', { detail: { taskId: task.id } }));

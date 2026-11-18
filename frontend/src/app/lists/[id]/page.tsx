@@ -922,8 +922,9 @@ export default function BoardPage() {
     list?.name,
   ].filter(Boolean).join(' / ');
 
-  const handleTaskMove = async (taskId: string, newStatus: string) => {
-    const task = list?.tasks?.find((t: any) => t.id === taskId);
+  const handleTaskMove = async (taskId: string, newStatus: string, taskOverride?: any) => {
+    const storeTask = useAppStore.getState().tasks.find((t: any) => t.id === taskId);
+    const task = taskOverride || storeTask || list?.tasks?.find((t: any) => t.id === taskId);
     if (task) {
       const check = canUserMoveTask(task, list?.statuses, currentUser, workspaceRoles);
       if (!check.allowed) {
@@ -1048,36 +1049,35 @@ export default function BoardPage() {
           workspaceRoles={workspaceRoles}
           onStatusChange={(newStatus: string) => {
             if (selectedTask) {
-              const check = canUserMoveTask(selectedTask, list?.statuses, currentUser, workspaceRoles);
+              const currentTask = useAppStore.getState().tasks.find((t: any) => t.id === selectedTask.id) || selectedTask;
+              const check = canUserMoveTask(currentTask, list?.statuses, currentUser, workspaceRoles);
               if (!check.allowed) {
                 toast.error(check.reason || 'You do not have permission to move tasks from this status');
                 return;
               }
-              const transitionCheck = canTransitionTaskStatus(selectedTask, newStatus);
+              const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
               if (!transitionCheck.allowed) {
                 toast.error(transitionCheck.reason || 'Cannot move task to this status.');
                 return;
               }
-              handleTaskMove(selectedTask.id, newStatus);
-              setSelectedTask({ ...selectedTask, status: newStatus });
+              handleTaskMove(selectedTask.id, newStatus, currentTask);
+              setSelectedTask({ ...currentTask, status: newStatus });
             }
           }}
           onUpdateTask={async (updatedTask: any) => {
             // Sync board and modal state
             localTaskEditsRef.current.set(updatedTask.id, Date.now());
             useAppStore.getState().updateTask(updatedTask);
-            setTimeout(() => {
-              setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
-              setList((prev: any) => ({
-                ...prev,
-                tasks: prev?.tasks ? prev.tasks.map((t: any) => {
-                  if (t.id === updatedTask.id) {
-                    return { ...t, ...updatedTask };
-                  }
-                  return t;
-                }) : []
-              }));
-            }, 0);
+            setSelectedTask((prev: any) => prev?.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
+            setList((prev: any) => ({
+              ...prev,
+              tasks: prev?.tasks ? prev.tasks.map((t: any) => {
+                if (t.id === updatedTask.id) {
+                  return { ...t, ...updatedTask };
+                }
+                return t;
+              }) : []
+            }));
           }}
         />
       )}

@@ -1102,7 +1102,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                   currentStatus={task.status || 'In progress'}
                                   listId={task.listId || task.list?.id}
                                   onSelect={async (newStatus) => {
-                                    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+                                    const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                                    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
                                     if (!transitionCheck.allowed) {
                                       if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                         window.dispatchEvent(
@@ -1190,7 +1191,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                     
                                     if (norm === 'to send') {
                                       if (isSelecting) {
-                                        const transitionCheck = canTransitionTaskStatus(task, 'CRM');
+                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(

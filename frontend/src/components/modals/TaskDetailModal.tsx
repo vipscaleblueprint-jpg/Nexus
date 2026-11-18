@@ -2656,12 +2656,13 @@ export function TaskDetailModalContent({
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!task) return;
 
-    const transitionCheck = canTransitionTaskStatus(task, newStatus);
+    const currentTask = taskRef.current || task;
+    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
     if (!transitionCheck.allowed) {
       if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
         window.dispatchEvent(new CustomEvent('task:highlight-audits', {
           detail: {
-            taskId: task.id,
+            taskId: currentTask.id,
             targetStatus: newStatus,
             uncheckedAudits: transitionCheck.uncheckedAudits,
             openSubtasks: transitionCheck.openSubtasks,
@@ -2673,7 +2674,7 @@ export function TaskDetailModalContent({
     }
 
     if (newStatus.toLowerCase() === 'revision') {
-      const updatedChecklists = (task.checklists || []).map(c => {
+      const updatedChecklists = (currentTask.checklists || []).map(c => {
         if (isNexusAuditChecklist(c)) {
           return {
             ...c,
@@ -2683,7 +2684,7 @@ export function TaskDetailModalContent({
         return c;
       });
       if (onUpdateTask) {
-        onUpdateTask({ ...task, checklists: updatedChecklists });
+        onUpdateTask({ ...currentTask, checklists: updatedChecklists });
       }
     }
 
@@ -2705,7 +2706,7 @@ export function TaskDetailModalContent({
     };
     setActivities(prev => [...prev, optimisticActivity]);
 
-    const updatedTask = { ...task, status: newStatus };
+    const updatedTask = { ...currentTask, status: newStatus };
     useAppStore.getState().updateTask(updatedTask);
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
 
@@ -2716,14 +2717,14 @@ export function TaskDetailModalContent({
     
     // Let the caller (dashboard, doc, activity page) reflect the new status right away
     if (onUpdateTask) onUpdateTask(updatedTask);
-    else task.status = newStatus;
+    else if (taskRef.current) taskRef.current.status = newStatus;
 
     try {
       let res: any;
-      if ((task as any).parentTaskId) {
-        res = await tasksApi.updateSubtask((task as any).parentTaskId, task.id, { status: newStatus });
+      if ((currentTask as any).parentTaskId) {
+        res = await tasksApi.updateSubtask((currentTask as any).parentTaskId, currentTask.id, { status: newStatus });
       } else {
-        res = await tasksApi.moveTask(task.id, newStatus, task.listId, currentUser?.id);
+        res = await tasksApi.moveTask(currentTask.id, newStatus, currentTask.listId, currentUser?.id);
       }
       if (res?.activity) {
         // Replace optimistic entry with real one from server
@@ -4483,10 +4484,10 @@ export function TaskDetailModalContent({
               {/* Action Buttons (Notes, Attachments, etc) */}
               <div className="mt-1 flex flex-col gap-1 w-full">
                 <AuditSection
-                  task={{ ...task, status: localStatus || task.status }}
-                  title={task.title}
+                  task={{ ...(taskRef.current || task), status: localStatus || task.status }}
+                  title={taskRef.current?.title || task.title}
                   users={workspaceUsers || []}
-                  checklists={task.checklists || []}
+                  checklists={taskRef.current?.checklists || task.checklists || []}
                   currentUser={currentUser}
                   socket={socket}
                   onUpdateChecklists={(checklists) => {

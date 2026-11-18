@@ -17,6 +17,7 @@ import {
   isUiUxAudit,
   isDesignAudit,
   AuditPermissionCheck,
+  normalizeAuditName,
 } from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor, isSystemUser } from '@/lib/taskTokens';
@@ -24,17 +25,12 @@ import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 
-export { getRequiredAudits, ALL_AUDIT_OPTIONS };
+export { getRequiredAudits, ALL_AUDIT_OPTIONS, normalizeAuditName };
 
 // TEMPORARY TOGGLES: Hidden per user request until process is finalized. Set to false to restore.
 export const HIDE_AUDIT_DELETE = false;
 export const HIDE_ADD_AUDIT = true;
 export const HIDE_DESIGN_AUDIT = true;
-
-export const normalizeAuditName = (name: string) => {
-  const clean = (name || '').trim().toLowerCase();
-  return clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
-};
 
 const generateTempChecklistId = () => `temp-cl-${Date.now()}`;
 const generateTempItemId = () => `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -521,12 +517,15 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       } else {
         const isExistingTemp = typeof existing.id === 'string' && existing.id.startsWith('temp-');
         const isItemTemp = typeof item.id === 'string' && item.id.startsWith('temp-');
+        const mergedCompleted = Boolean(existing.completed || item.completed);
+        const mergedAssigneeId = (item.assigneeId && item.assigneeId.length > 0) ? item.assigneeId : existing.assigneeId;
+
         if (isExistingTemp && !isItemTemp) {
-          map.set(norm, { ...existing, ...item, id: item.id, checklistId: item.checklistId });
+          map.set(norm, { ...existing, ...item, id: item.id, checklistId: item.checklistId, completed: mergedCompleted, assigneeId: mergedAssigneeId });
         } else if (!isExistingTemp && isItemTemp) {
-          map.set(norm, { ...item, ...existing, completed: item.completed, assigneeId: item.assigneeId });
+          map.set(norm, { ...item, ...existing, completed: mergedCompleted, assigneeId: mergedAssigneeId });
         } else {
-          map.set(norm, { ...existing, ...item });
+          map.set(norm, { ...existing, ...item, completed: mergedCompleted, assigneeId: mergedAssigneeId });
         }
       }
     }

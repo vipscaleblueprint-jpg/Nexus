@@ -21,6 +21,7 @@ import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tab
 import { applyTheme, getStoredTheme } from '@/lib/theme';
 import { playNotificationSound, preloadCustomSound } from '@/lib/soundNotification';
 import { initGlobalTaskNewTabListeners } from '@/lib/taskNavigation';
+import { normalizeAuditName, isNexusAuditChecklist } from '@/lib/auditChecklist';
 
 // Global guard for browsers/Next.js devtools releasing inactive pointer capture
 if (typeof window !== 'undefined' && typeof Element !== 'undefined' && Element.prototype.releasePointerCapture) {
@@ -466,16 +467,27 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         const store = useAppStore.getState();
         const existingTask = store.tasks.find((t: any) => t.id === payload.taskId);
         if (existingTask) {
-          const checklists = (existingTask.checklists || []).map((c: any) => {
-            if (c.id === payload.checklistId || c.name?.toLowerCase() === 'audit') {
-              const items = (c.items || []).some((i: any) => i.id === payload.item.id)
-                ? (c.items || []).map((i: any) => i.id === payload.item.id ? payload.item : i)
+          const normText = normalizeAuditName((payload.item.text || '').replace(/^!\s*/, ''));
+          const updateLists = (lists: any[] = []) => lists.map((c: any) => {
+            const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit';
+            if (c.id === payload.checklistId || isAudit) {
+              const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === normText));
+              const items = hasItem
+                ? (c.items || []).map((i: any) => (i.id === payload.item.id || (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === normText)) ? { ...i, ...payload.item } : i)
                 : [...(c.items || []), payload.item];
               return { ...c, items };
             }
             return c;
           });
-          store.updateTask({ ...existingTask, checklists });
+
+          if (payload.subtaskId) {
+            const subtasks = (existingTask.subtasks || []).map((st: any) =>
+              st.id === payload.subtaskId ? { ...st, checklists: updateLists(st.checklists) } : st
+            );
+            store.updateTask({ ...existingTask, subtasks });
+          } else {
+            store.updateTask({ ...existingTask, checklists: updateLists(existingTask.checklists) });
+          }
         }
       }
     });
@@ -486,32 +498,59 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         const store = useAppStore.getState();
         const existingTask = store.tasks.find((t: any) => t.id === payload.taskId);
         if (existingTask) {
-          const checklists = (existingTask.checklists || []).map((c: any) => {
-            if (c.id === payload.checklistId || c.name?.toLowerCase() === 'audit') {
-              const items = (c.items || []).map((i: any) => i.id === payload.item.id ? { ...i, ...payload.item } : i);
+          const normText = normalizeAuditName((payload.item.text || '').replace(/^!\s*/, ''));
+          const updateLists = (lists: any[] = []) => lists.map((c: any) => {
+            const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit';
+            if (c.id === payload.checklistId || isAudit) {
+              const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === normText));
+              const items = hasItem
+                ? (c.items || []).map((i: any) => (i.id === payload.item.id || (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === normText)) ? { ...i, ...payload.item } : i)
+                : [...(c.items || []), payload.item];
               return { ...c, items };
             }
             return c;
           });
-          store.updateTask({ ...existingTask, checklists });
+
+          if (payload.subtaskId) {
+            const subtasks = (existingTask.subtasks || []).map((st: any) =>
+              st.id === payload.subtaskId ? { ...st, checklists: updateLists(st.checklists) } : st
+            );
+            store.updateTask({ ...existingTask, subtasks });
+          } else {
+            store.updateTask({ ...existingTask, checklists: updateLists(existingTask.checklists) });
+          }
         }
       }
     });
 
     s.on('task:checklist_item_deleted', (payload: any) => {
       window.dispatchEvent(new CustomEvent('task:checklist_item_deleted', { detail: payload }));
-      if (payload?.taskId && payload?.itemId) {
+      if (payload?.taskId && (payload?.itemId || payload?.text)) {
         const store = useAppStore.getState();
         const existingTask = store.tasks.find((t: any) => t.id === payload.taskId);
         if (existingTask) {
-          const checklists = (existingTask.checklists || []).map((c: any) => {
-            if (c.id === payload.checklistId || c.name?.toLowerCase() === 'audit') {
-              const items = (c.items || []).filter((i: any) => i.id !== payload.itemId);
+          const normText = payload.text ? normalizeAuditName((payload.text || '').replace(/^!\s*/, '')) : null;
+          const filterLists = (lists: any[] = []) => lists.map((c: any) => {
+            const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit';
+            if (c.id === payload.checklistId || isAudit) {
+              const items = (c.items || []).filter((i: any) => {
+                if (payload.itemId && i.id === payload.itemId) return false;
+                if (isAudit && normText && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === normText) return false;
+                return true;
+              });
               return { ...c, items };
             }
             return c;
           });
-          store.updateTask({ ...existingTask, checklists });
+
+          if (payload.subtaskId) {
+            const subtasks = (existingTask.subtasks || []).map((st: any) =>
+              st.id === payload.subtaskId ? { ...st, checklists: filterLists(st.checklists) } : st
+            );
+            store.updateTask({ ...existingTask, subtasks });
+          } else {
+            store.updateTask({ ...existingTask, checklists: filterLists(existingTask.checklists) });
+          }
         }
       }
     });

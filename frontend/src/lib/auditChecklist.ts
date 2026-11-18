@@ -153,7 +153,8 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
   );
 
   const auditChecklists = (task.checklists || []).filter((c: any) => {
-    if (!isNexusAuditChecklist(c)) return false;
+    const isAudit = isNexusAuditChecklist(c) || (c.name || '').trim().toLowerCase() === 'audit';
+    if (!isAudit) return false;
     if (isSubtask) {
       return !c.subtaskId || c.subtaskId === task.id;
     }

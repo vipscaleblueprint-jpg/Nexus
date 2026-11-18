@@ -31,6 +31,7 @@ import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
+import { tasksApi } from '@/api/tasks';
 const EMPTY_ARRAY: any[] = [];
 
 interface Props {
@@ -1375,7 +1376,21 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     if (finalStatus !== originalTask.status) {
-      const transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
+      let transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
+      if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0 && originalTask?.id) {
+        try {
+          const fresh = await tasksApi.getTask(originalTask.id);
+          if (fresh?.task) {
+            const freshCheck = canTransitionTaskStatus(fresh.task, finalStatus);
+            if (freshCheck.allowed) {
+              transitionCheck = freshCheck;
+              useAppStore.getState().updateTask(fresh.task);
+            }
+          }
+        } catch {
+          // fallback
+        }
+      }
       if (!transitionCheck.allowed) {
         setLocalTasks([...latestTasksRef.current]);
         // Visual rejection feedback: shake card on Kanban board

@@ -2230,12 +2230,21 @@ export function TaskDetailModalContent({
       if (!currentTask || payload.taskId !== currentTask.id || !payload.item) return;
 
       if (!payload.subtaskId) {
+        const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
+        const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
-            const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+          const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+          if (c.id === payload.checklistId || isAudit) {
+            const hasItem = (c.items || []).some((i: any) =>
+              i.id === payload.item.id ||
+              (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text) ||
+              (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === itemNorm)
+            );
             if (hasItem) {
               const items = (c.items || []).map((i: any) =>
-                (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                (i.id === payload.item.id ||
+                 (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text) ||
+                 (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === itemNorm))
                   ? { ...i, ...payload.item }
                   : i
               );
@@ -2250,14 +2259,23 @@ export function TaskDetailModalContent({
         taskRef.current = updatedTask;
         if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
       } else {
+        const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
+        const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
-                const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+              const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+              if (c.id === payload.checklistId || isAudit) {
+                const hasItem = (c.items || []).some((i: any) =>
+                  i.id === payload.item.id ||
+                  (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text) ||
+                  (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === itemNorm)
+                );
                 if (hasItem) {
                   const items = (c.items || []).map((i: any) =>
-                    (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+                    (i.id === payload.item.id ||
+                     (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text) ||
+                     (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === itemNorm))
                       ? { ...i, ...payload.item }
                       : i
                   );
@@ -2656,8 +2674,27 @@ export function TaskDetailModalContent({
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!task) return;
 
-    const currentTask = taskRef.current || task;
-    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+    let currentTask = taskRef.current || task;
+    let transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+    if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+      // Re-verify with authoritative server state in case audits were completed by another user
+      // or client memory held a stale snapshot
+      try {
+        const fresh = await tasksApi.getTask(currentTask.id);
+        if (fresh?.task) {
+          const freshCheck = canTransitionTaskStatus(fresh.task, newStatus);
+          if (freshCheck.allowed) {
+            transitionCheck = freshCheck;
+            currentTask = fresh.task;
+            taskRef.current = fresh.task;
+            if (onUpdateTask) onUpdateTask(fresh.task);
+            useAppStore.getState().updateTask(fresh.task);
+          }
+        }
+      } catch {
+        // Fallback to local check result
+      }
+    }
     if (!transitionCheck.allowed) {
       if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
         window.dispatchEvent(new CustomEvent('task:highlight-audits', {
@@ -6530,8 +6567,25 @@ export function SubtaskDetailView({
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!subtask || isSubmittingStatus) return;
 
-    const currentSubtask = subtaskRef.current || subtask;
-    const transitionCheck = canTransitionTaskStatus(currentSubtask, newStatus);
+    let currentSubtask = subtaskRef.current || subtask;
+    let transitionCheck = canTransitionTaskStatus(currentSubtask, newStatus);
+    if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+      try {
+        const fresh = await tasksApi.getTask(parentTask.id);
+        const freshSub = (fresh?.task?.subtasks || []).find((s: any) => s.id === currentSubtask.id);
+        if (freshSub) {
+          const freshCheck = canTransitionTaskStatus(freshSub, newStatus);
+          if (freshCheck.allowed) {
+            transitionCheck = freshCheck;
+            currentSubtask = freshSub;
+            subtaskRef.current = freshSub;
+            syncSubtaskToParent(freshSub);
+          }
+        }
+      } catch {
+        // Fallback to local check result
+      }
+    }
     if (!transitionCheck.allowed) {
       window.dispatchEvent(new CustomEvent('task:highlight-audits', {
         detail: {
@@ -6917,13 +6971,22 @@ export function SubtaskDetailView({
       if (!currentSub || payload.subtaskId !== currentSub.id || !payload.item) return;
 
       let found = false;
+      const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
+      const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
       const checklists = (currentSub.checklists || []).map((c: any) => {
-        if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+        const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+        if (c.id === payload.checklistId || isAudit) {
           found = true;
-          const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
+          const hasItem = (c.items || []).some((i: any) =>
+            i.id === payload.item.id ||
+            (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text) ||
+            (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === itemNorm)
+          );
           if (hasItem) {
             const items = (c.items || []).map((i: any) =>
-              (i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text))
+              (i.id === payload.item.id ||
+               (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text) ||
+               (isAudit && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === itemNorm))
                 ? { ...i, ...payload.item }
                 : i
             );
@@ -6934,14 +6997,13 @@ export function SubtaskDetailView({
         }
         return c;
       });
-      const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
       const finalChecklists = found ? checklists : [
         ...(currentSub.checklists || []),
         {
           id: payload.checklistId,
           taskId: parentTask.id,
           subtaskId: currentSub.id,
-          name: isAudit ? 'Audit' : 'Checklist',
+          name: isAuditItem ? 'Audit' : 'Checklist',
           createdAt: new Date().toISOString(),
           items: [payload.item],
         }
@@ -10136,18 +10198,20 @@ export function TaskDetailModal(props: Props) {
                   });
                 });
 
+                const hasLocalChecklistEdits = locallyEditedKeysRef.current.has('checklists');
                 const mergedChecklists = (res.task.checklists || []).map((c: any) => {
                   const items = (c.items || []).map((serverItem: any) => {
                     const normText = normalizeAuditName(serverItem.text || '');
                     const prevItem = prevItemsMap.get(String(serverItem.id)) || prevItemsMap.get(normText);
-                    if (prevItem && prevItem.completed !== undefined) {
+                    // Only preserve prevItem if user explicitly modified checklists locally during this session,
+                    // or if prevItem had an optimistic check (completed: true) not yet in serverItem.
+                    // Never overwrite a true completed item from the server with a stale false!
+                    if (prevItem && ((hasLocalChecklistEdits && prevItem.completed !== undefined) || (prevItem.completed && !serverItem.completed))) {
                       return {
                         ...serverItem,
                         completed: prevItem.completed,
                         checkedById: prevItem.completed ? (prevItem.checkedById || serverItem.checkedById) : null,
                         checkedBy: prevItem.completed ? (prevItem.checkedBy || serverItem.checkedBy) : null,
-
-
                       };
                     }
                     return serverItem;

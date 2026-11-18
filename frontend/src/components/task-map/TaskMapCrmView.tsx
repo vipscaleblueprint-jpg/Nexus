@@ -458,7 +458,21 @@ export const TaskMapCrmView: React.FC<Props> = ({
       onStatusChange(taskId, updatedStatuses);
       if ((task.status || '').toUpperCase() !== 'CRM') {
         const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-        const transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+          try {
+            const fresh = await tasksApi.getTask(task.id);
+            if (fresh?.task) {
+              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+              if (freshCheck.allowed) {
+                transitionCheck = freshCheck;
+                useAppStore.getState().updateTask(fresh.task);
+              }
+            }
+          } catch {
+            // fallback
+          }
+        }
         if (!transitionCheck.allowed) {
           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
             window.dispatchEvent(
@@ -1149,7 +1163,21 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                     if (label === 'To send') {
                                       if (isSelecting) {
                                         const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+                                        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+                                        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                                          try {
+                                            const fresh = await tasksApi.getTask(task.id);
+                                            if (fresh?.task) {
+                                              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+                                              if (freshCheck.allowed) {
+                                                transitionCheck = freshCheck;
+                                                useAppStore.getState().updateTask(fresh.task);
+                                              }
+                                            }
+                                          } catch {
+                                            // fallback
+                                          }
+                                        }
                                         if (!transitionCheck.allowed) {
                                           if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                                             window.dispatchEvent(

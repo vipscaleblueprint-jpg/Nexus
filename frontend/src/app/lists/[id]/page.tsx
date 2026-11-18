@@ -931,7 +931,21 @@ export default function BoardPage() {
         toast.error(check.reason || 'You do not have permission to move tasks from this status');
         return;
       }
-      const transitionCheck = canTransitionTaskStatus(task, newStatus);
+      let transitionCheck = canTransitionTaskStatus(task, newStatus);
+      if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0 && task?.id) {
+        try {
+          const fresh = await tasksApi.getTask(task.id);
+          if (fresh?.task) {
+            const freshCheck = canTransitionTaskStatus(fresh.task, newStatus);
+            if (freshCheck.allowed) {
+              transitionCheck = freshCheck;
+              useAppStore.getState().updateTask(fresh.task);
+            }
+          }
+        } catch {
+          // fallback
+        }
+      }
       if (!transitionCheck.allowed) {
         toast.error(transitionCheck.reason || 'Cannot move task to this status.');
         return;
@@ -1055,7 +1069,21 @@ export default function BoardPage() {
                 toast.error(check.reason || 'You do not have permission to move tasks from this status');
                 return;
               }
-              const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+              let transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+              if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0 && currentTask?.id) {
+                try {
+                  const fresh = await tasksApi.getTask(currentTask.id);
+                  if (fresh?.task) {
+                    const freshCheck = canTransitionTaskStatus(fresh.task, newStatus);
+                    if (freshCheck.allowed) {
+                      transitionCheck = freshCheck;
+                      useAppStore.getState().updateTask(fresh.task);
+                    }
+                  }
+                } catch {
+                  // fallback
+                }
+              }
               if (!transitionCheck.allowed) {
                 toast.error(transitionCheck.reason || 'Cannot move task to this status.');
                 return;

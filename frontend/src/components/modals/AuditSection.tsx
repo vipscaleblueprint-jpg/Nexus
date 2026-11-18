@@ -451,7 +451,8 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
 
   // Read items from audit checklists for this task or subtask
   const auditChecklists = useMemo(() => localChecklists.filter(c => {
-    if (!isNexusAuditChecklist(c)) return false;
+    const isAudit = isNexusAuditChecklist(c) || (c.name || '').trim().toLowerCase() === 'audit';
+    if (!isAudit) return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId;
     } else {

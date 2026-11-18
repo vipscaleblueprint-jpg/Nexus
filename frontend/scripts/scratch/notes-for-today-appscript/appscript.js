@@ -154,9 +154,11 @@ function onEdit(e) {
         // ✅ Add isComment flag if Column K was edited
         // ✅ Add isComment flag only if Column K value is a link
         if (isCommentEdit) {
-            const colKValue = sheet.getRange(row, commentColIndex).getValue().toString().trim();
-            const isLink = /^https?:\/\//i.test(colKValue);
+            const colKCell = sheet.getRange(row, commentColIndex);
+            const colKValue = getCellRichTextAsMarkdown(colKCell);
+            const isLink = /https?:\/\//i.test(colKValue);
             data.isComment = isLink ? true : false;
+            data[headers[commentColIndex - 1] || "Deliverables Links"] = colKValue;
         }
 
         // 🛰️ Send webhook
@@ -1301,4 +1303,85 @@ function installNexusLinkTrigger() {
         .filter(t => t.getHandlerFunction() === "fillNexusLinks")
         .forEach(t => ScriptApp.deleteTrigger(t));
     ScriptApp.newTrigger("fillNexusLinks").timeBased().everyMinutes(5).create();
+}
+
+// Reads a cell while preserving embedded hyperlinks as Markdown [text](url).
+// If a user inserted a link into text (Ctrl+K or Insert Link), getDisplayValue()
+// strips it; this recovers each run's link and formats it as [text](url).
+// Naked URLs (text === url) are kept bare. Plain text is returned as-is.
+function getCellRichTextAsMarkdown(cell) {
+    if (!cell) return "";
+
+    // 1. Check for =HYPERLINK("url", "text") formula
+    try {
+        const formula = cell.getFormula();
+        if (formula) {
+            const match = formula.match(/HYPERLINK\(\s*"([^"]+)"(?:\s*,\s*"([^"]*)")?\s*\)/i);
+            if (match) {
+                const url = match[1].trim();
+                const label = (match[2] !== undefined ? match[2].trim() : "") || cell.getDisplayValue().trim() || url;
+                if (!label || label === url) return url;
+                return `[${label}](${url})`;
+            }
+        }
+    } catch (e) {
+        // Continue to rich text check
+    }
+
+    // 2. Check for RichTextValue (embedded hyperlinks inside text runs)
+    try {
+        const rich = cell.getRichTextValue();
+        if (rich) {
+            const runs = rich.getRuns();
+            if (runs && runs.length > 0) {
+                const hasAnyLink = runs.some(r => !!r.getLinkUrl());
+                if (hasAnyLink) {
+                    let text = "";
+                    for (let i = 0; i < runs.length; i++) {
+                        const run = runs[i];
+                        const runText = run.getText();
+                        const runUrl = run.getLinkUrl();
+                        if (!runText) continue;
+
+                        if (runUrl && runUrl.trim()) {
+                            const trimmedUrl = runUrl.trim();
+                            const trimmedText = runText.trim();
+
+                            if (trimmedText === trimmedUrl) {
+                                text += runText;
+                            } else {
+                                const leadMatch = runText.match(/^\s*/);
+                                const trailMatch = runText.match(/\s*$/);
+                                const lead = leadMatch ? leadMatch[0] : "";
+                                const trail = trailMatch ? trailMatch[0] : "";
+                                const core = runText.slice(lead.length, runText.length - (trail.length || undefined));
+
+                                if (core) {
+                                    text += `${lead}[${core}](${trimmedUrl})${trail}`;
+                                } else {
+                                    text += runText;
+                                }
+                            }
+                        } else {
+                            text += runText;
+                        }
+                    }
+                    if (text.trim()) return text.trim();
+                }
+            }
+
+            // Fallback for single hyperlink on entire cell
+            const entireUrl = rich.getLinkUrl();
+            if (entireUrl && entireUrl.trim()) {
+                const trimmedUrl = entireUrl.trim();
+                const display = cell.getDisplayValue().trim();
+                if (!display || display === trimmedUrl) return trimmedUrl;
+                return `[${display}](${trimmedUrl})`;
+            }
+        }
+    } catch (e) {
+        // Fall back to display value
+    }
+
+    return cell.getDisplayValue().trim();
 }

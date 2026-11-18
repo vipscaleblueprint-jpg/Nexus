@@ -154,7 +154,7 @@ export function normalizeMentionLinks(content: string): string {
   if (!content || !content.includes('mention://')) return content;
 
   // 1. Flatten any accidental nested mention links: <a href="mention://id1"><a href="mention://id2">@Name</a></a> -> <a href="mention://id1">@Name</a>
-  let cleaned = content.replace(
+  const cleaned = content.replace(
     /<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>\s*<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/a>/gi,
     (_full, id1, id2, inner) => {
       const chosenId = id1 && !id1.startsWith('unknown') ? id1 : id2;
@@ -278,6 +278,13 @@ export function commentHtmlForMarkdown(content: string): string {
       // Fallback
     }
   }
+
+  // Convert markdown links [label](url) inside HTML blocks to <a href="url">label</a>
+  // so ReactMarkdown with rehype-raw renders them as interactive links with hover preview
+  decoded = decoded.replace(/<code>[\s\S]*?<\/code>|(\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)<>"]+)\))/g, (match, _p1, label, url) => {
+    if (match.startsWith('<code')) return match;
+    return `<a href="${url}">${label}</a>`;
+  });
 
   return /^\s*<img\b/i.test(decoded) ? `<p></p>${decoded}` : decoded;
 }

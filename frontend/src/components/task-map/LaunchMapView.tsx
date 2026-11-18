@@ -69,18 +69,32 @@ function subscribeViewMode(cb: () => void): () => void {
 
 function getClientViewMode(): CalendarViewMode {
   try {
-    const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    if (saved === 'JOURNAL' || saved === 'MONTH' || saved === 'WEEK' || saved === 'AGENDA') {
+    // Clean up legacy stale 'JOURNAL' from localStorage from when it was previously the default
+    const legacy = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (legacy === 'JOURNAL') {
+      localStorage.removeItem(VIEW_MODE_STORAGE_KEY);
+    }
+
+    const saved =
+      sessionStorage.getItem(VIEW_MODE_STORAGE_KEY) ||
+      localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+
+    if (saved === 'MONTH' || saved === 'WEEK' || saved === 'AGENDA') {
       return saved;
+    }
+
+    // Only allow JOURNAL if explicitly chosen within the current browser session
+    if (saved === 'JOURNAL' && sessionStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'JOURNAL') {
+      return 'JOURNAL';
     }
   } catch {
     // Ignore storage failures
   }
-  return 'JOURNAL';
+  return 'MONTH';
 }
 
 function getServerViewMode(): CalendarViewMode {
-  return 'JOURNAL';
+  return 'MONTH';
 }
 
 interface LaunchMapViewProps {
@@ -383,6 +397,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const handleSetViewMode = useCallback((mode: CalendarViewMode) => {
     try {
+      sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
       localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
     } catch {
       // Ignore
@@ -1182,9 +1197,9 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           <div className="flex items-center bg-[var(--surface)] border border-[var(--border)] rounded-lg p-0.5 text-[11px] font-medium">
             {(
               [
-                { key: 'JOURNAL', label: 'Journal', icon: Table2 },
-                { key: 'MONTH', label: 'Month', icon: null },
+                { key: 'MONTH', label: 'Month', icon: CalendarIcon },
                 { key: 'WEEK', label: 'Week', icon: null },
+                { key: 'JOURNAL', label: 'Journal', icon: Table2 },
                 { key: 'AGENDA', label: 'Agenda', icon: null },
               ] as const
             ).map((opt) => {

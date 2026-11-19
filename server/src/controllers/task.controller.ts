@@ -3598,11 +3598,12 @@ export async function createChecklistItem(req: Request, res: Response) {
               error: 'You cannot audit this task because you inputted into the daily tracker for this task iteration. Please have another team member with the required audit role perform this audit.',
             });
           }
+          data.assigneeId = [userId];
         }
         data.checkedById = userId;
       }
     }
-    if (assigneeIdsInput) {
+    if (assigneeIdsInput && !data.assigneeId) {
       // Assigning auditors is for Project Managers, Seniors and Admins
       if (assigneeIdsInput.length > 0 && isAuditChecklistName(checklist?.name) && !(await canUserSetAssignees(userId))) {
         return res.status(403).json({ error: await getAuditAssignDeniedMessage() });
@@ -3963,13 +3964,14 @@ export async function updateChecklistItem(req: Request, res: Response) {
               error: 'You cannot audit this task because you inputted into the daily tracker for this task iteration. Please have another team member with the required audit role perform this audit.',
             });
           }
+          data.assigneeId = [userId];
         }
         data.checkedById = userId;
       } else if (!completed) {
         data.checkedById = null;
       }
     }
-    if (assigneeIdsInput) {
+    if (assigneeIdsInput && !data.assigneeId) {
       data.assigneeId = assigneeIdsInput;
     }
 

@@ -43,7 +43,12 @@ interface Props {
   auditorRoles?: AuditorRoleOption[];
   auditorTypeFilter?: string;
   onAuditorTypeFilterChange?: (filter: string) => void;
+  developerRoles?: AuditorRoleOption[];
+  developerTypeFilter?: string;
+  onDeveloperTypeFilterChange?: (filter: string) => void;
   isFilterLoading?: boolean;
+  trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
+  onTrackFilterChange?: (filter: 'ALL' | 'LIVE' | 'ACTIVE') => void;
 }
 
 function formatElapsed(startedAt: string, now: Date): string {
@@ -114,7 +119,12 @@ export const TaskMapHeader: React.FC<Props> = ({
   auditorRoles = [],
   auditorTypeFilter = 'ALL',
   onAuditorTypeFilterChange,
+  developerRoles = [],
+  developerTypeFilter = 'ALL',
+  onDeveloperTypeFilterChange,
   isFilterLoading = false,
+  trackFilter = 'ALL',
+  onTrackFilterChange,
 }) => {
   // Live ticking timer for elapsed duration (Reverse-engineered from Teammap.js)
   const [now, setNow] = useState<Date>(new Date());
@@ -144,6 +154,7 @@ export const TaskMapHeader: React.FC<Props> = ({
   const [draftShowAdmin, setDraftShowAdmin] = useState(showAdmin);
   const [draftSelectedMAs, setDraftSelectedMAs] = useState<string[]>(selectedMAs);
   const [draftAuditorFilter, setDraftAuditorFilter] = useState(auditorTypeFilter || 'ALL');
+  const [draftDeveloperFilter, setDraftDeveloperFilter] = useState(developerTypeFilter || 'ALL');
   const [draftSearch, setDraftSearch] = useState(search || '');
   const [isWaitingFilter, setIsWaitingFilter] = useState(false);
 
@@ -168,6 +179,10 @@ export const TaskMapHeader: React.FC<Props> = ({
   }, [auditorTypeFilter]);
 
   useEffect(() => {
+    setDraftDeveloperFilter(developerTypeFilter || 'ALL');
+  }, [developerTypeFilter]);
+
+  useEffect(() => {
     setDraftSearch(search || '');
   }, [search]);
 
@@ -175,6 +190,7 @@ export const TaskMapHeader: React.FC<Props> = ({
   const clientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const auditorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const developerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scheduleShiftCommit = (nextShift: string) => {
@@ -230,6 +246,16 @@ export const TaskMapHeader: React.FC<Props> = ({
     }, 550);
   };
 
+  const scheduleDeveloperFilterCommit = (nextFilter: string) => {
+    setDraftDeveloperFilter(nextFilter);
+    setIsWaitingFilter(true);
+    if (developerTimerRef.current) clearTimeout(developerTimerRef.current);
+    developerTimerRef.current = setTimeout(() => {
+      onDeveloperTypeFilterChange?.(nextFilter);
+      setIsWaitingFilter(false);
+    }, 550);
+  };
+
   const handleSearchInputChange = (val: string) => {
     setDraftSearch(val);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -251,6 +277,11 @@ export const TaskMapHeader: React.FC<Props> = ({
   const [auditorDropdownOpen, setAuditorDropdownOpen] = useState(false);
   const [auditorSearch, setAuditorSearch] = useState('');
   const auditorDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Developer Type dropdown state (Checkbox style)
+  const [developerDropdownOpen, setDeveloperDropdownOpen] = useState(false);
+  const [developerSearch, setDeveloperSearch] = useState('');
+  const developerDropdownRef = useRef<HTMLDivElement>(null);
 
   // Upwork Clients state (Restricted to Project Managers & Admins)
   const currentUser = useAppStore((s) => s.currentUser);
@@ -354,6 +385,102 @@ export const TaskMapHeader: React.FC<Props> = ({
     document.addEventListener('pointerdown', handleClickOutside);
     return () => document.removeEventListener('pointerdown', handleClickOutside);
   }, [maDropdownOpen]);
+
+  useEffect(() => {
+    if (!developerDropdownOpen) return;
+    const handleClickOutside = (e: PointerEvent) => {
+      if (
+        developerDropdownRef.current &&
+        !e.composedPath().includes(developerDropdownRef.current)
+      ) {
+        setDeveloperDropdownOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleClickOutside);
+    return () => document.removeEventListener('pointerdown', handleClickOutside);
+  }, [developerDropdownOpen]);
+
+  // Developer Roles & Checkbox Filter Logic
+  const nonAllDeveloperRoles = React.useMemo(() => {
+    return (developerRoles || []).filter((r) => r.key !== 'ALL');
+  }, [developerRoles]);
+
+  const isDeveloperRoleChecked = (key: string) => {
+    if (!draftDeveloperFilter || draftDeveloperFilter === 'ALL') return true;
+    if (draftDeveloperFilter === 'NONE') return false;
+    const tokens = draftDeveloperFilter.split(',').map((k) => k.trim().toLowerCase());
+    return tokens.includes(key.toLowerCase());
+  };
+
+  const allDevelopersChecked =
+    !draftDeveloperFilter ||
+    draftDeveloperFilter === 'ALL' ||
+    (nonAllDeveloperRoles.length > 0 && nonAllDeveloperRoles.every((r) => isDeveloperRoleChecked(r.key)));
+
+  const handleToggleAllDevelopers = () => {
+    if (allDevelopersChecked) {
+      scheduleDeveloperFilterCommit('NONE');
+    } else {
+      scheduleDeveloperFilterCommit('ALL');
+    }
+  };
+
+  const handleToggleDeveloperRole = (key: string) => {
+    const currentChecked = nonAllDeveloperRoles.filter((r) => isDeveloperRoleChecked(r.key)).map((r) => r.key);
+    let nextKeys: string[];
+    if (currentChecked.some((k) => k.toLowerCase() === key.toLowerCase())) {
+      nextKeys = currentChecked.filter((k) => k.toLowerCase() !== key.toLowerCase());
+    } else {
+      nextKeys = [...currentChecked, key];
+    }
+
+    if (nextKeys.length === 0) {
+      scheduleDeveloperFilterCommit('NONE');
+    } else if (nextKeys.length === nonAllDeveloperRoles.length) {
+      scheduleDeveloperFilterCommit('ALL');
+    } else {
+      scheduleDeveloperFilterCommit(nextKeys.join(','));
+    }
+  };
+
+  const handleSelectOnlyDeveloperRole = (key: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    scheduleDeveloperFilterCommit(key);
+  };
+
+  const handleResetDeveloperFilter = () => {
+    if (developerTimerRef.current) clearTimeout(developerTimerRef.current);
+    setDraftDeveloperFilter('ALL');
+    setIsWaitingFilter(false);
+    onDeveloperTypeFilterChange?.('ALL');
+    setDeveloperDropdownOpen(false);
+  };
+
+  const isDeveloperFiltered = Boolean(draftDeveloperFilter && draftDeveloperFilter !== 'ALL');
+
+  const getDeveloperButtonLabel = () => {
+    if (!draftDeveloperFilter || draftDeveloperFilter === 'ALL' || allDevelopersChecked) {
+      return { label: 'All Developers', isHighlight: false };
+    }
+    if (draftDeveloperFilter === 'NONE') {
+      return { label: '0 Developers', isHighlight: true };
+    }
+    const tokens = draftDeveloperFilter.split(',').map((t) => t.trim()).filter(Boolean);
+    if (tokens.length === 1) {
+      const match = (developerRoles || []).find(
+        (r) => r.key.toLowerCase() === tokens[0].toLowerCase()
+      );
+      return { label: match?.label || tokens[0], isHighlight: true };
+    }
+    return { label: `${tokens.length} Dev Roles`, isHighlight: true };
+  };
+
+  const developerButtonDetails = getDeveloperButtonLabel();
+
+  const filteredDeveloperRoles = nonAllDeveloperRoles.filter((r) =>
+    r.label.toLowerCase().includes(developerSearch.toLowerCase()) ||
+    r.fullRole.toLowerCase().includes(developerSearch.toLowerCase())
+  );
 
   useEffect(() => {
     if (!auditorDropdownOpen) return;
@@ -682,6 +809,8 @@ export const TaskMapHeader: React.FC<Props> = ({
 
     return [
       { key: 'ALL', label: 'All', hoursLabel: 'All shifts' },
+      { key: 'LIVE', label: 'Live', hoursLabel: 'Only users with Live Working clocked in right now' },
+      { key: 'ACTIVE', label: 'Active', hoursLabel: 'Only users who logged progress today' },
       ...dynamicShifts,
       { key: 'CUSTOM', label: 'Custom', hoursLabel: 'Custom MA selection' },
     ];
@@ -801,6 +930,142 @@ export const TaskMapHeader: React.FC<Props> = ({
 
           {/* Right: Shift Switcher, Manage Shifts & Client Selector */}
           <div className="flex items-center gap-2.5 sm:gap-3">
+            {/* Developer Type Dropdown (Checkbox Style with All Developers) */}
+            {currentView === 'BOARD' && developerRoles && developerRoles.length > 0 && (
+              <div className="relative" ref={developerDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setDeveloperDropdownOpen(!developerDropdownOpen)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer shadow-xs select-none ${developerButtonDetails.isHighlight
+                    ? 'bg-indigo-100 hover:bg-indigo-200 text-indigo-800 border border-indigo-300 dark:bg-indigo-950/70 dark:hover:bg-indigo-950 dark:text-indigo-200 dark:border-indigo-700/80 shadow-sm'
+                    : 'bg-card border border-zinc-800/80 hover:border-zinc-700 text-zinc-300 hover:text-zinc-100'
+                    }`}
+                  title={
+                    developerButtonDetails.isHighlight
+                      ? `Filtered: ${developerButtonDetails.label}`
+                      : 'Filter: All Developer Types'
+                  }
+                >
+                  <Users className="size-3.5 shrink-0 text-indigo-400" />
+                  <span className="text-zinc-200 max-w-[120px] sm:max-w-[160px] truncate font-medium">
+                    {developerButtonDetails.label}
+                  </span>
+                  <ChevronDown
+                    className={`size-3 text-zinc-400 transition-transform duration-150 ${developerDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                  />
+                </button>
+
+                {developerDropdownOpen && (
+                  <div
+                    className="absolute right-0 top-full mt-1.5 w-60 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    {/* Search if > 4 developer roles */}
+                    {nonAllDeveloperRoles.length > 4 && (
+                      <div className="px-1.5 py-0.5 relative">
+                        <Search className="size-3 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={developerSearch}
+                          onChange={(e) => setDeveloperSearch(e.target.value)}
+                          placeholder="Search dev role..."
+                          className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg pl-7 pr-2 py-1 text-[11px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    )}
+
+                    {/* Master Option: All Developers (Checkbox Style) */}
+                    <div className="border-b border-zinc-800/80 pb-1">
+                      <button
+                        type="button"
+                        onClick={handleToggleAllDevelopers}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${allDevelopersChecked
+                          ? 'bg-indigo-500/10 text-indigo-400 font-semibold'
+                          : 'hover:bg-zinc-800/70 text-zinc-300'
+                          }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div
+                            className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${allDevelopersChecked
+                              ? 'bg-indigo-500 border-indigo-500 text-zinc-950'
+                              : 'border-zinc-600 bg-zinc-900/50'
+                              }`}
+                          >
+                            {allDevelopersChecked && <Check className="size-2.5 stroke-[3]" />}
+                          </div>
+                          <span className="truncate">All Developers</span>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-normal shrink-0">
+                          {nonAllDeveloperRoles.length}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* List of individual Developer Roles with Checkboxes */}
+                    <div
+                      className="max-h-56 overflow-y-auto flex flex-col gap-0.5 pr-0.5"
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      {filteredDeveloperRoles.length === 0 ? (
+                        <div className="px-2 py-3 text-center text-[11px] text-zinc-500">
+                          No developer roles found
+                        </div>
+                      ) : (
+                        filteredDeveloperRoles.map((role) => {
+                          const checked = isDeveloperRoleChecked(role.key);
+                          return (
+                            <div
+                              key={role.key}
+                              onClick={() => handleToggleDeveloperRole(role.key)}
+                              className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${checked
+                                ? 'bg-zinc-800/60 text-zinc-100 font-medium'
+                                : 'hover:bg-zinc-800/40 text-zinc-400'
+                                }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <div
+                                  className={`size-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${checked
+                                    ? 'bg-indigo-500 border-indigo-500 text-zinc-950'
+                                    : 'border-zinc-600 bg-zinc-900/50'
+                                    }`}
+                                >
+                                  {checked && <Check className="size-2.5 stroke-[3]" />}
+                                </div>
+                                <span className="truncate" title={role.fullRole}>{role.label}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => handleSelectOnlyDeveloperRole(role.key, e)}
+                                className="opacity-0 group-hover:opacity-100 px-1.5 py-0.5 rounded bg-zinc-700/80 hover:bg-indigo-500/20 text-[9px] font-semibold text-zinc-300 hover:text-indigo-400 transition-all shrink-0 ml-1"
+                                title={`Filter only ${role.label}`}
+                              >
+                                Only
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {isDeveloperFiltered && (
+                      <div className="pt-1 border-t border-zinc-800/80">
+                        <button
+                          type="button"
+                          onClick={handleResetDeveloperFilter}
+                          className="w-full px-2 py-1 text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 rounded-md transition-colors text-center cursor-pointer"
+                        >
+                          Reset Developer Filter
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Auditor Type Dropdown (Checkbox Style with All Auditors) */}
             {currentView === 'AUDITING' && auditorRoles && auditorRoles.length > 0 && (
               <div className="relative" ref={auditorDropdownRef}>
@@ -948,16 +1213,24 @@ export const TaskMapHeader: React.FC<Props> = ({
             <div className="flex items-center gap-1 bg-card border border-zinc-300 dark:border-zinc-800/80 rounded-xl p-1 text-xs font-medium">
               {shiftOptions.map((opt) => {
                 const isCustom = opt.key === 'CUSTOM';
-                const isActive = opt.key === 'ALL'
-                  ? isAllActive
-                  : (!isAllActive && activeShiftTokens.includes(opt.key));
+                const isTrackOpt = opt.key === 'LIVE' || opt.key === 'ACTIVE';
+                const isActive = isTrackOpt
+                  ? trackFilter === opt.key
+                  : opt.key === 'ALL'
+                    ? isAllActive && trackFilter === 'ALL'
+                    : (!isAllActive && activeShiftTokens.includes(opt.key));
 
                 return (
                   <div key={opt.key} className="relative">
                     <button
                       type="button"
                       onClick={() => {
+                        if (isTrackOpt) {
+                          onTrackFilterChange?.(trackFilter === opt.key ? 'ALL' : (opt.key as 'LIVE' | 'ACTIVE'));
+                          return;
+                        }
                         if (opt.key === 'ALL') {
+                          onTrackFilterChange?.('ALL');
                           scheduleShiftCommit('ALL');
                           return;
                         }

@@ -622,6 +622,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
             ...i,
             completed: newCompleted,
             checkedById: newCompleted ? currentUser?.id : undefined,
+            ...(newCompleted && currentUser?.id ? { assigneeId: [currentUser.id] } : {}),
           };
         }
         return i;
@@ -637,6 +638,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
         completed: newCompleted,
         createdAt: new Date().toISOString(),
         checkedById: newCompleted ? currentUser?.id : undefined,
+        ...(newCompleted && currentUser?.id ? { assigneeId: [currentUser.id] } : {}),
       };
       currentLists = currentLists.map(c => {
         if (c.id === targetChecklistId) {
@@ -664,7 +666,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
         const res = await tasksApi.createChecklistItem(task.id, realChecklistId, {
           text,
           completed: newCompleted,
-          assigneeIds: currentItem?.assigneeId || [],
+          assigneeIds: newCompleted ? undefined : (currentItem?.assigneeId || []),
           subtaskId,
           checklistName: 'Audit',
         });

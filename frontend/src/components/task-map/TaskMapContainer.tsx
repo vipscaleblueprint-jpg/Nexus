@@ -9,6 +9,8 @@ import {
   UpworkSession,
   extractAuditorRoles,
   AuditorRoleOption,
+  isDeveloperUser,
+  getEffectiveTaskMapHandlerId,
   isSessionProjectBased,
   getDefaultTaskMapSubStatuses,
   isTaskMapItemOnHold,
@@ -97,6 +99,7 @@ export const TaskMapContainer: React.FC = () => {
 
   // Auditor Type filter state & dynamic DB roles
   const [auditorTypeFilter, setAuditorTypeFilter] = useState<string>('ALL');
+  const [trackFilter, setTrackFilter] = useState<'ALL' | 'LIVE' | 'ACTIVE'>('ALL');
   const auditorRoles = React.useMemo(() => {
     return extractAuditorRoles(workspaceTeams, allUsers);
   }, [workspaceTeams, allUsers]);
@@ -1273,9 +1276,17 @@ export const TaskMapContainer: React.FC = () => {
         listName === 'admin' ||
         ADMIN_LIST_NAMES.has(listName);
 
-      // Hide all admin tasks by default unless showAdminTasks is toggled ON.
-      // (Their active work is represented cleanly via the General Task block in the user's column)
-      if (isAdmin && !showAdminTasks) return false;
+      // Hide all admin tasks by default unless showAdminTasks is toggled ON,
+      // EXCEPT for tasks assigned to developer roles (from DB teamRoles).
+      if (isAdmin && !showAdminTasks) {
+        const handlerId = getEffectiveTaskMapHandlerId(t);
+        const handlerUser =
+          (t.assignee && t.assignee.id === handlerId ? t.assignee : null) ||
+          allUsers.find((u: any) => u.id === handlerId);
+        if (!isDeveloperUser(handlerUser, workspaceTeams)) {
+          return false;
+        }
+      }
 
       if (selectedClients === 'ALL') {
         return true;
@@ -1290,7 +1301,7 @@ export const TaskMapContainer: React.FC = () => {
 
       return true;
     },
-    [showAdminTasks, selectedClients]
+    [showAdminTasks, selectedClients, allUsers, workspaceTeams]
   );
 
   const displayedTasks = React.useMemo(() => {
@@ -1458,6 +1469,8 @@ export const TaskMapContainer: React.FC = () => {
           auditorTypeFilter={auditorTypeFilter}
           onAuditorTypeFilterChange={setAuditorTypeFilter}
           isFilterLoading={loading}
+          trackFilter={trackFilter}
+          onTrackFilterChange={setTrackFilter}
         />
 
         {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
@@ -1480,8 +1493,8 @@ export const TaskMapContainer: React.FC = () => {
               clients={clients}
               onTaskUpdate={handleTaskUpdate}
               onAssignTask={handleAssignTask}
-              isHistory={isHistoryView}
               search={search}
+              trackFilter={trackFilter}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView

@@ -17,6 +17,9 @@ import {
   matchesMarketingNameSearch,
   subscribeTaskMapSaving,
   isTaskSavingToDb,
+  isProgressLoggedToday,
+  isDeveloperUser,
+  attachDragToScroll,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -60,6 +63,7 @@ import { getCurrentLiveTime } from '@/lib/liveClock';
 import { getPriorityConfig } from '@/lib/priority';
 import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
+import { resolveUsersFromRoleRestrictions } from '@/lib/taskTokens';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { ActionErrorModal, ActionErrorInfo } from '@/components/modals/ActionErrorModal';
@@ -97,6 +101,7 @@ interface Props {
   onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE') => Promise<void> | void;
   isHistory?: boolean;
   search?: string;
+  trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
 }
 
 // Priority ranking for user columns:
@@ -289,9 +294,10 @@ const DraggableTaskCard: React.FC<{
   return (
     <div
       ref={setNodeRef}
+      data-task-id={task.id}
       {...(disabled ? {} : listeners)}
       {...(disabled ? {} : attributes)}
-      className={`relative touch-none transition-all duration-200 ease-out ${isDragging
+      className={`relative touch-none transition-opacity duration-150 ${isDragging
         ? 'opacity-25 scale-[0.98] border border-dashed border-zinc-700 rounded-xl bg-zinc-900/40 pointer-events-none'
         : disabled
           ? 'cursor-default'
@@ -752,6 +758,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   onAssignTask,
   isHistory = false,
   search = '',
+  trackFilter = 'ALL',
 }) => {
   const router = useRouter();
   const currentUser = useAppStore((s) => s.currentUser);
@@ -764,6 +771,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const boardScrollRef = useRef<HTMLDivElement>(null);
   useHorizontalScroll(boardScrollRef);
+
+  useEffect(() => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+    return attachDragToScroll(el);
+  }, []);
 
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
   const [activeOverId, setActiveOverId] = useState<string | null>(null);
@@ -1215,14 +1228,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
   //    b) It is in historical view mode where assignments were frozen into the snapshot, or
   //    c) An assistant is actively live working on it (live clock-in / in-progress)
   const attachTaskToUserColumns = (task: TaskMapItem) => {
-    if (!effectiveShowAdmin && isTaskUnderAdmin(task)) return;
-    if (poolIds.has(task.id)) return;
-    const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
-    if (!hasProgress && (isClosedTask(task) || isExcludedForUser(task))) return;
-
     const effectiveHandlerId = isHistory
       ? (task.assignee?.id || task.assigneeId || getEffectiveTaskMapHandlerId(task))
       : getEffectiveTaskMapHandlerId(task);
+    const targetUser = effectiveHandlerId && effectiveHandlerId !== 'unassigned'
+      ? userColumnsMap[effectiveHandlerId]?.user
+      : undefined;
+    if (!effectiveShowAdmin && isTaskUnderAdmin(task) && !isDeveloperUser(targetUser, workspaceTeams)) return;
+    if (poolIds.has(task.id)) return;
+    const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
+    if (!hasProgress && (isClosedTask(task) || isExcludedForUser(task))) return;
 
     if (effectiveHandlerId && effectiveHandlerId !== 'unassigned' && userColumnsMap[effectiveHandlerId]) {
       if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
@@ -1420,6 +1435,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (cleanSearch) {
         return isUserSearchMatch(col.user);
       }
+      // Live = users clocked in on live working now; Active = users who logged progress today
+      if (trackFilter !== 'ALL') {
+        const userName = col.user?.name;
+        const allItems = [...col.tasks, ...tasks, ...availablePool];
+        if (trackFilter === 'LIVE') {
+          return allItems.some((t) => isTaskLiveWorking(t, userName, boardTime));
+        }
+        return allItems.some(
+          (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, boardTime)
+        );
+      }
       // If Custom shift is selected and specific MAs are chosen, filter by them
       const activeShifts = (currentShift || '').toUpperCase().split(',').map((s) => s.trim());
       if (activeShifts.includes('CUSTOM') && selectedCustomMAs.length > 0) {
@@ -1501,7 +1527,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
   };
 
   const handleDragOver = (event: DragOverEvent) => {
-    setActiveOverId(event.over ? String(event.over.id) : null);
+    const nextOverId = event.over ? String(event.over.id) : null;
+    setActiveOverId((prev) => (prev === nextOverId ? prev : nextOverId));
   };
 
   const handleDragCancel = () => {
@@ -1537,6 +1564,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('in-progress-', '');
       const targetUser = getUserProfile(targetUserId);
 
+      // Enforce task Team Role restrictions (assigneeRoleRestrictions)
+      const roleRestrictions = (currentTask as any)?.assigneeRoleRestrictions as string[] | undefined;
+      if (roleRestrictions && roleRestrictions.length > 0) {
+        const allowed = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
+        if (allowed.length === 0) {
+          toast.error(
+            `${targetUser?.name || 'This user'} does not have the required team role (${roleRestrictions.join(', ')}) for this task`
+          );
+          return;
+        }
+      }
+
       // If already assigned to this user and already active in progress, no-op!
       if (currentAssigneeId === targetUserId && isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
         return;
@@ -1567,6 +1606,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (targetColumnId.startsWith('user-')) {
       const targetUserId = targetColumnId.replace('user-', '');
       const targetUser = getUserProfile(targetUserId);
+
+      // Enforce task Team Role restrictions (assigneeRoleRestrictions)
+      const roleRestrictions = (currentTask as any)?.assigneeRoleRestrictions as string[] | undefined;
+      if (roleRestrictions && roleRestrictions.length > 0) {
+        const allowed = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
+        if (allowed.length === 0) {
+          toast.error(
+            `${targetUser?.name || 'This user'} does not have the required team role (${roleRestrictions.join(', ')}) for this task`
+          );
+          return;
+        }
+      }
 
       // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
       if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId) && !isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
@@ -1611,6 +1662,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const handleSelectInProgressTask = async (taskId: string, targetUserId: string) => {
     const targetUser = getUserProfile(targetUserId);
     const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    const roleRestrictions = (existingTask as any)?.assigneeRoleRestrictions as string[] | undefined;
+    if (roleRestrictions && roleRestrictions.length > 0) {
+      const allowed = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
+      if (allowed.length === 0) {
+        toast.error(
+          `${targetUser?.name || 'This user'} does not have the required team role (${roleRestrictions.join(', ')}) for this task`
+        );
+        return;
+      }
+    }
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
     toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
     try {
@@ -1865,7 +1926,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div ref={boardScrollRef} className="flex gap-5 px-6 pb-4 overflow-x-auto overflow-y-hidden custom-scrollbar h-full max-h-full min-h-0 select-none">
+      <div ref={boardScrollRef} className="flex gap-5 px-6 pb-4 overflow-x-auto overflow-y-hidden custom-scrollbar h-full max-h-full min-h-0 select-none cursor-grab">
         {/* 1. Available Tasks Pool Column (Matches Image 1) */}
         {(() => {
           const isCollapsed = !!collapsedColumns['available'];
@@ -2299,7 +2360,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const userTaskTypeFilter = columnTaskTypeFilters[userId] || 'ALL';
           const userSubStatusFilter = columnSubStatusFilters[userId] || 'ALL';
           const userClientFilter = columnClientFilters[userId] || 'ALL';
-          const userShowAdmin = columnShowAdmin[userId] ?? effectiveShowAdmin;
+          const userShowAdmin = columnShowAdmin[userId] ?? (isDeveloperUser(user, workspaceTeams) ? true : effectiveShowAdmin);
 
           const filteredUserTasks = userTasks.filter((t) => {
             if (!matchesPriorityFilter(t, userPriorityFilter)) return false;

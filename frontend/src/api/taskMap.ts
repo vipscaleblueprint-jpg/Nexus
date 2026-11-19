@@ -168,6 +168,32 @@ export interface TaskMapItem {
   updatedAt: string;
 }
 
+/** Header user-visibility filter: ALL users, LIVE (live-working clocked in), ACTIVE (logged today). */
+export type TrackFilter = 'ALL' | 'LIVE' | 'ACTIVE';
+
+/**
+ * True when a progress/daily-log row is dated today (Manila). Accepts YYYY-MM-DD, ISO strings,
+ * or M/D/YYYY sheet dates; falls back to `updatedAt` when the row has no date.
+ */
+export function isProgressLoggedToday(
+  prog?: { date?: string | null; updatedAt?: string | null } | null,
+  now: Date = new Date()
+): boolean {
+  if (!prog) return false;
+  const today = getManilaDateKey(now);
+  let key: string | null = null;
+  const raw = (prog.date || '').trim();
+  const sheet = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (sheet) {
+    key = `${sheet[3]}-${sheet[1].padStart(2, '0')}-${sheet[2].padStart(2, '0')}`;
+  } else if (raw) {
+    key = getManilaDateKey(raw);
+  } else if (prog.updatedAt) {
+    key = getManilaDateKey(prog.updatedAt);
+  }
+  return !!key && key === today;
+}
+
 export interface ShiftUser {
   id: string;
   name: string;
@@ -1022,6 +1048,80 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
   return options;
 }
 
+export function extractDeveloperRoles(workspaceTeams: any[] = [], allUsers: any[] = []): AuditorRoleOption[] {
+  const roleNameMap = new Map<string, string>();
+
+  // 1. Discover all teamRoles from teams with "dev" or "develop" in the name (e.g. "Dev Team", "Dev Management Team")
+  for (const team of workspaceTeams || []) {
+    if (/\bdev\b|develop/i.test(team?.name || '')) {
+      for (const tr of team.teamRoles || []) {
+        if (tr?.name && typeof tr.name === 'string') {
+          const canonical = tr.name.trim();
+          roleNameMap.set(canonical.toLowerCase(), canonical);
+        }
+      }
+    }
+  }
+
+  // 2. Discover roles from allUsers where role includes dev-related keywords
+  for (const u of allUsers || []) {
+    for (const r of u?.roles || []) {
+      if (
+        typeof r === 'string' &&
+        /\bdev\b|develop|back-?end|front-?end|full-?stack|dev\s*ops/i.test(r.trim())
+      ) {
+        const canonical = r.trim();
+        if (!roleNameMap.has(canonical.toLowerCase())) {
+          roleNameMap.set(canonical.toLowerCase(), canonical);
+        }
+      }
+    }
+  }
+
+  // Fallbacks if DB queries haven't loaded yet
+  const standardDevRoles = ['Back-end Developer', 'Dev Ops', 'Developer', 'Harmony', 'Dev Project Manager'];
+  for (const r of standardDevRoles) {
+    if (!roleNameMap.has(r.toLowerCase())) {
+      roleNameMap.set(r.toLowerCase(), r);
+    }
+  }
+
+  const options: AuditorRoleOption[] = [
+    { key: 'ALL', label: 'All', fullRole: 'ALL' },
+  ];
+
+  const sortedRoles = Array.from(roleNameMap.values()).sort((a, b) => a.localeCompare(b));
+
+  for (const role of sortedRoles) {
+    options.push({
+      key: role,
+      label: ROLE_SHORT_NAMES[role] || role,
+      fullRole: role,
+    });
+  }
+
+  return options;
+}
+
+export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean {
+  if (!user) return false;
+  const userRoles = (user.roles || []) as string[];
+  if (userRoles.length === 0) return false;
+
+  const devRoles = extractDeveloperRoles(workspaceTeams, []);
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const devRoleNorms = devRoles
+    .filter((r) => r.key !== 'ALL')
+    .map((r) => normalize(r.fullRole));
+
+  return userRoles.some((ur) => {
+    if (typeof ur !== 'string') return false;
+    const normUr = normalize(ur);
+    if (!normUr) return false;
+    return devRoleNorms.some((dr) => dr === normUr || normUr.includes(dr) || dr.includes(normUr));
+  });
+}
+
 export function getRoleBadgeClass(shortOrFullRole: string): string {
   const r = (shortOrFullRole || '').toLowerCase().trim();
   if (r.includes('design aud')) return 'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/70 dark:text-pink-300 dark:border-pink-800/60';
@@ -1476,3 +1576,124 @@ export function collectClientDashboardLists(
 
 
 
+
+export function attachDragToScroll(container: HTMLElement): () => void {
+  let isMouseDown = false;
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startScrollLeft = 0;
+  let rafId: number | null = null;
+  let pendingScrollLeft: number | null = null;
+  let prevScrollBehavior = '';
+
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0 && e.button !== 1) return;
+
+    const rect = container.getBoundingClientRect();
+    const isHorizontalScrollbarClick =
+      e.clientY >= rect.top + container.clientTop + container.clientHeight - 4;
+    const isVerticalScrollbarClick =
+      e.clientX >= rect.left + container.clientLeft + container.clientWidth - 4;
+    if (isHorizontalScrollbarClick || isVerticalScrollbarClick) {
+      return;
+    }
+
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    if (
+      target.closest('button, input, textarea, select, option, label, a') ||
+      target.closest('[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle]') ||
+      target.closest('[role="dialog"], [role="menu"], [data-portal], [draggable="true"], [aria-roledescription="draggable"], .no-board-drag, .no-drag-scroll')
+    ) {
+      return;
+    }
+
+    isMouseDown = true;
+    isDragging = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    startScrollLeft = container.scrollLeft;
+  };
+
+  const flushScroll = () => {
+    rafId = null;
+    if (pendingScrollLeft !== null) {
+      container.scrollLeft = pendingScrollLeft;
+      pendingScrollLeft = null;
+    }
+  };
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    if (!isMouseDown) return;
+
+    if ((moveEvent.buttons & 1) === 0 && (moveEvent.buttons & 4) === 0) {
+      onMouseUp();
+      return;
+    }
+
+    const dx = moveEvent.clientX - startX;
+    const dy = moveEvent.clientY - startY;
+
+    if (!isDragging) {
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        isDragging = true;
+        prevScrollBehavior = container.style.scrollBehavior;
+        container.style.scrollBehavior = 'auto';
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+      } else {
+        return;
+      }
+    }
+
+    moveEvent.preventDefault();
+    pendingScrollLeft = startScrollLeft - dx;
+    if (rafId === null) {
+      rafId = window.requestAnimationFrame(flushScroll);
+    }
+  };
+
+  const onMouseUp = () => {
+    if (!isMouseDown) return;
+    isMouseDown = false;
+
+    if (rafId !== null) {
+      window.cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    if (pendingScrollLeft !== null) {
+      container.scrollLeft = pendingScrollLeft;
+      pendingScrollLeft = null;
+    }
+
+    if (isDragging) {
+      isDragging = false;
+      container.style.scrollBehavior = prevScrollBehavior;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+
+      const captureClick = (clickEvent: MouseEvent) => {
+        clickEvent.stopPropagation();
+        clickEvent.preventDefault();
+        window.removeEventListener('click', captureClick, true);
+      };
+      window.addEventListener('click', captureClick, true);
+    }
+  };
+
+  container.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove, { passive: false });
+  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('blur', onMouseUp);
+
+  return () => {
+    container.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    window.removeEventListener('blur', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+}

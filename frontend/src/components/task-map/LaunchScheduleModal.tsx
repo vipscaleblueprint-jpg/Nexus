@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, startTransition } from 'react';
 import {
   Rocket,
   Search,
@@ -57,6 +57,36 @@ function formatDisplayDate(ymd?: string | null): string {
   }
 }
 
+function htmlToMarkdownText(input?: string | null): string {
+  if (!input) return '';
+  if (!/<\/?[a-z][\s\S]*>/i.test(input) || typeof DOMParser === 'undefined') return input;
+  const doc = new DOMParser().parseFromString(input, 'text/html');
+  const walk = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    const el = node as HTMLElement;
+    const kids = Array.from(el.childNodes).map(walk).join('');
+    switch (el.tagName.toLowerCase()) {
+      case 'h1': case 'h2': case 'h3': case 'h4': return `\n## ${kids.trim()}\n`;
+      case 'p': return `${kids}\n`;
+      case 'br': return '\n';
+      case 'strong': case 'b': return `**${kids}**`;
+      case 'a': {
+        const href = el.getAttribute('href');
+        return href ? `[${kids}](${href})` : kids;
+      }
+      case 'li': {
+        const checked = el.getAttribute('data-checked');
+        const box = checked === null ? '- ' : checked === 'true' ? '- [x] ' : '- [ ] ';
+        return `${box}${kids.trim()}\n`;
+      }
+      case 'ul': case 'ol': return `${kids}\n`;
+      default: return kids;
+    }
+  };
+  return walk(doc.body).replace(/\n{3,}/g, '\n\n').trim();
+}
+
 interface LaunchScheduleModalProps {
   initialTask: LaunchMapLightItem | null;
   initialDate: string;
@@ -90,7 +120,7 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
   const [isMilestone, setIsMilestone] = useState<boolean>(true);
   const [workstream, setWorkstream] = useState<string>(initialTask?.launchMeta?.workstream || '');
   const [details, setDetails] = useState<string>(
-    initialTask?.launchMeta?.details ?? initialTask?.description ?? ''
+    htmlToMarkdownText(initialTask?.launchMeta?.details ?? initialTask?.description ?? '')
   );
   const [notes, setNotes] = useState<string>(initialTask?.launchMeta?.notes || '');
   const [syncDueDate, setSyncDueDate] = useState<boolean>(true);
@@ -166,7 +196,7 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
     }
     setIsMilestone(true);
     setWorkstream(t.launchMeta?.workstream || '');
-    setDetails(t.launchMeta?.details ?? t.description ?? '');
+    setDetails(htmlToMarkdownText(t.launchMeta?.details ?? t.description ?? ''));
     setNotes(t.launchMeta?.notes || '');
   };
 
@@ -216,13 +246,13 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60"
       onClick={onClose}
     >
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl max-h-[92vh] overflow-y-auto custom-scrollbar bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl p-5 flex flex-col gap-3.5 animate-in zoom-in-95 duration-150"
+        className="w-full max-w-3xl max-h-[92vh] overflow-y-auto custom-scrollbar bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl p-5 flex flex-col gap-3.5"
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
           <div className="flex items-center gap-2.5">
@@ -318,7 +348,7 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
                     <button
                       key={t.id}
                       type="button"
-                      onClick={() => handleSelectCandidate(t)}
+                      onClick={() => startTransition(() => handleSelectCandidate(t))}
                       className="w-full text-left px-3.5 py-2.5 hover:bg-[var(--hover-subtle)] transition-colors flex items-center justify-between gap-3 group cursor-pointer"
                     >
                       <div className="min-w-0 flex-1">
@@ -441,7 +471,7 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
                     }}
                     aria-expanded={datePickerOpen}
                     aria-haspopup="dialog"
-                    className={`w-full flex items-center justify-between gap-2 bg-[var(--bg)] border rounded-xl px-3 py-2 text-xs text-[var(--text)] transition-colors cursor-pointer ${
+                    className={`w-full h-[54px] flex items-center justify-between gap-2 bg-[var(--bg)] border rounded-xl px-3 py-2 text-xs text-[var(--text)] transition-colors cursor-pointer ${
                       datePickerOpen
                         ? 'border-[var(--accent)] ring-1 ring-[var(--accent)]/40'
                         : 'border-[var(--border)] hover:border-[var(--accent)]/60'
@@ -569,7 +599,7 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
 
                 {/* Milestone Checkbox Card */}
                 <div className="flex flex-col justify-end">
-                  <label className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-[var(--bg)] border border-[var(--border)] cursor-pointer hover:border-[var(--accent)]/50 transition-colors">
+                  <label className="flex items-center gap-2.5 px-3 h-[54px] rounded-xl bg-[var(--bg)] border border-[var(--border)] cursor-pointer hover:border-[var(--accent)]/50 transition-colors">
                     <input
                       type="checkbox"
                       checked={isMilestone}
@@ -631,7 +661,7 @@ export const LaunchScheduleModal: React.FC<LaunchScheduleModalProps> = ({
                   <span className="text-[10px] text-[var(--muted)]/80">Markdown links [Label](url) supported</span>
                 </div>
                 <textarea
-                  rows={2}
+                  rows={8}
                   value={details}
                   onChange={(e) => setDetails(e.target.value)}
                   placeholder="Landing page URLs, Kajabi/ThriveCart links, Figma specs, or deliverable checklists..."

@@ -308,7 +308,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
           }
         ];
         localChecklistsRef.current = res;
-        onUpdateChecklists(res);
+        queueMicrotask(() => onUpdateChecklists(res));
         return res;
       });
     };
@@ -334,7 +334,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
           return { ...c, items };
         });
         localChecklistsRef.current = next;
-        onUpdateChecklists(next);
+        queueMicrotask(() => onUpdateChecklists(next));
         return next;
       });
     };
@@ -355,7 +355,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
           return { ...c, items };
         });
         localChecklistsRef.current = next;
-        onUpdateChecklists(next);
+        queueMicrotask(() => onUpdateChecklists(next));
         return next;
       });
     };
@@ -367,7 +367,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       setLocalChecklists(prev => {
         const next = prev.filter(c => c.id !== payload.checklistId);
         localChecklistsRef.current = next;
-        onUpdateChecklists(next);
+        queueMicrotask(() => onUpdateChecklists(next));
         return next;
       });
     };
@@ -690,7 +690,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
             return c;
           });
           localChecklistsRef.current = reconciled;
-          onUpdateChecklists(reconciled);
+          queueMicrotask(() => onUpdateChecklists(reconciled));
           return reconciled;
         });
 
@@ -755,8 +755,10 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
           return { ...c, items };
         });
         localChecklistsRef.current = reverted;
-        onUpdateChecklists(reverted);
-        broadcastTaskChecklists(reverted);
+        queueMicrotask(() => {
+          onUpdateChecklists(reverted);
+          broadcastTaskChecklists(reverted);
+        });
         return reverted;
       });
     }
@@ -867,7 +869,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
             return c;
           });
           localChecklistsRef.current = reconciled;
-          onUpdateChecklists(reconciled);
+          queueMicrotask(() => onUpdateChecklists(reconciled));
           return reconciled;
         });
 
@@ -899,8 +901,10 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
           return { ...c, items };
         });
         localChecklistsRef.current = reverted;
-        onUpdateChecklists(reverted);
-        broadcastTaskChecklists(reverted);
+        queueMicrotask(() => {
+          onUpdateChecklists(reverted);
+          broadcastTaskChecklists(reverted);
+        });
         return reverted;
       });
     }
@@ -1114,7 +1118,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
             return c;
           });
           localChecklistsRef.current = reconciled;
-          onUpdateChecklists(reconciled);
+          queueMicrotask(() => onUpdateChecklists(reconciled));
           return reconciled;
         });
       }
@@ -1218,7 +1222,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
             return c;
           });
           localChecklistsRef.current = reconciled;
-          onUpdateChecklists(reconciled);
+          queueMicrotask(() => onUpdateChecklists(reconciled));
           return reconciled;
         });
       }

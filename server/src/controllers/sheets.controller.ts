@@ -26,7 +26,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
-import { invalidateCache, redis, isRedisReady, getMaActiveSession, setMaActiveSession } from '../services/redisService';
+import { invalidateCache, redis, isRedisReady, getMaActiveSession, setMaActiveSession, deleteMaActiveSession } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
@@ -1165,8 +1165,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         }
       }
 
-      // 2. Global lookup across all lists (exact match first)
-      if (!target) {
+      // 2. Global lookup across all lists ONLY when no client list was matched
+      if (!target && !clientList) {
         let matched = await prisma.task.findFirst({
           where: {
             title: { equals: cleanTaskStr, mode: 'insensitive' },
@@ -1174,7 +1174,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           select: { id: true, listId: true, externalId: true },
         });
 
-        if (!matched) {
+        if (!matched && !effectiveClientStr) {
           const candidates = await prisma.task.findMany({
             where: {
               title: { contains: cleanTaskStr, mode: 'insensitive' },
@@ -1278,6 +1278,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             taskName: cleanTaskStr || 'No task inputted',
             date: date ? String(date).trim() : getManilaDateStr(),
             status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
+            subStatuses: cleanTimeOut ? ['Hand-over'] : ['In progress'],
             isUpwork: true,
             isMissingTime,
             rowNumber: sheet_row ? Number(sheet_row) : undefined,
@@ -1342,14 +1343,85 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       // If user provided MA name and latest schedule input (day, time in/out, status) without a direct task card:
       // Prefill basic assumption and record as MA's latest session so Task Map can display it in the user's section
       if (maNameStr) {
+        const hasDeliverables = Boolean(
+          (task_deliverables_description && String(task_deliverables_description).trim()) ||
+          (task_update_and_deliverables && String(task_update_and_deliverables).trim())
+        );
+        const isRowCleared = !cleanTimeIn && !cleanTimeOut && !effectiveClientStr && !cleanTaskStr && !statusStr && !hasDeliverables;
+        const maKey = maNameStr.toLowerCase().trim();
+        const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
+        const currentActiveObj = await getMaActiveSession(maKey).catch(() => null);
+        const currentActiveRaw = currentActiveObj ? JSON.stringify(currentActiveObj) : null;
+
+        if (isRowCleared) {
+          const currentActiveRowNum = currentActiveObj?.rowNumber ? Number(currentActiveObj.rowNumber) : -1;
+          const matchesActiveRow = !incomingRowNum || incomingRowNum <= 0 || currentActiveRowNum <= 0 || incomingRowNum === currentActiveRowNum;
+
+          if (currentActiveObj && matchesActiveRow) {
+            await deleteMaActiveSession(maKey).catch(() => { });
+            await invalidateCache('task_map:all').catch(() => { });
+            const clearedPayload = { maName: maNameStr, cleared: true };
+            io.emit('ma:session_updated', clearedPayload);
+            io.emit('task_map:ma_progress_changed', clearedPayload);
+            io.emit('task_map:updated', { maSession: clearedPayload });
+          }
+
+          if (incomingRowNum > 0) {
+            try {
+              const staleRecords = await prisma.taskMapRecord.findMany({
+                where: { pmReviews: { not: null as any } },
+                select: { id: true, taskId: true, pmReviews: true },
+              });
+              for (const staleRec of staleRecords) {
+                let revs = staleRec.pmReviews;
+                if (typeof revs === 'string') {
+                  try { revs = JSON.parse(revs); } catch { revs = []; }
+                }
+                if (!Array.isArray(revs)) continue;
+                let mod = false;
+                const filteredRevs = revs.filter((r: any) => {
+                  if (r.type === 'SHEET_PROGRESS') {
+                    const matchesMa = r.maName && r.maName.toLowerCase().trim() === maKey;
+                    const matchesRow = Number(r.sheetRow) === incomingRowNum;
+                    if (matchesMa && matchesRow) {
+                      mod = true;
+                      if (r.isUpwork) {
+                        if (isRedisReady()) {
+                          redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
+                        }
+                        io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
+                      }
+                      return false;
+                    }
+                  }
+                  return true;
+                });
+                if (mod) {
+                  await prisma.$executeRawUnsafe(
+                    `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+                    JSON.stringify(filteredRevs),
+                    staleRec.taskId
+                  );
+                  await invalidateCache(`task:${staleRec.taskId}`, 'task_map:all');
+                  const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+                  io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
+                  io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
+                }
+              }
+            } catch (cleanErr) {
+              console.warn('[Sheets] Failed to clean up deleted row progress for MA:', cleanErr);
+            }
+          }
+
+          return res.status(200).json({
+            success: true,
+            cleared: true,
+            message: 'Cleared deleted or empty spreadsheet row session',
+          });
+        }
+
         const assumedClient = effectiveClientStr || 'No client inputted';
-        const assumedTask = cleanTaskStr
-          ? cleanTaskStr
-          : (task_deliverables_description?.trim()
-            ? String(task_deliverables_description).trim()
-            : (task_update_and_deliverables?.trim()
-              ? String(task_update_and_deliverables).trim()
-              : 'No task inputted'));
+        const assumedTask = cleanTaskStr || 'No task inputted';
         const sessionDate = date ? String(date).trim() : getManilaDateStr();
         const sessionStatus = statusStr || (cleanTimeOut ? 'Done' : 'In progress');
         const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
@@ -1363,6 +1435,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           taskName: assumedTask,
           date: sessionDate,
           status: sessionStatus,
+          subStatuses: cleanTimeOut ? ['Hand-over'] : ['In progress'],
           isUpwork,
           isMissingTime,
           rowNumber: sheet_row ? Number(sheet_row) : undefined,
@@ -1371,10 +1444,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           active: !cleanTimeOut && Boolean(cleanTimeIn),
         };
 
-        const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
-        const maKey = maNameStr.toLowerCase().trim();
-        const currentActiveObj = await getMaActiveSession(maKey).catch(() => null);
-        const currentActiveRaw = currentActiveObj ? JSON.stringify(currentActiveObj) : null;
         const isOlderRowEdit = shouldSkipOlderRow(currentActiveRaw, incomingRowNum, sessionDate, sessionData.active);
 
         if (!isOlderRowEdit) {
@@ -1707,11 +1776,11 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
           taskStatus: targetTaskMeta?.status || null,
           priority: targetTaskMeta?.priority || null,
-          subStatuses: Array.isArray(record.statuses) ? record.statuses : undefined,
+          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? ['Hand-over'] : (Array.isArray(record.statuses) ? record.statuses : undefined)),
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
-          taskName: task || 'General Task',
+          taskName: targetTaskMeta?.title || cleanTaskStr || task || 'General Task',
           date: sessionDateStr,
           status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
           isUpwork,
@@ -1872,9 +1941,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     let nextAssigneeObj: { id: string; name: string } | null | undefined = didAssignUserToTask ? assignedUser : undefined;
 
     if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
-      // Live Working: transition any non-closed, non-recurring task into IN PROGRESS
-      if (!isCadenceTask && currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
-        if (currentTaskStatusNorm !== 'INPROGRESS') {
+      // Live Working: transition any non-closed task into IN PROGRESS
+      if (currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
+        if (!isCadenceTask && currentTaskStatusNorm !== 'INPROGRESS') {
           const listInProgressStatus = targetTaskMeta?.listId
             ? await prisma.listStatus.findFirst({
                 where: { listId: targetTaskMeta.listId, name: { equals: 'IN PROGRESS', mode: 'insensitive' } },
@@ -1892,23 +1961,37 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
         const cleaned = existingRecordStatuses.filter((s) => {
           const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return sn !== 'HANDOVER' && sn !== 'AVAILABLETASK' && sn !== 'PAUSED' && sn !== 'ONHOLD';
+          return (
+            sn !== 'HANDOVER' &&
+            sn !== 'AVAILABLETASK' &&
+            sn !== 'PAUSED' &&
+            sn !== 'ONHOLD' &&
+            sn !== 'TOREVIEW' &&
+            sn !== 'INREVIEW' &&
+            sn !== 'CHECKING' &&
+            sn !== 'INCHECKING'
+          );
         });
         if (!cleaned.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
-          cleaned.push('In progress');
+          cleaned.unshift('In progress');
+        } else {
+          const idx = cleaned.findIndex((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS');
+          if (idx > 0) {
+            const [item] = cleaned.splice(idx, 1);
+            cleaned.unshift(item);
+          }
         }
         nextRecordStatuses = cleaned;
         nextHandedOver = false;
       }
-    } else if (cleanTimeOut && !isAdminTask) {
+    } else if (cleanTimeOut) {
       // Time-Out: auto Hand-over unless MA changed it to To Review / completed / CRM
       const isAlreadyReviewedOrFinished =
-        ['INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING', 'DONE', 'CLOSED', 'CRM', 'WAITING'].includes(
-          currentTaskStatusNorm
-        ) ||
+        ['DONE', 'CLOSED', 'CRM', 'WAITING'].includes(currentTaskStatusNorm) ||
+        (statusStr && ['TO REVIEW', 'TO_REVIEW', 'DONE', 'CLOSED'].includes(statusStr.toUpperCase())) ||
         existingRecordStatuses.some((s) => {
           const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+          return ['READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
         });
 
       if (!isAlreadyReviewedOrFinished) {
@@ -1926,7 +2009,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           data: {
             assigneeId: null,
             assignees: { set: [] },
-            status: isCadenceTask ? (targetTaskMeta?.status || 'IN PROGRESS') : (targetTaskMeta?.status || 'IN PROGRESS'),
+            status: targetTaskMeta?.status || 'IN PROGRESS',
           },
         });
 
@@ -1981,7 +2064,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         timeIn: cleanTimeIn,
         timeOut: cleanTimeOut,
         client: clientStr || 'General',
-        taskName: task || 'Task',
+        taskName: targetTaskMeta?.title || cleanTaskStr || task || 'Task',
         date: date ? String(date).trim() : getManilaDateStr(),
         status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
         isUpwork,

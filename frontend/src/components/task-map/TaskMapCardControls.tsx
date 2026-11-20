@@ -1020,9 +1020,9 @@ export function computeDuration(timeInStr?: string | null, timeOutStr?: string |
   const remM = diffMins % 60;
 
   if (h > 0) {
-    return `${h} hr ${remM.toString().padStart(2, '0')}m`;
+    return remM > 0 ? `${h}hr ${remM} mins` : `${h}hr`;
   }
-  return `${remM}m`;
+  return `${remM} mins`;
 }
 
 /** Computes the duration in milliseconds between timeIn (Manila time UTC+8) and now, resilient to sheet date formats, clock skew, and midnight shifts */
@@ -1121,9 +1121,9 @@ export function computeElapsed(timeInStr?: string | null, dateStr?: string | nul
     return '0hr 0m';
   }
   if (h > 0) {
-    return `${h} hr ${remM.toString().padStart(2, '0')}m`;
+    return remM > 0 ? `${h}hr ${remM} mins` : `${h}hr`;
   }
-  return `${remM}m`;
+  return `${remM} mins`;
 }
 
 export interface TaskTimeProgressSlotProps {
@@ -1169,13 +1169,12 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     );
   }
 
-  // 2. Completed Time: Time In - Time Out (or Time Out alone)
-  // When a task has a timeout, display the actual logged time range (e.g. 9:40 AM - 10:38 AM or 8:20 PM)
+  // 2. Completed Time: Duration in mins/hrs (e.g. 1hr 20 mins, 45 mins) when both Time In & Time Out exist,
+  // falling back to Time Out alone if Time In is missing; exact range remains in the hover tooltip.
   if (prog?.timeOut) {
     const timeOutDisplay = cleanDisplayTime(prog.timeOut);
-    const timeInDisplay = cleanDisplayTime(prog.timeIn);
     const duration = prog.timeIn ? computeDuration(prog.timeIn, prog.timeOut) : '';
-    const label = timeInDisplay ? `${timeInDisplay} - ${timeOutDisplay}` : timeOutDisplay;
+    const label = duration || timeOutDisplay;
 
     return (
       <div

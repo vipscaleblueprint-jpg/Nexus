@@ -219,8 +219,6 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
 
 // Sort helper: In progress on top -> Urgent tasks -> High priority -> Remaining tasks
 const isTaskInProgress = (task: TaskMapItem) => {
-  const s = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (s === 'INPROGRESS') return true;
   const customStatuses = task.taskMap?.statuses || [];
   return customStatuses.some(
     (cs) => cs.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS'
@@ -256,14 +254,17 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
   // 0. Live synthetic assumption block strictly takes the In Progress slot (clocked-out held blocks sit below dropzone until 12 AM)
   if (task.isAssumptionBlock) return Boolean(!task.progress?.timeOut);
 
-  // On-hold tasks belong at the bottom of Queue unless live clocked in right now
+  // On-hold, handed-over, or paused tasks belong out of In Progress unless live clocked in right now
   if (isTaskLiveWorking(task, userName)) return true;
-  if (isTaskOnHold(task)) return false;
+  if (isTaskOnHold(task) || isTaskHandedOver(task)) return false;
+  if (statuses.includes('PAUSED')) return false;
 
-  // 2. Task status or custom status is In progress
+  const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
+  if (isMyProg && task.progress?.timeOut) return false;
+
+  // 2. Task has explicit TaskMap 'In progress' sub-status
   // Guard: if this task holds an unclosed session for this user that is STALE, it cannot act as active in progress
   if (isTaskInProgress(task)) {
-    const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
     if (isMyProg && task.progress?.timeIn && isStaleLiveSession(task.progress.timeIn, task.progress.date)) {
       return false;
     }
@@ -1112,6 +1113,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   }, [currentUser?.id]);
 
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
+  const [recentlyMovedToReviewByUser, setRecentlyMovedToReviewByUser] = useState<Record<string, TaskMapItem[]>>({});
 
   // Low-frequency heartbeat (every 5 minutes) for 14h staleness boundary checks; active elapsed timers self-update via liveClock
   const [stalenessTick, setStalenessTick] = useState(0);
@@ -2293,9 +2295,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
     // 4. To Review: changes main status to IN REVIEW (if UI UX/Design audit present) or CHECKING (if no UI UX/Design audit)
     // and removes from MA/PM column so it moves to the Auditor Map tab
     if (norm === 'to review' || norm === 'to_review') {
+      const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
       if (isSelecting) {
         const hasL1 = hasUiUxOrDesignAudit(task);
         const targetStatus = hasL1 ? 'IN REVIEW' : 'CHECKING';
+        if (ownerId) {
+          setRecentlyMovedToReviewByUser((prev) => {
+            const existing = prev[ownerId] || [];
+            if (existing.some((t) => t.id === task.id)) return prev;
+            return {
+              ...prev,
+              [ownerId]: [{ ...task, status: targetStatus, assigneeId: null }, ...existing],
+            };
+          });
+        }
         if (onTaskUpdate) {
           await onTaskUpdate(task.id, { status: targetStatus, assigneeId: null });
         } else {
@@ -2304,6 +2317,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
         }
         toast.info(`Task status changed to ${targetStatus} — transferred to Auditor Map`);
       } else {
+        if (ownerId) {
+          setRecentlyMovedToReviewByUser((prev) => ({
+            ...prev,
+            [ownerId]: (prev[ownerId] || []).filter((t) => t.id !== task.id),
+          }));
+        }
         const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
         if (onTaskUpdate) {
           await onTaskUpdate(task.id, { status: revertStatus });
@@ -2804,7 +2823,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                     handleTaskMapSubStatusToggle(task, label, nextStatuses)
                                   }
                                   onOptionsUpdated={onOptionsUpdated}
-                                  readOnly={false}
+                                  readOnly={Boolean(task.isAssumptionBlock)}
                                 />
                               </div>
                             </div>
@@ -3082,8 +3101,28 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 const sorted = sortColumnTasks(filteredUserTasks, user.name);
                 const activeInProgTask = sorted.find((t) => isTaskActiveInProgress(t, user.name));
                 const queuedTasks = sorted.filter((t) => t.id !== activeInProgTask?.id);
+                const reviewStatusSet = new Set(['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING']);
+                const activeAndQueuedIds = new Set(sorted.map((t) => t.id));
+                const toReviewMap = new Map<string, TaskMapItem>();
+                for (const t of recentlyMovedToReviewByUser[userId] || []) {
+                  if (!activeAndQueuedIds.has(t.id)) {
+                    toReviewMap.set(t.id, t);
+                  }
+                }
+                for (const t of tasks) {
+                  if (activeAndQueuedIds.has(t.id) || toReviewMap.has(t.id)) continue;
+                  const sNorm = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+                  if (!reviewStatusSet.has(sNorm)) continue;
+                  const matchesWorker =
+                    doesProgressMatchUser(t.progress?.maName, user.name) &&
+                    hasSpreadsheetTaskInput(t, { isHistory, now: boardTime });
+                  if (matchesWorker) {
+                    toReviewMap.set(t.id, t);
+                  }
+                }
+                const toReviewTasks = Array.from(toReviewMap.values());
 
-                const renderCard = (task: TaskMapItem) => {
+                const renderCard = (task: TaskMapItem, cardOptions?: { forceNonDraggable?: boolean }) => {
                   const priorityConfig = getPriorityConfig(task.priority);
                   const isClosed =
                     (task.status || '').toUpperCase() === 'CLOSED' ||
@@ -3150,13 +3189,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             ? 'border-amber-500/30 not-has-[[data-card-control]:hover]:hover:border-amber-400/55 shadow-sm'
                             : 'border-border dark:border-zinc-800/90 hover:border-zinc-700 shadow-sm';
 
-                  const canDragThisCard = canDragTaskMapCard({
-                    isPmUser,
-                    currentUserId: currentUser?.id,
-                    columnUserId: userId,
-                    isFromAvailable: false,
-                    isAssumptionBlock: task.isAssumptionBlock,
-                  });
+                  const canDragThisCard = cardOptions?.forceNonDraggable
+                    ? false
+                    : canDragTaskMapCard({
+                        isPmUser,
+                        currentUserId: currentUser?.id,
+                        columnUserId: userId,
+                        isFromAvailable: false,
+                        isAssumptionBlock: task.isAssumptionBlock,
+                      });
 
                   const realTaskId =
                     task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
@@ -3367,6 +3408,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   let effectiveStatus = newStatus;
                                   if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
                                     effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                    setRecentlyMovedToReviewByUser((prev) => {
+                                      const existing = prev[userId] || [];
+                                      if (existing.some((t) => t.id === task.id)) return prev;
+                                      return {
+                                        ...prev,
+                                        [userId]: [{ ...task, status: effectiveStatus, assigneeId: null }, ...existing],
+                                      };
+                                    });
                                   }
                                   if (task.isAssumptionBlock) {
                                     task.status = effectiveStatus;
@@ -3470,13 +3519,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 )}
                               </div>
                               <TaskMapStatusDropdown
-                                selectedStatuses={task.taskMap.statuses || []}
+                                selectedStatuses={
+                                  isLiveWorking ? ['In progress'] : (task.taskMap.statuses || [])
+                                }
                                 options={getUnifiedTaskMapOptions(task, user)}
                                 onToggleStatus={(label, nextStatuses) =>
                                   handleTaskMapSubStatusToggle(task, label, nextStatuses, user)
                                 }
                                 onOptionsUpdated={onOptionsUpdated}
-                                readOnly={false}
+                                readOnly={Boolean(cardOptions?.forceNonDraggable || isLiveWorking || task.isAssumptionBlock)}
                               />
                             </div>
                           </div>
@@ -3591,6 +3642,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             <CardCutoutPlaceholder task={activeDragTask!} targetName={user.name} />
                           )}
                           {queuedTasks.map((t) => renderCard(t))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* TO REVIEW SECTION (transparent, non-draggable) */}
+                    {toReviewTasks.length > 0 && (
+                      <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                            To Review ({toReviewTasks.length})
+                          </span>
+                        </div>
+                        <div className="space-y-2.5 opacity-50">
+                          {toReviewTasks.map((t) => renderCard(t, { forceNonDraggable: true }))}
                         </div>
                       </div>
                     )}

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { TaskMapOption, taskMapApi } from '@/api/taskMap';
-import { Check, Search, Pencil, Plus, Trash2, X, ChevronDown, AlertTriangle, Lock } from 'lucide-react';
+import { Check, Search, Pencil, Plus, Trash2, X, ChevronDown, AlertTriangle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
@@ -288,7 +288,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
         title={readOnly ? 'Status management is restricted' : undefined}
         className={`substatus-pill w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 select-none shadow-sm ${
           readOnly
-            ? 'cursor-not-allowed opacity-80'
+            ? 'cursor-default'
             : 'cursor-pointer hover:brightness-125 hover:contrast-105 active:scale-[0.98]'
         } ${
           !primaryStatus
@@ -306,11 +306,6 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
         <span className="truncate">
           {primaryStatus || 'Sub-Status'}
         </span>
-        <div className="flex items-center gap-1 shrink-0 ml-1">
-          {readOnly && (
-            <Lock className="size-2.5 opacity-60" />
-          )}
-        </div>
       </button>
 
       {/* Popover Dropdown portalled directly to document.body with maximum z-index */}

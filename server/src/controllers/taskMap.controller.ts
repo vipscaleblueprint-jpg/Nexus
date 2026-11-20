@@ -1257,7 +1257,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             timeIn: sheetProg.timeIn,
             timeOut: null,
             client: sheetProg.client || t.list?.name || 'General',
-            taskName: sheetProg.taskDeliverables || t.title || 'No task inputted',
+            taskName: t.title || 'No task inputted',
             date: sheetProg.date || todayManila,
             status: sheetProg.status || 'IN PROGRESS',
             isUpwork: Boolean(sheetProg.isUpwork),

@@ -140,7 +140,7 @@ export function TaskMentionChip({
           {...titleProps}
         >
           {/* Status icon and first word kept together so icon is never stranded alone at line end */}
-          <span className="whitespace-nowrap inline-flex items-center align-baseline">
+          <span className="whitespace-nowrap">
             <span
               className="inline-flex items-center justify-center shrink-0 mr-1.5 align-middle transition-transform duration-200 group-hover/task-link:scale-110 select-none"
               title={`Status: ${statusName || 'Open'}`}

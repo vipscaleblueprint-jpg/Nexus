@@ -1,4 +1,4 @@
-﻿import { createPortal } from 'react-dom';
+import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
@@ -756,6 +756,7 @@ export function TaskDetailModalContent({
       if (hasPushedSubtaskHistoryRef.current) {
         hasPushedSubtaskHistoryRef.current = false;
         if (typeof window !== 'undefined') {
+          markPendingModalHistoryBack();
           window.history.back();
         }
       } else if (typeof window !== 'undefined') {
@@ -8241,6 +8242,19 @@ export function SubtaskDetailView({
     }
   };
 
+  const handleBackToParent = () => {
+    const isStandaloneTaskPage =
+      typeof window !== 'undefined' && window.location.pathname.startsWith('/tasks/');
+    if (!isStandaloneTaskPage && setActiveSubtask) {
+      setActiveSubtask(null);
+    } else if (!isStandaloneTaskPage) {
+      onClose();
+    } else {
+      const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
+      router.push(`/tasks/${parentTask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
+    }
+  };
+
   const handleReturnToList = () => {
     if (setActiveSubtask) setActiveSubtask(null);
     const targetListId = parentTask?.list?.id || parentTask?.listId;
@@ -8347,18 +8361,7 @@ export function SubtaskDetailView({
               </button>
               <span className="text-zinc-700">/</span>
               <button
-                onClick={() => {
-                  const isStandaloneTaskPage =
-                    typeof window !== 'undefined' && window.location.pathname.startsWith('/tasks/');
-                  if (!isStandaloneTaskPage && setActiveSubtask) {
-                    setActiveSubtask(null);
-                  } else {
-                    // Carry the original origin along so closing the parent still returns there
-                    const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
-                    onClose();
-                    router.push(`/tasks/${parentTask.id}${fromPath ? `?from=${encodeURIComponent(fromPath)}` : ''}`);
-                  }
-                }}
+                onClick={handleBackToParent}
                 className="truncate max-w-[150px] font-semibold text-zinc-300 hover:text-white transition-colors cursor-pointer"
               >
                 {parentTask.title || 'Untitled'}
@@ -8492,7 +8495,7 @@ export function SubtaskDetailView({
         {/* Left Panel: Details & Description */}
         <div className={`nexus-task-left-panel flex-1 overflow-y-auto border-r border-zinc-800/60 custom-scrollbar ${subtaskMobileTab === 'activity' ? 'hidden md:block' : 'block'}`}>
           <div className="p-8">
-            <div className="flex items-center gap-1.5 text-[13px] text-zinc-500 mb-2 cursor-pointer hover:text-zinc-300 transition-colors group/subtask-parent w-fit" onClick={onClose}>
+            <div className="flex items-center gap-1.5 text-[13px] text-zinc-500 mb-2 cursor-pointer hover:text-zinc-300 transition-colors group/subtask-parent w-fit" onClick={handleBackToParent}>
               <span>Subtask of</span>
               <div className="flex items-center gap-1.5 ml-1 font-bold text-zinc-100 group-hover/subtask-parent:text-white transition-colors">
                 {(parentTask.completed || parentTask.status === 'DONE' || parentTask.status === 'CLOSED' || parentTask.status === 'Closed') && (

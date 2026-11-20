@@ -377,6 +377,17 @@ export async function setMaActiveSession(maKey: string, sessionData: any): Promi
   }
 }
 
+export async function deleteMaActiveSession(maKey: string): Promise<void> {
+  const key = maKey.toLowerCase().trim();
+  if (!key) return;
+  inMemoryMaActiveSessions.delete(key);
+  if (isRedisReady()) {
+    try {
+      await redis.hdel(MA_ACTIVE_SESSIONS_KEY, key);
+    } catch {}
+  }
+}
+
 export async function getMaActiveSessionsMap(): Promise<Record<string, any>> {
   const result: Record<string, any> = {};
   for (const [k, v] of inMemoryMaActiveSessions.entries()) {

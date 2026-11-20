@@ -506,7 +506,8 @@ export function NotificationBell() {
     isGreyed: boolean
   ) => {
     const isLaunchAlert = (n.type || "").toUpperCase() === "LAUNCH_REVIEW_ALERT";
-    const actorName = n.actor?.name || (isLaunchAlert ? "Launch Map" : "Someone");
+    const isTaskMapHandoverAlert = (n.type || "").toUpperCase() === "TASK_MAP_HANDOVER_REMINDER";
+    const actorName = n.actor?.name || (isLaunchAlert ? "Launch Map" : isTaskMapHandoverAlert ? "Task Map" : "Someone");
     const isSubtask = n.title.toLowerCase().includes("subtask");
     const subtaskTitle = extractSubtaskTitle(n.title);
 
@@ -541,7 +542,8 @@ export function NotificationBell() {
               router.push(`/activity/launch-map?task=${n.task.id}`);
               return;
             }
-            const isTaskMapNotif = /\bon\s+(?:Task Map|Auditor Map|CRM Map)\b/i.test(n.title || "");
+            const isTaskMapNotif =
+              isTaskMapHandoverAlert || /\bon\s+(?:Task Map|Auditor Map|CRM Map)\b/i.test(n.title || "");
             const isCommentNotif =
               n.type === "MENTION" || n.type === "COMMENT" || n.type === "REACTION" || n.type === "REPLY" || (n.title || "").includes("comment") || (n.title || "").includes("replied");
             const cId = (n as any).commentId || (n as any).details?.commentId;

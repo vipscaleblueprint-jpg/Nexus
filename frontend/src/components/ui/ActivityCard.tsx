@@ -244,7 +244,7 @@ export function ActivityCard({
     MicroIcon = Smile;
   } else if (normType === 'LAUNCH_REVIEW_ALERT') {
     MicroIcon = Rocket;
-  } else if (normType === 'CRM_FOLLOW_UP_ALERT') {
+  } else if (normType === 'CRM_FOLLOW_UP_ALERT' || normType === 'TASK_MAP_HANDOVER_REMINDER') {
     MicroIcon = Clock;
   } else if (
     normType === 'COMMENT' ||

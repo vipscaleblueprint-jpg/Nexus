@@ -22,6 +22,7 @@ import {
   collectClientDashboardLists,
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
+  applyLiveWorkingTaskStatus,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import dynamic from 'next/dynamic';
@@ -409,13 +410,13 @@ export const TaskMapContainer: React.FC = () => {
             const pending = pendingUpdatesRef.current.get(st.id);
             const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
             const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
-            return {
+            return applyLiveWorkingTaskStatus({
               ...st,
               taskMap: {
                 ...st.taskMap,
                 statuses: sanitizeStatuses(rawStatuses, st.status, isAssigned),
               },
-            };
+            });
           });
         });
 
@@ -436,13 +437,13 @@ export const TaskMapContainer: React.FC = () => {
             const pending = pendingUpdatesRef.current.get(st.id);
             const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
             const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
-            return {
+            return applyLiveWorkingTaskStatus({
               ...st,
               taskMap: {
                 ...st.taskMap,
                 statuses: sanitizeStatuses(rawStatuses, st.status, isAssigned),
               },
-            };
+            });
           });
         });
 
@@ -693,7 +694,7 @@ export const TaskMapContainer: React.FC = () => {
 
       const patchItem = (t: TaskMapItem): TaskMapItem => {
         if (t.id !== taskId) return t;
-        return {
+        return applyLiveWorkingTaskStatus({
           ...t,
           status: nextTaskObj?.status ?? t.status,
           assigneeId: data.assigneeId !== undefined ? data.assigneeId : (nextTaskObj?.assigneeId !== undefined ? nextTaskObj.assigneeId : t.assigneeId),
@@ -712,7 +713,7 @@ export const TaskMapContainer: React.FC = () => {
             ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
             statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
           },
-        };
+        });
       };
 
       const assignedOutOfPool = Boolean(data.assigneeId && data.assigneeId !== null && !nextHandedOver);
@@ -742,12 +743,12 @@ export const TaskMapContainer: React.FC = () => {
       const data = e?.detail || e;
       if (!data?.taskId) return;
       const { taskId, progress } = data;
-      setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, progress: progress !== undefined ? progress : t.progress } : t))
-      );
-      setAvailablePool((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, progress: progress !== undefined ? progress : t.progress } : t))
-      );
+      const applyProg = (t: TaskMapItem) =>
+        t.id === taskId
+          ? applyLiveWorkingTaskStatus({ ...t, progress: progress !== undefined ? progress : t.progress })
+          : t;
+      setTasks((prev) => prev.map(applyProg));
+      setAvailablePool((prev) => prev.map(applyProg));
     };
 
     const handleUpworkChanged = (e: any) => {

@@ -21,6 +21,7 @@ import {
 } from '../services/launchMapService';
 import {
   isWaitingMainStatus,
+  getEffectiveWaitingSince,
   resolveWaitingSinceMap,
   getManilaCalendarDaysPassed,
   getCrmFollowUpRule,
@@ -827,7 +828,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       for (const item of waitingItemsForMeta) {
         const meta = waitingMetaMap.get(item.id);
         if (meta) {
-          const daysPassed = getManilaCalendarDaysPassed(meta.waitingSince);
+          const effectiveSince = getEffectiveWaitingSince(meta) || meta.waitingSince;
+          const daysPassed = getManilaCalendarDaysPassed(effectiveSince);
           item.crmWaitingMeta = {
             waitingSince: meta.waitingSince,
             daysPassed,
@@ -4386,7 +4388,7 @@ export const respondCrmFollowUpHandler = async (req: Request, res: Response) => 
       return res.status(401).json({ error: 'Authentication required' });
     }
     const { id } = req.params;
-    const { note, action = 'FOLLOWED_UP' } = req.body || {};
+    const { note, action = 'FOLLOWED_UP', parentCommentId } = req.body || {};
 
     const validActions = new Set(['FOLLOWED_UP', 'REVISIONS', 'MOVE_TO_POOL', 'CLOSED']);
     const normalizedAction = String(action || 'FOLLOWED_UP').toUpperCase();
@@ -4399,6 +4401,7 @@ export const respondCrmFollowUpHandler = async (req: Request, res: Response) => 
       userId: user.id,
       note,
       action: normalizedAction as any,
+      parentCommentId: parentCommentId ? String(parentCommentId) : null,
     });
 
     if (!result.success) {
@@ -4409,7 +4412,7 @@ export const respondCrmFollowUpHandler = async (req: Request, res: Response) => 
       });
     }
 
-    return res.json({ success: true, task: result.task });
+    return res.json({ success: true, task: result.task, comment: result.comment });
   } catch (error: any) {
     logger.error({ error }, 'Error responding to CRM follow-up');
     return res.status(500).json({ error: 'Failed to submit follow-up response' });

@@ -53,6 +53,8 @@ interface CommentEditorProps {
   onKeyDown?: (event: KeyboardEvent) => boolean | void;
   /** Compact mini layout for nested reply composers in narrow containers. */
   compact?: boolean;
+  /** Optional handler to open the CRM Follow-Up modal from a button next to Checklist. */
+  onOpenCrmFollowUp?: () => void;
 }
 
 /** An icon button for the comment toolbar. */
@@ -82,6 +84,7 @@ export const ComposerSendButton = ({ className = '', children = 'Send', ...props
 export interface CommentEditorRef {
   focus: (position?: 'start' | 'end' | 'all') => void;
   insertMention: (name: string, matchLength: number, userId: string) => void;
+  deleteRange: (length: number) => void;
   insertImages: (files: File[]) => void;
   insertEmoji: (emoji: string) => void;
   indent: () => void;
@@ -177,7 +180,7 @@ const fileNameFromSrc = (src: string, type: string) => {
   return `pasted-image-${Date.now()}.${ext}`;
 };
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown, compact = false }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown, compact = false, onOpenCrmFollowUp }, ref) => {
   const pendingUploads = React.useRef(0);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = React.useState(false);
@@ -677,6 +680,12 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         .unsetLink()
         .run();
     },
+    deleteRange: (length: number) => {
+      if (!editor || editor.isDestroyed || length <= 0) return;
+      const { from } = editor.state.selection;
+      const deleteFrom = Math.max(0, from - length);
+      editor.chain().focus().deleteRange({ from: deleteFrom, to: from }).run();
+    },
     insertImages: (files: File[]) => insertImages(files),
     insertEmoji: (emoji: string) => {
       if (!editor || editor.isDestroyed) return;
@@ -933,7 +942,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       `}</style>
       <div><EditorContent editor={editor} /></div>
       {(footer || footerEnd) && (
-        <div className={`${compact ? '-mr-0.5 -mb-0.5 mt-1.5 flex flex-wrap items-center gap-x-0.5 gap-y-1.5 pt-1 border-t border-zinc-800/60' : '-mr-1.5 -mb-1.5 mt-2 flex items-center gap-0.5 pt-1.5'}`}>
+        <div className={`${compact ? '-mr-0.5 -mb-0.5 mt-1.5 flex flex-wrap items-center gap-x-0.5 gap-y-1.5 pt-1 border-t border-zinc-800/60' : '-mr-1 -mb-1 mt-2 flex flex-wrap items-center gap-x-0.5 gap-y-1.5 pt-1.5 min-w-0'}`}>
           <ComposerToolButton
             onClick={insertMentionTrigger}
             disabled={disabled}
@@ -969,6 +978,16 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
           >
             <CheckSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
           </ComposerToolButton>
+          {onOpenCrmFollowUp && (
+            <ComposerToolButton
+              onClick={onOpenCrmFollowUp}
+              disabled={disabled}
+              title="CRM Follow-Up (/crm) — Log follow-up & count waiting from this log"
+              className={`${compact ? '!h-6 !px-1.5 !w-auto text-[10px]' : '!px-1.5 !w-auto text-[10.5px]'} font-semibold tracking-tight text-cyan-600 dark:text-cyan-400/90 hover:text-cyan-700 dark:hover:text-cyan-300 hover:bg-cyan-500/10`}
+            >
+              CRM
+            </ComposerToolButton>
+          )}
           <div className={`ml-auto flex items-center shrink-0 ${compact ? 'gap-1' : 'gap-2.5'}`}>
             {onSubmit && !compact && (
               <span className="hidden items-center gap-1 text-[10.5px] text-zinc-500 opacity-0 transition-opacity group-focus-within/composer:opacity-100 sm:flex">

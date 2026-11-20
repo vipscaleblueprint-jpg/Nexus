@@ -154,6 +154,18 @@ export function isWaitingMainStatus(status?: string | null): boolean {
   return s === 'WAITING' || s === 'SENT';
 }
 
+/**
+ * Returns the effective start timestamp for counting waiting days:
+ * uses the latest CRM follow-up log timestamp (`lastResponseAt`) when present,
+ * falling back to `waitingSince` (when the task entered WAITING) if no follow-up has been logged.
+ */
+export function getEffectiveWaitingSince(
+  meta?: Pick<CrmWaitingMeta, 'waitingSince' | 'lastResponseAt'> | null
+): string | null {
+  if (!meta) return null;
+  return meta.lastResponseAt || meta.waitingSince || null;
+}
+
 const isClosedStatus = (status?: string | null) => {
   const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
   return (
@@ -450,9 +462,10 @@ export async function triggerCrmFollowUpAlertIfNeeded(
       },
     ]);
     const meta = metaMap.get(task.id);
-    if (!meta?.waitingSince) return { sent: false, reason: 'no_waiting_since' };
+    const effectiveSince = getEffectiveWaitingSince(meta);
+    if (!effectiveSince) return { sent: false, reason: 'no_waiting_since' };
 
-    const daysPassed = getManilaCalendarDaysPassed(meta.waitingSince);
+    const daysPassed = getManilaCalendarDaysPassed(effectiveSince);
     if (daysPassed < 1) {
       return { sent: false, reason: 'same_day' };
     }
@@ -684,8 +697,9 @@ export async function listPendingCrmFollowUps(): Promise<PendingCrmFollowUpItem[
     if (isDormantOrAdmin) continue;
 
     const meta = metaMap.get(t.id);
-    if (!meta?.waitingSince) continue;
-    const daysPassed = getManilaCalendarDaysPassed(meta.waitingSince);
+    const effectiveSince = getEffectiveWaitingSince(meta);
+    if (!meta?.waitingSince || !effectiveSince) continue;
+    const daysPassed = getManilaCalendarDaysPassed(effectiveSince);
     if (daysPassed < 4) continue;
 
     // If a CRM user already logged a response or read report today (Manila date), clear it for today
@@ -867,6 +881,7 @@ export async function respondToCrmFollowUp(params: {
   userId: string;
   note: string;
   action: CrmFollowUpResponseAction;
+  parentCommentId?: string | null;
 }): Promise<{
   success: boolean;
   error?: string;
@@ -874,8 +889,9 @@ export async function respondToCrmFollowUp(params: {
   uncheckedAudits?: string[];
   openSubtasks?: string[];
   task?: any;
+  comment?: any;
 }> {
-  const { taskId, userId, note, action } = params;
+  const { taskId, userId, note, action, parentCommentId } = params;
   const trimmedNote = (note || '').trim();
   if (!trimmedNote) {
     return {
@@ -996,8 +1012,10 @@ export async function respondToCrmFollowUp(params: {
       recordUpdatedAt: record.updatedAt,
     },
   ]);
-  const waitingSince = existingMetaMap.get(task.id)?.waitingSince || nowIso;
-  const daysPassed = getManilaCalendarDaysPassed(waitingSince);
+  const existingMeta = existingMetaMap.get(task.id);
+  const waitingSince = existingMeta?.waitingSince || nowIso;
+  const effectiveSince = getEffectiveWaitingSince(existingMeta) || waitingSince;
+  const daysPassed = getManilaCalendarDaysPassed(effectiveSince);
 
   let nextTaskStatus = task.status;
   let nextSubStatuses = Array.isArray(record.statuses) ? [...record.statuses] : ['Sent but Waiting'];
@@ -1071,16 +1089,35 @@ export async function respondToCrmFollowUp(params: {
   const escapeHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  let validParentCommentId: string | null = null;
+  if (parentCommentId) {
+    const parentComment = await prisma.taskComment.findFirst({
+      where: { id: parentCommentId, taskId },
+      select: { id: true },
+    });
+    if (parentComment) {
+      validParentCommentId = parentComment.id;
+    }
+  }
+
   const comment = await prisma.taskComment.create({
     data: {
       taskId,
       userId: actor.id,
+      parentCommentId: validParentCommentId,
       content: `<p><strong>CRM Follow-Up Response (${daysPassed}d · ${escapeHtml(actionLabel)}):</strong> ${escapeHtml(trimmedNote)}</p>`,
     },
     include: {
       user: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
   });
+
+  if (validParentCommentId) {
+    await prisma.taskComment.update({
+      where: { id: validParentCommentId },
+      data: { replyCount: { increment: 1 } },
+    }).catch(() => {});
+  }
 
   const auditLog = await prisma.auditLog.create({
     data: {
@@ -1160,5 +1197,5 @@ export async function respondToCrmFollowUp(params: {
     });
   }
 
-  return { success: true, task: updatedTask };
+  return { success: true, task: updatedTask, comment };
 }

@@ -623,4 +623,25 @@ export function matchMentionTrigger(textBeforeCursor: string): { query: string; 
   };
 }
 
+const SLASH_COMMAND_TRIGGER_RE = /(?:^|[\s\uFFFC])(\/[a-zA-Z0-9_-]*)$/;
+
+/**
+ * Detects a trailing `/command` trigger before the cursor (at start of input or after whitespace/inline atom).
+ */
+export function matchSlashCommandTrigger(
+  textBeforeCursor: string
+): { query: string; startIndex: number; matchLength: number } | null {
+  if (!textBeforeCursor) return null;
+  const match = textBeforeCursor.match(SLASH_COMMAND_TRIGGER_RE);
+  if (!match) return null;
+  const rawToken = match[1]; // e.g. "/" or "/crm"
+  const startIndex = textBeforeCursor.lastIndexOf('/');
+  if (startIndex === -1) return null;
+  return {
+    query: rawToken.slice(1).toLowerCase(),
+    startIndex,
+    matchLength: rawToken.length,
+  };
+}
+
 

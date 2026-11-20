@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Popover from '@radix-ui/react-popover';
@@ -240,7 +241,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
     return match ? match.clickup_task_link : trimmed;
   }, [taskLink, filteredParentTasks]);
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     setTitle('');
     setTaskLink('');
     setLink('');
@@ -251,7 +252,16 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
     setClientName('');
     setFieldErrors({});
     setResultState({ status: 'idle' });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (resultState.status !== 'success') return;
+    const timer = window.setTimeout(() => {
+      handleReset();
+      onClose();
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [resultState.status, handleReset, onClose]);
 
   const handleModeChange = (nextMode: GalaxyMode) => {
     if (submitting) return;
@@ -355,9 +365,9 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
@@ -443,15 +453,20 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
           </div>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-5">
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4">
             {resultState.status !== 'idle' ? (
-              <div className="py-6 px-4 flex flex-col items-center text-center gap-4">
+              <div className="py-8 px-4 flex flex-col items-center text-center gap-4">
                 {resultState.status === 'success' ? (
                   <>
-                    <div className="size-14 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: 'spring', stiffness: 360, damping: 24 }}
+                      className="size-14 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center"
+                    >
                       <CheckCircle2 className="size-8 text-emerald-400" />
-                    </div>
-                    <div className="space-y-1">
+                    </motion.div>
+                    <div className="space-y-1.5">
                       <h3 className="text-lg font-bold text-zinc-100">
                         {mode === 'subtask' ? 'Subtask Created Successfully!' : 'Task Created Successfully!'}
                       </h3>
@@ -464,22 +479,13 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         </p>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 pt-2 w-full max-w-sm">
-                      <button
-                        type="button"
-                        onClick={handleReset}
-                        className="flex-1 px-4 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
-                      >
-                        Create Another
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleViewResult}
-                        className="flex-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <span>View in Nexus</span>
-                        <ExternalLink className="size-3.5" />
-                      </button>
+                    <div className="w-40 h-1 rounded-full bg-zinc-800 overflow-hidden mt-1">
+                      <motion.div
+                        initial={{ width: '100%' }}
+                        animate={{ width: '0%' }}
+                        transition={{ duration: 2.5, ease: 'linear' }}
+                        className="h-full bg-emerald-500"
+                      />
                     </div>
                   </>
                 ) : (
@@ -526,7 +532,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                 )}
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form id="galaxy-task-form" onSubmit={handleSubmit} className="space-y-3.5">
                 {clientsError && (
                   <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400 flex items-center justify-between gap-2">
                     <span>{clientsError}</span>
@@ -938,36 +944,41 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                       }
                     }}
                     placeholder="Describe the task details and requirements..."
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 min-h-[120px] resize-y"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 min-h-[96px] resize-y"
                   />
                   {fieldErrors.prompt && (
                     <p className="text-xs text-pink-400">{fieldErrors.prompt}</p>
                   )}
                 </div>
-
-                {/* Submit */}
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-sm font-semibold shadow-md transition-all cursor-pointer"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" />
-                      <span>{mode === 'subtask' ? 'Creating Subtask...' : 'Creating Task...'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="size-4" />
-                      <span>{mode === 'subtask' ? 'Create Subtask' : 'Create Task'}</span>
-                    </>
-                  )}
-                </button>
               </form>
             )}
           </div>
+
+          {resultState.status === 'idle' && (
+            <div className="px-5 py-3.5 border-t border-zinc-800/80 bg-zinc-950/60 shrink-0">
+              <button
+                type="submit"
+                form="galaxy-task-form"
+                disabled={submitting}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-sm font-semibold shadow-md transition-all cursor-pointer"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>{mode === 'subtask' ? 'Creating Subtask...' : 'Creating Task...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="size-4" />
+                    <span>{mode === 'subtask' ? 'Create Subtask' : 'Create Task'}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

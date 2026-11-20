@@ -456,7 +456,9 @@ function parseTaskPmReviewsList(task?: TaskMapItem | null): any[] {
   return Array.isArray(reviewsList) ? [...reviewsList] : [];
 }
 
-function isCadenceTaskMapItem(task: TaskMapItem): boolean {
+export function isCadenceTaskMapItem(
+  task: Pick<TaskMapItem, 'status' | 'taskMap'> & { recurringConfig?: any }
+): boolean {
   const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
   const mapStatuses = (task.taskMap?.statuses || []).map((x) =>
     x.trim().toUpperCase().replace(/[\s_-]+/g, '')
@@ -480,6 +482,46 @@ function isCadenceTaskMapItem(task: TaskMapItem): boolean {
         st.includes('RECURRING')
     )
   );
+}
+
+/**
+ * Returns true when a progress entry represents an active live-working session
+ * (clocked in with no timeOut and not flagged as missing time).
+ */
+export function isLiveWorkingProgress(progress?: TaskProgress | null): boolean {
+  return Boolean(progress?.timeIn && !progress?.timeOut && !progress?.isMissingTime);
+}
+
+/**
+ * When a task is actively live working (clocked in with no timeOut), transitions any
+ * non-closed, non-recurring task status into 'IN PROGRESS'. Recurring/cadence tasks
+ * (Daily, Weekly, Monthly, Recurring) strictly preserve their cadence status.
+ */
+export function applyLiveWorkingTaskStatus(task: TaskMapItem): TaskMapItem {
+  if (!isLiveWorkingProgress(task.progress)) return task;
+  if (isCadenceTaskMapItem(task)) return task;
+
+  const normStatus = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (normStatus === 'CLOSED' || normStatus === 'DONE') return task;
+
+  const existingStatuses = Array.isArray(task.taskMap?.statuses) ? [...task.taskMap.statuses] : [];
+  const cleanedStatuses = existingStatuses.filter((st) => {
+    const norm = st.trim().toUpperCase().replace(/[\s_-]+/g, '');
+    return norm !== 'HANDOVER' && norm !== 'AVAILABLETASK' && norm !== 'PAUSED' && norm !== 'ONHOLD';
+  });
+  if (!cleanedStatuses.some((st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+    cleanedStatuses.push('In progress');
+  }
+
+  return {
+    ...task,
+    status: normStatus === 'INPROGRESS' ? task.status : 'IN PROGRESS',
+    taskMap: {
+      ...task.taskMap,
+      handedOver: false,
+      statuses: cleanedStatuses,
+    },
+  };
 }
 
 /**
@@ -1019,10 +1061,11 @@ export const taskMapApi = {
 
   respondCrmFollowUp: async (
     taskId: string,
-    payload: { note: string; action: CrmFollowUpResponseAction }
+    payload: { note: string; action: CrmFollowUpResponseAction; parentCommentId?: string | null }
   ): Promise<{
     success: boolean;
     task?: any;
+    comment?: any;
     error?: string;
     uncheckedAudits?: string[];
     openSubtasks?: string[];
@@ -1594,7 +1637,16 @@ export function createEmptyUserBlock(params?: {
     rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
   const assumedDay = params?.day || new Date().toISOString().split('T')[0];
   const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
-  const effectiveStatus = params?.taskStatus || assumedStatus;
+  const rawEffectiveStatus = params?.taskStatus || assumedStatus;
+  const rawNorm = rawEffectiveStatus.trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const isCadenceAssumed = ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].some(
+    (c) => rawNorm === c || rawNorm.includes(c)
+  );
+  const isLiveAssumed = Boolean(params?.timeIn && !params?.timeOut);
+  const effectiveStatus =
+    isLiveAssumed && !isCadenceAssumed && rawNorm !== 'CLOSED' && rawNorm !== 'DONE'
+      ? 'IN PROGRESS'
+      : rawEffectiveStatus;
   const effectiveListId =
     params?.listId && params.listId !== 'general' ? params.listId : 'general';
   const effectiveSubStatuses = Array.isArray(params?.subStatuses)
@@ -2056,8 +2108,15 @@ export function getManilaCalendarDaysPassed(
 }
 
 export function getTaskCrmWaitingInfo(task: TaskMapItem, now: Date = new Date()): CrmWaitingMeta {
+  const revs = parseTaskPmReviewsList(task);
+  const meta = revs.find((r: any) => r && r.type === 'CRM_WAITING_META');
+
   if (task.crmWaitingMeta?.waitingSince) {
-    const daysPassed = getManilaCalendarDaysPassed(task.crmWaitingMeta.waitingSince, now);
+    const effectiveSince =
+      task.crmWaitingMeta.lastResponseAt ||
+      meta?.lastResponseAt ||
+      task.crmWaitingMeta.waitingSince;
+    const daysPassed = getManilaCalendarDaysPassed(effectiveSince, now);
     return {
       ...task.crmWaitingMeta,
       daysPassed,
@@ -2065,18 +2124,17 @@ export function getTaskCrmWaitingInfo(task: TaskMapItem, now: Date = new Date())
     };
   }
 
-  const revs = parseTaskPmReviewsList(task);
-  const meta = revs.find((r: any) => r && r.type === 'CRM_WAITING_META');
-  const since =
+  const waitingSince =
     meta?.waitingSince ||
     task.taskMap?.updatedAt ||
     task.updatedAt ||
     task.createdAt ||
     new Date().toISOString();
-  const daysPassed = getManilaCalendarDaysPassed(since, now);
+  const effectiveSince = meta?.lastResponseAt || waitingSince;
+  const daysPassed = getManilaCalendarDaysPassed(effectiveSince, now);
 
   return {
-    waitingSince: since,
+    waitingSince,
     daysPassed,
     rule: getCrmFollowUpRule(daysPassed),
     lastResponseAt: meta?.lastResponseAt || null,

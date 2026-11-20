@@ -3580,7 +3580,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
                     {/* QUEUE SECTION */}
                     {(queuedTasks.length > 0 || showColumnCutout) && (
-                      <div className="pt-2 space-y-1">
+                      <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
                         <div className="flex items-center justify-between px-1">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
                             Queue ({countNonOnHoldTasks(queuedTasks) + (showColumnCutout && (!activeDragTask || !isTaskOnHold(activeDragTask)) ? 1 : 0)})

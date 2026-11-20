@@ -13,10 +13,12 @@ import {
   IMAGE_SOFT_MAX_BYTES,
   MAX_FILES_PER_BATCH,
 } from '@/lib/fileValidation';
-import { isBlankCommentHtml, trimCommentHtml, matchMentionTrigger } from '@/lib/links';
+import { isBlankCommentHtml, trimCommentHtml, matchMentionTrigger, matchSlashCommandTrigger } from '@/lib/links';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { isSystemUser } from '@/lib/taskTokens';
+import { hasCrmAccess } from '@/lib/permissions';
+import { SlashCommandMenu, SlashCommandItem } from './SlashCommandMenu';
 import { triggerMentionConfetti, preloadMentionConfettiImage } from '../ui/MentionConfetti';
 
 interface CommentReplyInputProps {
@@ -26,6 +28,7 @@ interface CommentReplyInputProps {
   onSubmit: (content: string, mentionIds: string[]) => Promise<void>;
   onCancel: () => void;
   placeholder?: string;
+  onOpenCrmFollowUp?: (parentCommentId?: string) => void;
 }
 
 interface StagedReplyFile {
@@ -37,9 +40,11 @@ interface StagedReplyFile {
 export function CommentReplyInput({
   commentId,
   workspaceUsers = [],
+  currentUser,
   onSubmit,
   onCancel,
   placeholder = 'Write a reply...',
+  onOpenCrmFollowUp,
 }: CommentReplyInputProps) {
   const [replyHtml, setReplyHtml] = useState('');
   const [stagedFiles, setStagedFiles] = useState<StagedReplyFile[]>([]);
@@ -48,8 +53,13 @@ export function CommentReplyInput({
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashMatchLength, setSlashMatchLength] = useState(0);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [emojiAnchor, setEmojiAnchor] = useState<HTMLElement | null>(null);
+
+  const canUseCrm = Boolean(onOpenCrmFollowUp && hasCrmAccess(currentUser));
 
   const commentEditorRef = useRef<CommentEditorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -459,11 +469,36 @@ export function CommentReplyInput({
             setShowMentionMenu(true);
             setMentionSearch(mentionMatch.query);
             setSelectedIndex(0);
+            setShowSlashMenu(false);
           } else {
             setShowMentionMenu(false);
+            const slashMatch = canUseCrm ? matchSlashCommandTrigger(textBeforeCursor) : null;
+            if (slashMatch && 'crm'.startsWith(slashMatch.query)) {
+              updateMenuPosition();
+              setShowSlashMenu(true);
+              setSlashMatchLength(slashMatch.matchLength);
+              setSlashSelectedIndex(0);
+            } else {
+              setShowSlashMenu(false);
+            }
           }
         }}
         onKeyDown={(e) => {
+          if (showSlashMenu && canUseCrm) {
+            if (e.key === 'Enter' || e.key === 'Tab') {
+              e.preventDefault();
+              commentEditorRef.current?.deleteRange(slashMatchLength);
+              setShowSlashMenu(false);
+              onOpenCrmFollowUp?.(commentId);
+              return true;
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowSlashMenu(false);
+              return true;
+            }
+          }
           if (showMentionMenu && filteredUsers.length > 0) {
             if (e.key === 'ArrowDown') {
               e.preventDefault();
@@ -508,6 +543,7 @@ export function CommentReplyInput({
         onUploadImage={uploadCommentImage}
         onUploadImageUrl={copyCommentImage}
         onUploadingChange={setIsUploadingInline}
+        onOpenCrmFollowUp={canUseCrm ? () => onOpenCrmFollowUp?.(commentId) : undefined}
         footer={
           <div className="flex items-center gap-0.5">
             <ComposerToolButton
@@ -573,6 +609,25 @@ export function CommentReplyInput({
           placement="top"
         />
       )}
+
+      <SlashCommandMenu
+        isOpen={showSlashMenu && canUseCrm}
+        items={[
+          {
+            command: '/crm',
+            label: 'CRM Follow-Up',
+            description: 'Log a follow-up update, count waiting days from this log instead of the waiting status, or move the task.',
+            onSelect: () => {
+              commentEditorRef.current?.deleteRange(slashMatchLength);
+              setShowSlashMenu(false);
+              onOpenCrmFollowUp?.(commentId);
+            },
+          },
+        ] as SlashCommandItem[]}
+        selectedIndex={slashSelectedIndex}
+        onSelectIndex={setSlashSelectedIndex}
+        position={menuPosition}
+      />
 
       {/* Portaled Mention Dropdown */}
       {showMentionMenu && menuPosition && typeof document !== 'undefined' && createPortal(

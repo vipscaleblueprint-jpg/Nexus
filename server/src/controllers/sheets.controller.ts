@@ -34,7 +34,7 @@ import { isReviewStatus } from '../utils/auditChecklist';
 import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -1492,6 +1492,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     // If MA name was provided, ensure the task is assigned to this MA if currently unassigned
     let assignedUser: { id: string; name: string } | null = null;
+    let maUserRecord: { id: string; name: string } | null = null;
     if (maNameStr) {
       const maUser = await prisma.user.findFirst({
         where: {
@@ -1505,6 +1506,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       });
 
       if (maUser) {
+        maUserRecord = maUser;
         assignedUser = maUser;
         const curTask = await prisma.task.findUnique({
           where: { id: target.taskId },
@@ -1523,7 +1525,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     const record = await getOrCreateTaskMapRecord(target.taskId);
     const targetTaskMeta = await prisma.task.findUnique({
       where: { id: target.taskId },
-      select: { listId: true, status: true, priority: true },
+      select: {
+        id: true,
+        title: true,
+        listId: true,
+        status: true,
+        priority: true,
+        assigneeId: true,
+        recurringConfig: true,
+        list: {
+          select: {
+            id: true,
+            name: true,
+            folder: { select: { name: true } },
+          },
+        },
+      },
     });
 
     // If task was manually marked as Upwork on TaskMap (project-based), honor it
@@ -1845,11 +1862,123 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
     }
 
+    // Live-working & Time-Out automation
+    const existingRecordStatuses: string[] = Array.isArray(record.statuses) ? record.statuses : [];
+    const currentTaskStatusNorm = (targetTaskMeta?.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    const isCadenceTask =
+      Boolean(targetTaskMeta?.recurringConfig) ||
+      ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].some(
+        (c) => currentTaskStatusNorm === c || currentTaskStatusNorm.includes(c)
+      ) ||
+      existingRecordStatuses.some((s) => {
+        const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+        return ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].some((c) => sn === c || sn.includes(c));
+      });
+    const isAdminTask = isHiddenAdminOrInternalTask(targetTaskMeta?.list);
+
+    let nextTaskStatus = targetTaskMeta?.status || null;
+    let nextRecordStatuses: string[] = existingRecordStatuses;
+    let nextHandedOver: boolean | undefined = undefined;
+    let nextAssigneeId: string | null | undefined = assignedUser?.id;
+    let nextAssigneeObj: { id: string; name: string } | null | undefined = assignedUser;
+
+    if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
+      // Live Working: transition any non-closed, non-recurring task into IN PROGRESS
+      if (!isCadenceTask && currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
+        if (currentTaskStatusNorm !== 'INPROGRESS') {
+          const listInProgressStatus = targetTaskMeta?.listId
+            ? await prisma.listStatus.findFirst({
+                where: { listId: targetTaskMeta.listId, name: { equals: 'IN PROGRESS', mode: 'insensitive' } },
+                select: { name: true },
+              }).catch(() => null)
+            : null;
+          nextTaskStatus = listInProgressStatus?.name ?? 'IN PROGRESS';
+          await prisma.task.update({
+            where: { id: target.taskId },
+            data: { status: nextTaskStatus },
+          });
+          if (targetTaskMeta) targetTaskMeta.status = nextTaskStatus;
+          io.emit('task:updated', { id: target.taskId, status: nextTaskStatus });
+        }
+
+        const cleaned = existingRecordStatuses.filter((s) => {
+          const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+          return sn !== 'HANDOVER' && sn !== 'AVAILABLETASK' && sn !== 'PAUSED' && sn !== 'ONHOLD';
+        });
+        if (!cleaned.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+          cleaned.push('In progress');
+        }
+        nextRecordStatuses = cleaned;
+        nextHandedOver = false;
+      }
+    } else if (cleanTimeOut && !isAdminTask) {
+      // Time-Out: auto Hand-over unless MA changed it to To Review / completed / CRM
+      const isAlreadyReviewedOrFinished =
+        ['INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING', 'DONE', 'CLOSED', 'CRM', 'WAITING'].includes(
+          currentTaskStatusNorm
+        ) ||
+        existingRecordStatuses.some((s) => {
+          const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+          return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+        });
+
+      if (!isAlreadyReviewedOrFinished) {
+        const wasAlreadyHandedOver =
+          Boolean(record.handedOver) &&
+          existingRecordStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+
+        nextRecordStatuses = ['Hand-over'];
+        nextHandedOver = true;
+        nextAssigneeId = null;
+        nextAssigneeObj = null;
+
+        await prisma.task.update({
+          where: { id: target.taskId },
+          data: {
+            assigneeId: null,
+            assignees: { set: [] },
+            status: isCadenceTask ? (targetTaskMeta?.status || 'IN PROGRESS') : (targetTaskMeta?.status || 'IN PROGRESS'),
+          },
+        });
+
+        if (!wasAlreadyHandedOver) {
+          if (maUserRecord) {
+            await prisma.taskComment.create({
+              data: {
+                taskId: target.taskId,
+                userId: maUserRecord.id,
+                content: '**Sub-status updated**: "Hand-over" (Timed out without changing to To Review) [System Auto-Handover]',
+              },
+            }).catch(() => {});
+
+            await prisma.taskNotification.create({
+              data: {
+                userId: maUserRecord.id,
+                taskId: target.taskId,
+                type: 'TASK_MAP_HANDOVER_REMINDER',
+                title: `"${targetTaskMeta?.title || task || 'Task'}" was moved to Hand-over on Task Map`,
+                content: 'You timed out without changing the status to To Review, so it was automatically handed over.',
+              },
+            }).catch(() => {});
+
+            io.to(`user:${maUserRecord.id}`).emit('notification_received', {
+              type: 'TASK_MAP_HANDOVER_REMINDER',
+              taskId: target.taskId,
+            });
+          }
+        }
+      }
+    }
+
     // Save back to TaskMapRecord
-    await updateTaskMapRecord(target.taskId, { pmReviews: reviewsList });
+    await updateTaskMapRecord(target.taskId, {
+      pmReviews: reviewsList,
+      ...(nextRecordStatuses !== existingRecordStatuses ? { statuses: nextRecordStatuses } : {}),
+      ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
+    });
 
     // Invalidate caches
-    await invalidateCache(`task:${target.taskId}`, 'task_map:all');
+    await invalidateCache(`task:${target.taskId}`, 'task_map:all', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
     if (maNameStr) {
@@ -1857,9 +1986,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         maName: maNameStr,
         taskId: target.taskId,
         listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
-        taskStatus: targetTaskMeta?.status || null,
+        taskStatus: nextTaskStatus || targetTaskMeta?.status || null,
         priority: targetTaskMeta?.priority || null,
-        subStatuses: Array.isArray(record.statuses) ? record.statuses : undefined,
+        subStatuses: Array.isArray(nextRecordStatuses) ? nextRecordStatuses : undefined,
         timeIn: cleanTimeIn,
         timeOut: cleanTimeOut,
         client: clientStr || 'General',
@@ -1884,11 +2013,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Emit Realtime WebSockets so TaskMapContainer and BoardView update immediately
     io.emit('task_map:updated', {
       taskId: target.taskId,
+      status: nextTaskStatus || undefined,
       taskMap: {
-        statuses: record.statuses,
+        statuses: nextRecordStatuses,
+        ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
       },
-      assigneeId: assignedUser?.id,
-      assignee: assignedUser,
+      assigneeId: nextAssigneeId,
+      assignee: nextAssigneeObj,
       progress: progressObj,
     });
     io.emit('task:progress_updated', {

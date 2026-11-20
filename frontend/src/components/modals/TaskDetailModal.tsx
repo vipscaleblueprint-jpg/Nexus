@@ -1,4 +1,4 @@
-import { createPortal } from 'react-dom';
+﻿import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
@@ -16,11 +16,11 @@ import { uploadApi } from '@/api/upload';
 import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
-import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
-import { taskMapApi } from '@/api/taskMap';
+import { taskMapApi, getTaskCrmWaitingInfo, CrmWaitingMeta } from '@/api/taskMap';
 
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
@@ -36,8 +36,10 @@ import { UserMentionChip } from '../ui/UserMentionChip';
 import { triggerMentionConfetti, preloadMentionConfettiImage } from '../ui/MentionConfetti';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { LinkWithPreview } from '../ui/LinkHoverPreview';
-import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl, matchMentionTrigger } from '@/lib/links';
+import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl, matchMentionTrigger, matchSlashCommandTrigger } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { CrmTaskFollowUpModal } from './CrmTaskFollowUpModal';
+import { SlashCommandMenu } from './SlashCommandMenu';
 import { ActionErrorModal, ActionErrorInfo } from './ActionErrorModal';
 import { EditCommentForm } from './EditCommentForm';
 import { CommentReplyInput } from './CommentReplyInput';
@@ -59,7 +61,7 @@ const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkif
 const keepUrl = (url: string) => url;
 const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);
 const copyCommentImage = (url: string) => uploadApi.uploadFromUrl(url, 'comments').then(res => res.url);
-const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
+const QUICK_EMOJIS = ['ðŸ‘', 'â¤ï¸', 'ðŸ˜‚', 'ðŸ˜®', 'ðŸ˜¢', 'ðŸŽ‰', 'ðŸ”¥', 'ðŸ‘€'];
 
 // Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
 // in the comment box or posting another comment doesn't re-parse every comment already shown.
@@ -455,7 +457,7 @@ export function normalizeCommentSearchText(str: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ')
-    .replace(/…/g, '')
+    .replace(/â€¦/g, '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/mention:\/\/[^\s>]+/g, ' ')
     .replace(/[#*_`~>\[\]\(\)!]/g, ' ')
@@ -1073,13 +1075,49 @@ export function TaskDetailModalContent({
   // Assignees as they were before the current debounced batch of toggles (for the added/removed activity diff)
   const assigneeBaselineRef = useRef<UserModel[] | null>(null);
 
-  // Mentions
+  // Mentions & Slash Commands (/crm)
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: string; name: string }[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const mentionListRef = useRef<HTMLDivElement>(null);
+  const commentComposerWrapperRef = useRef<HTMLDivElement>(null);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashMatchLength, setSlashMatchLength] = useState(0);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashMenuPosition, setSlashMenuPosition] = useState<{ bottom?: number; left: number; width: number } | null>(null);
+  const [crmFollowUpModal, setCrmFollowUpModal] = useState<{ isOpen: boolean; parentCommentId?: string | null }>({ isOpen: false, parentCommentId: null });
+  const [crmWaitingOverride, setCrmWaitingOverride] = useState<Partial<CrmWaitingMeta> | null>(null);
+
+  const currentUserForCrm = useAppStore((s) => s.currentUser);
+  const canUseCrm = hasCrmAccess(currentUserForCrm);
+  const effectiveCrmWaitingInfo = useMemo(() => {
+    if (!task) return null;
+    const base = getTaskCrmWaitingInfo(task as any);
+    if (!crmWaitingOverride) return base;
+    return getTaskCrmWaitingInfo({
+      ...(task as any),
+      crmWaitingMeta: {
+        ...base,
+        ...crmWaitingOverride,
+      },
+    });
+  }, [task, crmWaitingOverride]);
+
+  useEffect(() => {
+    setCrmWaitingOverride(null);
+  }, [task?.id]);
+
+  const updateSlashMenuPosition = useCallback(() => {
+    if (!commentComposerWrapperRef.current) return;
+    const rect = commentComposerWrapperRef.current.getBoundingClientRect();
+    setSlashMenuPosition({
+      bottom: window.innerHeight - rect.top + 8,
+      left: Math.max(16, rect.left),
+      width: Math.min(340, Math.max(260, rect.width)),
+    });
+  }, []);
 
   useEffect(() => {
     if (!showMentionMenu || !mentionListRef.current) return;
@@ -1537,7 +1575,7 @@ export function TaskDetailModalContent({
 
   // Fetch persistent activities and comments from DB
   // ---------------------------------------------------------------------------
-  // In-memory session cache (module-level — survives re-renders, cleared on
+  // In-memory session cache (module-level â€” survives re-renders, cleared on
   // page refresh). Keyed by task/parent-task ID. Entries expire after 60 s so
   // a long-open modal still eventually picks up new comments.
   // ---------------------------------------------------------------------------
@@ -1560,13 +1598,13 @@ export function TaskDetailModalContent({
       const subtaskId = isSubtask ? task.id : undefined;
       const cacheKey = isSubtask ? `subtask:${task.id}` : targetId;
 
-      // ── 1. CACHE-FIRST: show cached data immediately (zero skeleton flicker) ──
+      // â”€â”€ 1. CACHE-FIRST: show cached data immediately (zero skeleton flicker) â”€â”€
       const cached = activityCache.get(cacheKey);
       const cacheAge = cached ? Date.now() - cached.timestamp : Infinity;
       const cacheValid = cacheAge < ACTIVITY_CACHE_TTL_MS;
 
       if (cached && cacheValid) {
-        // Serve cached data right away — user sees content instantly
+        // Serve cached data right away â€” user sees content instantly
         const currentTitle = task.title || '';
         const cachedActivities = isSubtask
           ? cached.activities.filter((a: any) => a.subtaskId === currentTaskId || (a.subtaskTitle && currentTitle && a.subtaskTitle.toLowerCase() === currentTitle.toLowerCase()))
@@ -1576,13 +1614,13 @@ export function TaskDetailModalContent({
         setLoadingActivities(false);
         // Fall through to background refresh below (silent)
       } else {
-        // No valid cache — show skeleton only on first open
+        // No valid cache â€” show skeleton only on first open
         if (!silent) setLoadingActivities(true);
       }
 
       setLoadError(null);
 
-      // ── 2. BACKGROUND REFRESH: fetch activities & comments independently ──
+      // â”€â”€ 2. BACKGROUND REFRESH: fetch activities & comments independently â”€â”€
       const [actSettled, commentSettled] = await Promise.allSettled([
         tasksApi.getActivities(targetId, { signal: abortController.signal }),
         tasksApi.getComments(targetId, subtaskId, { signal: abortController.signal }),
@@ -1610,7 +1648,7 @@ export function TaskDetailModalContent({
         : [];
       const fetchedComments = commentRes?.comments || [];
 
-      // ── 3. SAVE TO CACHE ──
+      // â”€â”€ 3. SAVE TO CACHE â”€â”€
       if (actRes?.activities && commentRes?.comments) {
         activityCache.set(cacheKey, {
           activities: fetchedActivities,
@@ -1856,7 +1894,7 @@ export function TaskDetailModalContent({
     }
   };
 
-  // ── Reset activities and comments immediately when active task changes ────
+  // â”€â”€ Reset activities and comments immediately when active task changes â”€â”€â”€â”€
   useEffect(() => {
     if (!task?.id) {
       setActivities([]);
@@ -1883,7 +1921,7 @@ export function TaskDetailModalContent({
     }
   }, [task?.id]);
 
-  // ── Bootstrap comments & activities ONCE per task open ──────────────────
+  // â”€â”€ Bootstrap comments & activities ONCE per task open â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // After the initial load, the socket handles all new comments in real-time.
   // This ref resets whenever the task ID changes so reopening a different task
   // always triggers a fresh load.
@@ -1947,7 +1985,7 @@ export function TaskDetailModalContent({
       setAttachments([...existing, ...oldAttachments]);
       setEditingUser(null);
     }
-    // Only when what this derives from changes — not on every merged task object (status echoes,
+    // Only when what this derives from changes â€” not on every merged task object (status echoes,
     // the background full-task fetch), which reset the description and rebuilt attachments each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id, task?.description, task?.attachments]);
@@ -2102,8 +2140,8 @@ export function TaskDetailModalContent({
       socket.on('task_activity', handleActivity);
     }
 
-    // ── Real-time comment delivery ──────────────────────────────────────────
-    // After bootstrap, new comments arrive via socket only — no polling needed.
+    // â”€â”€ Real-time comment delivery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // After bootstrap, new comments arrive via socket only â€” no polling needed.
     const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string; activity?: any }) => {
       const currentTask = taskRef.current;
       if (!currentTask) return;
@@ -2152,7 +2190,7 @@ export function TaskDetailModalContent({
           });
         }
 
-        // Deduplicate — the sender already added it optimistically
+        // Deduplicate â€” the sender already added it optimistically
         if (prev.some(c => c.id === payload.comment.id)) return prev;
         // Replace temp placeholder if this is the acting client
         const tempIdx = prev.findIndex(c =>
@@ -2876,7 +2914,7 @@ export function TaskDetailModalContent({
       const names = updatedAssignees.length > 0 ? updatedAssignees.map(u => u.name).join(', ') : 'Unassigned';
       const added = updatedAssignees.filter(u => !previousAssignees.some(p => p.id === u.id)).map(u => u.name);
       const removed = previousAssignees.filter(p => !updatedAssignees.some(u => u.id === p.id)).map(p => p.name);
-      if (added.length === 0 && removed.length === 0) return; // toggled on and off again — nothing changed
+      if (added.length === 0 && removed.length === 0) return; // toggled on and off again â€” nothing changed
       const optimisticActivity = {
         id: optimisticId,
         type: 'assignment',
@@ -3282,7 +3320,7 @@ export function TaskDetailModalContent({
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
       const subtaskId = isSubtask ? task.id : undefined;
-      // Optimistic update — into richComments, which is what the feed renders (comment activities are filtered out)
+      // Optimistic update â€” into richComments, which is what the feed renders (comment activities are filtered out)
       setRichComments(prev => [...prev, {
         id: tempId,
         content: finalComment,
@@ -3767,7 +3805,7 @@ export function TaskDetailModalContent({
                 )}
               </div>
 
-              {/* Properties Stack — row layout */}
+              {/* Properties Stack â€” row layout */}
               <div className="flex flex-col gap-2 mb-8 mt-1">
 
                 {/* Status Row */}
@@ -3920,7 +3958,7 @@ export function TaskDetailModalContent({
                     <span className="text-[12px] text-zinc-500">Assignees</span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Add role button (Assign Team) — moved to left of Assign */}
+                    {/* Add role button (Assign Team) â€” moved to left of Assign */}
                     <Popover.Root open={isRoleOpen && canAssignTask} onOpenChange={(open) => canAssignTask && setIsRoleOpen(open)}>
                       <Popover.Trigger asChild>
                         {(localRoleRestrictions && localRoleRestrictions.length > 0) ? (
@@ -4163,7 +4201,7 @@ export function TaskDetailModalContent({
                                   className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-rose-400 data-[selected=true]:text-rose-400 mb-1 border-b border-zinc-800/40"
                                 >
                                   <div className="w-5 h-5 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500 mr-2 shrink-0">
-                                    ✕
+                                    âœ•
                                   </div>
                                   <span>Clear all assignees</span>
                                 </Command.Item>
@@ -4402,13 +4440,13 @@ export function TaskDetailModalContent({
 
               </div>
 
-              {/* Informative CRM Follow-Up Notice Banner (Active Clients, 4+ days) */}
+              {/* Informative CRM Follow-Up Notice Banner (Active Clients, 4+ days since last follow-up or waiting start) */}
               {Boolean(
                 ((localStatus || '').toUpperCase().trim() === 'WAITING' ||
                   (localStatus || '').toUpperCase().trim() === 'SENT') &&
                 !(((task as any)?.list?.folder?.name || '').toLowerCase().includes('dormant') ||
                   ((task as any)?.list?.name || '').toLowerCase().includes('dormant')) &&
-                Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24)) >= 4 &&
+                (effectiveCrmWaitingInfo?.daysPassed ?? 0) >= 4 &&
                 !isFollowUpAcknowledged &&
                 !activities.some((a) => (a.type === 'crm_follow_up_read' || a.type === 'crm_follow_up_report_read') && new Date(a.date).toDateString() === new Date().toDateString())
               ) && (
@@ -4421,11 +4459,11 @@ export function TaskDetailModalContent({
                       <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5 flex-wrap">
                         <span>CRM Follow-Up Notice</span>
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-cyan-900/50 text-cyan-300 border border-cyan-700/50">
-                          {Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24))}d waiting
+                          {effectiveCrmWaitingInfo?.daysPassed ?? 0}d waiting
                         </span>
                       </div>
                       <p className="text-[11px] text-zinc-400 mt-0.5">
-                        Awaiting client response or feedback on outreach for {Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24))} days.
+                        Awaiting client response or feedback on outreach for {effectiveCrmWaitingInfo?.daysPassed ?? 0} days.
                       </p>
                     </div>
                   </div>
@@ -4433,7 +4471,7 @@ export function TaskDetailModalContent({
                     type="button"
                     onClick={async () => {
                       setIsAcknowledgingNotice(true);
-                      const days = Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24));
+                      const days = effectiveCrmWaitingInfo?.daysPassed ?? 0;
                       try {
                         await taskMapApi.acknowledgeCrmFollowUps([task.id]);
                         setIsFollowUpAcknowledged(true);
@@ -4564,7 +4602,7 @@ export function TaskDetailModalContent({
                 onDoubleClick={handleSubtasksHeaderDoubleClick}
                 title={
                   isSubtasksExpanded
-                    ? "Single-click: Toggle expand/collapse all rows • Double-click: Collapse section"
+                    ? "Single-click: Toggle expand/collapse all rows â€¢ Double-click: Collapse section"
                     : "Click to expand subtasks section"
                 }
               >
@@ -4982,8 +5020,8 @@ export function TaskDetailModalContent({
                         {/* Action row */}
                         <div className="flex items-center gap-1 mt-1 pl-11 relative">
                           <button
-                            onClick={() => handleToggleReaction(comment.id, '👍')}
-                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
+                            onClick={() => handleToggleReaction(comment.id, 'ðŸ‘')}
+                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['ðŸ‘']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
                             title="Like"
                           >
                             <ThumbsUp className="w-3.5 h-3.5" />
@@ -5036,6 +5074,7 @@ export function TaskDetailModalContent({
                             commentId={comment.id}
                             workspaceUsers={workspaceUsers}
                             currentUser={currentUser}
+                            onOpenCrmFollowUp={canUseCrm ? (parentId) => setCrmFollowUpModal({ isOpen: true, parentCommentId: parentId || comment.id }) : undefined}
                             onSubmit={async (content, mentionIds) => {
                               await handleSubmitReply(comment.id, content, mentionIds);
                             }}
@@ -5566,7 +5605,7 @@ export function TaskDetailModalContent({
                   })}
                 </div>
               )}
-              <div className="relative">
+              <div ref={commentComposerWrapperRef} className="relative">
                 {(() => {
                   const filteredMentionUsers = (workspaceUsers || []).filter(u =>
                     (u.name || '').toLowerCase().includes(mentionSearch.toLowerCase()) ||
@@ -5589,7 +5628,7 @@ export function TaskDetailModalContent({
                         <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover border border-border rounded-xl shadow-2xl overflow-hidden z-[100000] animate-in fade-in zoom-in-95 duration-100">
                           <div className="p-2 border-b border-border text-xs font-semibold text-muted-foreground bg-accent/40 flex items-center justify-between">
                             <span>People</span>
-                            <span className="text-[10px] text-muted-foreground font-normal">↑↓ navigate, Enter/Tab select</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">â†‘â†“ navigate, Enter/Tab select</span>
                           </div>
                           <div ref={mentionListRef} className="max-h-52 overflow-y-auto custom-scrollbar relative">
                             {filteredMentionUsers.map((u, idx) => {
@@ -5720,11 +5759,35 @@ export function TaskDetailModalContent({
                             setMentionSearch(mentionMatch.query);
                             setMentionStartIndex(mentionMatch.startIndex);
                             setMentionSelectedIndex(0);
+                            setShowSlashMenu(false);
                           } else {
                             setShowMentionMenu(false);
+                            const slashMatch = canUseCrm ? matchSlashCommandTrigger(textBeforeCursor) : null;
+                            if (slashMatch && 'crm'.startsWith(slashMatch.query)) {
+                              updateSlashMenuPosition();
+                              setShowSlashMenu(true);
+                              setSlashMatchLength(slashMatch.matchLength);
+                              setSlashSelectedIndex(0);
+                            } else {
+                              setShowSlashMenu(false);
+                            }
                           }
                         }}
                         onKeyDown={(e) => {
+                          if (showSlashMenu && canUseCrm) {
+                            if (e.key === 'Enter' || e.key === 'Tab') {
+                              e.preventDefault();
+                              commentEditorRef.current?.deleteRange(slashMatchLength);
+                              setShowSlashMenu(false);
+                              setCrmFollowUpModal({ isOpen: true, parentCommentId: null });
+                              return true;
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setShowSlashMenu(false);
+                              return true;
+                            }
+                          }
                           if (showMentionMenu && filteredMentionUsers.length > 0) {
                             if (e.key === 'ArrowDown') {
                               e.preventDefault();
@@ -5758,6 +5821,7 @@ export function TaskDetailModalContent({
                         onUploadImage={uploadCommentImage}
                         onUploadImageUrl={copyCommentImage}
                         onUploadingChange={setIsUploadingInline}
+                        onOpenCrmFollowUp={canUseCrm ? () => setCrmFollowUpModal({ isOpen: true, parentCommentId: null }) : undefined}
                         disabled={isSubmittingComment}
                         placeholder={isSubmittingComment ? "Posting comment..." : "Write a comment..."}
                         footer={
@@ -5784,7 +5848,7 @@ export function TaskDetailModalContent({
                               disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
                               title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
                             >
-                              {isSubmittingComment ? 'Sending…' : 'Send'}
+                              {isSubmittingComment ? 'Sendingâ€¦' : 'Send'}
                             </ComposerSendButton>
                           </div>
                         }
@@ -5800,6 +5864,24 @@ export function TaskDetailModalContent({
                           placement="top"
                         />
                       )}
+                      <SlashCommandMenu
+                        isOpen={showSlashMenu && canUseCrm}
+                        items={[
+                          {
+                            command: '/crm',
+                            label: 'CRM Follow-Up',
+                            description: 'Log a follow-up update, count waiting days from this log instead of the waiting status, or move the task.',
+                            onSelect: () => {
+                              commentEditorRef.current?.deleteRange(slashMatchLength);
+                              setShowSlashMenu(false);
+                              setCrmFollowUpModal({ isOpen: true, parentCommentId: null });
+                            },
+                          },
+                        ]}
+                        selectedIndex={slashSelectedIndex}
+                        onSelectIndex={setSlashSelectedIndex}
+                        position={slashMenuPosition}
+                      />
                     </>
                   );
                 })()}
@@ -5813,6 +5895,36 @@ export function TaskDetailModalContent({
 
         </div>
       </div>
+
+      {/* Dedicated CRM Follow-Up Modal */}
+      <CrmTaskFollowUpModal
+        isOpen={crmFollowUpModal.isOpen}
+        onClose={() => setCrmFollowUpModal({ isOpen: false, parentCommentId: null })}
+        task={task}
+        waitingInfo={effectiveCrmWaitingInfo}
+        parentCommentId={crmFollowUpModal.parentCommentId}
+        onSubmitted={({ action, note, task: updatedTask }) => {
+          const nowIso = new Date().toISOString();
+          if (action === 'FOLLOWED_UP') {
+            setLocalStatus('WAITING');
+            setIsFollowUpAcknowledged(true);
+            setCrmWaitingOverride({
+              lastResponseAt: nowIso,
+              lastResponseAction: 'FOLLOWED_UP',
+              lastResponseNote: note,
+              lastResponseByName: currentUser?.name || null,
+            });
+          } else if (updatedTask?.status) {
+            setLocalStatus(updatedTask.status);
+          }
+          if (updatedTask && onUpdateTask) {
+            onUpdateTask({ ...task, ...updatedTask });
+          }
+          if (crmFollowUpModal.parentCommentId) {
+            setReplyingToId(null);
+          }
+        }}
+      />
 
       {/* Fullscreen Comment Modal */}
       <FullscreenCommentModal
@@ -5872,7 +5984,7 @@ const ASSIGNEE_BATCH_MS = 600;
 
 
 
-// ─── Subtask Detail View (Replaces Parent View) ─────────────────────────────
+// â”€â”€â”€ Subtask Detail View (Replaces Parent View) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function SubtaskDetailView({
   subtask,
   parentTask,
@@ -7622,7 +7734,7 @@ export function SubtaskDetailView({
 
   const commentsBootstrappedRef = useRef<string | null>(null);
 
-  // ── Reset subtask activities and comments immediately when active subtask changes ──
+  // â”€â”€ Reset subtask activities and comments immediately when active subtask changes â”€â”€
   useEffect(() => {
     if (!subtask?.id) {
       setActivities([]);
@@ -7663,7 +7775,7 @@ export function SubtaskDetailView({
       const cacheValid = cacheAge < ACTIVITY_CACHE_TTL_MS;
 
       if (cached && cacheValid) {
-        // Serve cached data right away — zero skeleton flicker
+        // Serve cached data right away â€” zero skeleton flicker
         setActivities(cached.activities);
         setRichComments(cached.comments);
         setLoadingActivities(false);
@@ -8431,7 +8543,7 @@ export function SubtaskDetailView({
               )}
             </div>
 
-            {/* Properties Stack — row layout */}
+            {/* Properties Stack â€” row layout */}
             <div className="flex flex-col gap-2 mb-8 mt-1">
 
               {/* Status Row */}
@@ -8833,7 +8945,7 @@ export function SubtaskDetailView({
                                 className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-xs outline-none data-[selected=true]:bg-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-rose-400 data-[selected=true]:text-rose-400 mb-1 border-b border-zinc-800/40"
                               >
                                 <div className="w-5 h-5 rounded-full border border-dashed border-zinc-300 dark:border-zinc-600 flex items-center justify-center text-[10px] text-zinc-400 dark:text-zinc-500 mr-2 shrink-0">
-                                  ✕
+                                  âœ•
                                 </div>
                                 <span>Clear all assignees</span>
                               </Command.Item>
@@ -9476,8 +9588,8 @@ export function SubtaskDetailView({
                       {/* Action row */}
                       <div className="flex items-center gap-1 mt-1 pl-11 relative">
                         <button
-                          onClick={() => handleToggleReaction(c.id, '👍')}
-                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
+                          onClick={() => handleToggleReaction(c.id, 'ðŸ‘')}
+                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['ðŸ‘']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
                           title="Like"
                         >
                           <ThumbsUp className="w-3.5 h-3.5" />

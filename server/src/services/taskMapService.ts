@@ -2,7 +2,7 @@ import { prisma } from '../config/prisma';
 import { logger } from '../config/logger';
 import { randomUUID } from 'crypto';
 import { getActiveManilaShift } from './auditAutoAssign';
-import { redis, isRedisReady, invalidateCache } from './redisService';
+import { redis, isRedisReady, invalidateCache, getMaActiveSessionsMap, clearMaActiveSessions } from './redisService';
 
 function getIo() {
   try {
@@ -1010,15 +1010,7 @@ export async function executeTaskMapDailyRollover(params?: {
       return nameUp.includes('CHE') || nameUp.includes('PAU') || nameUp.includes('HAN');
     });
 
-    let maActiveSessions: Record<string, any> = {};
-    if (isRedisReady()) {
-      try {
-        const rawMaMap = await redis.hgetall('task_map:ma_active_sessions');
-        for (const [k, v] of Object.entries(rawMaMap || {})) {
-          try { maActiveSessions[k] = JSON.parse(v); } catch { }
-        }
-      } catch { }
-    }
+    const maActiveSessions = await getMaActiveSessionsMap();
 
     const mappedTasks: any[] = [];
     for (const t of currentTasks as any[]) {
@@ -1117,10 +1109,8 @@ export async function executeTaskMapDailyRollover(params?: {
   await captureTaskMapDailySnapshot(fromDate, snapshotData, params?.actorId || 'system');
   retainedTasksCount = snapshotData.tasks?.length || 0;
 
-  // 2. Clear held/unlinked last-inputted sheet sessions in Redis at 12:00 AM rollover
-  if (isRedisReady()) {
-    await redis.del('task_map:ma_active_sessions').catch(() => {});
-  }
+  // 2. Clear held/unlinked last-inputted sheet sessions in Redis & memory at 12:00 AM rollover
+  await clearMaActiveSessions().catch(() => {});
 
   // 3. 12:00 AM Daily Rollover for tasks in the Task Map section:
   //    - Tasks actively being progressed by a user (IN PROGRESS or live sheet timeIn without timeOut, and NOT Paused) STAY with that user.

@@ -43,9 +43,11 @@ const TaskMapUpworkView = dynamic(
   () => import('./TaskMapUpworkView').then((m) => m.TaskMapUpworkView),
   { ssr: false }
 );
+import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
+
 const TaskDetailModal = dynamic(
   () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
-  { ssr: false }
+  { ssr: false, loading: () => <TaskModalLoadingOverlay /> }
 );
 const UncheckedAuditsModal = dynamic(
   () => import('@/components/modals/UncheckedAuditsModal').then((m) => m.UncheckedAuditsModal),
@@ -464,7 +466,7 @@ export const TaskMapContainer: React.FC = () => {
         if (res.upworkProjectClients) {
           useAppStore.getState().setUpworkProjectClients(res.upworkProjectClients);
         }
-        const enrichedSessions = { ...(res.maActiveSessions || {}) };
+        const enrichedSessions: Record<string, any> = { ...(res.maActiveSessions || {}) };
         (res.tasks || []).forEach((t: any) => {
           if (t.progress?.maName && t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime) {
             const key = t.progress.maName.toLowerCase().trim();
@@ -494,6 +496,24 @@ export const TaskMapContainer: React.FC = () => {
                 active: true,
               };
             }
+          }
+        });
+        // Preserve any newer socket-delivered MA sessions that arrived while GET /api/task-map was in flight
+        const currentStoreSessions = useAppStore.getState().maActiveSessions || {};
+        Object.entries(currentStoreSessions).forEach(([key, curSess]: [string, any]) => {
+          if (!curSess || !curSess.maName) return;
+          const serverSess = enrichedSessions[key];
+          if (!serverSess) {
+            const curUpdatedMs = curSess.updatedAt ? new Date(curSess.updatedAt).getTime() : 0;
+            if (curUpdatedMs && Date.now() - curUpdatedMs < 15000) {
+              enrichedSessions[key] = curSess;
+            }
+            return;
+          }
+          const curUpdatedMs = curSess.updatedAt ? new Date(curSess.updatedAt).getTime() : 0;
+          const srvUpdatedMs = serverSess.updatedAt ? new Date(serverSess.updatedAt).getTime() : 0;
+          if (curUpdatedMs > srvUpdatedMs) {
+            enrichedSessions[key] = curSess;
           }
         });
         useAppStore.getState().setMaActiveSessions(enrichedSessions);
@@ -649,6 +669,13 @@ export const TaskMapContainer: React.FC = () => {
     const handleTaskMapUpdated = (e: any) => {
       const data = e.detail || e;
       if (!data?.taskId) {
+        if (data?.maSession?.maName) {
+          useAppStore.getState().updateMaActiveSession(
+            data.maSession.maName,
+            data.maSession?.cleared ? null : data.maSession
+          );
+          return;
+        }
         scheduleReload();
         return;
       }
@@ -1903,6 +1930,7 @@ export const TaskMapContainer: React.FC = () => {
       )}
 
       {/* Task Detail Modal */}
+      {!selectedTaskModal && restoringUrlTask && <TaskModalLoadingOverlay />}
       {selectedTaskModal && (
         <TaskDetailModal
           isOpen={!!selectedTaskModal}

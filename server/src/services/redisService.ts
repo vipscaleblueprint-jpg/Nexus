@@ -345,3 +345,65 @@ export async function invalidateCache(...keys: string[]) {
     }));
   }
 }
+
+// MA Active Sessions store (Redis primary + in-memory fallback when Redis is unavailable)
+const MA_ACTIVE_SESSIONS_KEY = 'task_map:ma_active_sessions';
+const inMemoryMaActiveSessions = new Map<string, any>();
+
+export async function getMaActiveSession(maKey: string): Promise<any | null> {
+  const key = maKey.toLowerCase().trim();
+  if (!key) return null;
+  if (isRedisReady()) {
+    try {
+      const raw = await redis.hget(MA_ACTIVE_SESSIONS_KEY, key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        inMemoryMaActiveSessions.set(key, parsed);
+        return parsed;
+      }
+    } catch {}
+  }
+  return inMemoryMaActiveSessions.get(key) ?? null;
+}
+
+export async function setMaActiveSession(maKey: string, sessionData: any): Promise<void> {
+  const key = maKey.toLowerCase().trim();
+  if (!key) return;
+  inMemoryMaActiveSessions.set(key, sessionData);
+  if (isRedisReady()) {
+    try {
+      await redis.hset(MA_ACTIVE_SESSIONS_KEY, key, JSON.stringify(sessionData));
+    } catch {}
+  }
+}
+
+export async function getMaActiveSessionsMap(): Promise<Record<string, any>> {
+  const result: Record<string, any> = {};
+  for (const [k, v] of inMemoryMaActiveSessions.entries()) {
+    result[k] = v;
+  }
+  if (isRedisReady()) {
+    try {
+      const rawMaMap = await redis.hgetall(MA_ACTIVE_SESSIONS_KEY);
+      if (rawMaMap) {
+        for (const [k, v] of Object.entries(rawMaMap)) {
+          try {
+            const parsed = JSON.parse(v);
+            result[k] = parsed;
+            inMemoryMaActiveSessions.set(k.toLowerCase().trim(), parsed);
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  return result;
+}
+
+export async function clearMaActiveSessions(): Promise<void> {
+  inMemoryMaActiveSessions.clear();
+  if (isRedisReady()) {
+    try {
+      await redis.del(MA_ACTIVE_SESSIONS_KEY);
+    } catch {}
+  }
+}

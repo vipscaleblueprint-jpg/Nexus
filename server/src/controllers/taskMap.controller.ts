@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady } from '../services/redisService';
+import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap } from '../services/redisService';
 import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
@@ -1224,17 +1224,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const upworkClients = await getUpworkClients();
     const upworkProjectClients = await getUpworkProjectClients();
 
-    let maActiveSessions: Record<string, any> = {};
-    if (isRedisReady()) {
-      try {
-        const rawMaMap = await redis.hgetall('task_map:ma_active_sessions');
-        if (rawMaMap) {
-          for (const [k, v] of Object.entries(rawMaMap)) {
-            try { maActiveSessions[k] = JSON.parse(v); } catch { }
-          }
-        }
-      } catch { }
-    }
+    const maActiveSessions: Record<string, any> = await getMaActiveSessionsMap();
 
     // Ensure any open live session from task progress is present in maActiveSessions
     // (This guarantees that when an MA is working on an Admin task that is hidden by default,
@@ -3798,14 +3788,10 @@ export const getActiveUpworkSessionsHandler = async (req: Request, res: Response
     let activeUpworkSessions: any[] = [];
 
     // Fetch active MA sessions to cross-verify if an MA clocked out or is non-Upwork
-    let maSessionsByName: Record<string, any> = {};
-    if (isRedisReady()) {
-      try {
-        const rawMaMap = await redis.hgetall('task_map:ma_active_sessions').catch(() => ({}));
-        for (const [k, v] of Object.entries(rawMaMap || {})) {
-          try { maSessionsByName[k.toLowerCase().trim()] = JSON.parse(v as string); } catch {}
-        }
-      } catch {}
+    const rawMaSessions = await getMaActiveSessionsMap();
+    const maSessionsByName: Record<string, any> = {};
+    for (const [k, v] of Object.entries(rawMaSessions)) {
+      maSessionsByName[k.toLowerCase().trim()] = v;
     }
 
     const upworkClientsList = await getUpworkClients();

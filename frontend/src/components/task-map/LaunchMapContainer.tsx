@@ -18,9 +18,11 @@ import { useAppStore } from '@/lib/store';
 import { isModalHistoryBackPending } from '@/lib/taskNavigation';
 import { LaunchMapView, CalendarViewMode } from './LaunchMapView';
 
+import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
+
 const TaskDetailModal = dynamic(
   () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
-  { ssr: false }
+  { ssr: false, loading: () => <TaskModalLoadingOverlay /> }
 );
 
 const MAX_CACHED_RANGES = 12;
@@ -634,6 +636,7 @@ export const LaunchMapContainer: React.FC = () => {
         )}
       </div>
 
+      {!selectedTaskModal && restoringUrlTask && <TaskModalLoadingOverlay />}
       {selectedTaskModal && (
         <TaskDetailModal
           isOpen={!!selectedTaskModal}

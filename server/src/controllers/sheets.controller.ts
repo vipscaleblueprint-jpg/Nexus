@@ -26,7 +26,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
-import { invalidateCache, redis, isRedisReady } from '../services/redisService';
+import { invalidateCache, redis, isRedisReady, getMaActiveSession, setMaActiveSession } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
@@ -34,7 +34,7 @@ import { isReviewStatus } from '../utils/auditChecklist';
 import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask, getManilaDateStr } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -1198,7 +1198,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       if (isUpwork) {
         const sessionId = `upwork_${(maNameStr || 'ma').toLowerCase().replace(/\s+/g, '_')}_${(clientStr || 'client').toLowerCase().replace(/\s+/g, '_')}`;
         const effectiveClientName = clientStr || 'UPWORK';
-        const sessionDate = date ? String(date).trim() : new Date().toISOString().split('T')[0];
+        const sessionDate = date ? String(date).trim() : getManilaDateStr();
         if (!cleanTimeOut && cleanTimeIn) {
           const startedAtIso = parseManilaTimeToIso(date, cleanTimeIn);
           // A single user can only have one active Upwork session at a time; clean up any old session for this user first
@@ -1276,7 +1276,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             timeOut: cleanTimeOut,
             client: effectiveClientStr || 'UPWORK',
             taskName: cleanTaskStr || 'No task inputted',
-            date: date ? String(date).trim() : new Date().toISOString().split('T')[0],
+            date: date ? String(date).trim() : getManilaDateStr(),
             status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
             isUpwork: true,
             isMissingTime,
@@ -1285,10 +1285,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             updatedAt: new Date().toISOString(),
             active: !cleanTimeOut && Boolean(cleanTimeIn),
           };
-          if (isRedisReady()) {
-            // Hold user's last inputted session throughout the day until 12:00 AM rollover
-            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
-          }
+          // Hold user's last inputted session throughout the day until 12:00 AM rollover
+          await setMaActiveSession(maKey, sessionData).catch(() => { });
           await invalidateCache('task_map:all').catch(() => { });
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
@@ -1352,7 +1350,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             : (task_update_and_deliverables?.trim()
               ? String(task_update_and_deliverables).trim()
               : 'No task inputted'));
-        const sessionDate = date ? String(date).trim() : new Date().toISOString().split('T')[0];
+        const sessionDate = date ? String(date).trim() : getManilaDateStr();
         const sessionStatus = statusStr || (cleanTimeOut ? 'Done' : 'In progress');
         const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
 
@@ -1374,23 +1372,20 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         };
 
         const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
-        let isOlderRowEdit = false;
+        const maKey = maNameStr.toLowerCase().trim();
+        const currentActiveObj = await getMaActiveSession(maKey).catch(() => null);
+        const currentActiveRaw = currentActiveObj ? JSON.stringify(currentActiveObj) : null;
+        const isOlderRowEdit = shouldSkipOlderRow(currentActiveRaw, incomingRowNum, sessionDate, sessionData.active);
 
-        if (isRedisReady()) {
-          const maKey = maNameStr.toLowerCase().trim();
-          const currentActiveRaw = await redis.hget('task_map:ma_active_sessions', maKey).catch(() => null);
-          isOlderRowEdit = shouldSkipOlderRow(currentActiveRaw, incomingRowNum, sessionDate, sessionData.active);
-
-          if (!isOlderRowEdit) {
-            // Hold user's last inputted session throughout the day until 12:00 AM rollover
-            await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
-            await invalidateCache('task_map:all').catch(() => { });
-            io.emit('ma:session_updated', sessionData);
-            io.emit('task_map:ma_progress_changed', sessionData);
-            io.emit('task_map:updated', {
-              maSession: sessionData,
-            });
-          }
+        if (!isOlderRowEdit) {
+          // Hold user's last inputted session throughout the day until 12:00 AM rollover
+          await setMaActiveSession(maKey, sessionData).catch(() => { });
+          await invalidateCache('task_map:all').catch(() => { });
+          io.emit('ma:session_updated', sessionData);
+          io.emit('task_map:ma_progress_changed', sessionData);
+          io.emit('task_map:updated', {
+            maSession: sessionData,
+          });
         }
 
         // Clean up any task that was previously linked to this same sheet_row for this MA,
@@ -1465,14 +1460,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           console.warn('[Sheets] Failed to clean up stale unlinked sessions for MA:', cleanErr);
         }
 
-        if (!isRedisReady()) {
-          io.emit('ma:session_updated', sessionData);
-          io.emit('task_map:ma_progress_changed', sessionData);
-          io.emit('task_map:updated', {
-            maSession: sessionData,
-          });
-        }
-
         return res.status(200).json({
           success: true,
           matchedTask: false,
@@ -1492,6 +1479,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     // If MA name was provided, ensure the task is assigned to this MA if currently unassigned
     let assignedUser: { id: string; name: string } | null = null;
+    let didAssignUserToTask = false;
     let maUserRecord: { id: string; name: string } | null = null;
     if (maNameStr) {
       const maUser = await prisma.user.findFirst({
@@ -1517,6 +1505,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             where: { id: target.taskId },
             data: { assigneeId: maUser.id },
           });
+          didAssignUserToTask = true;
+        } else if (curTask.assigneeId === maUser.id) {
+          didAssignUserToTask = true;
         }
       }
     }
@@ -1679,18 +1670,18 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
     }
 
-    // Also update MA's latest active session in Redis for Task Map display
+    // Also update MA's latest active session in Redis/memory for Task Map display
     if (maNameStr) {
       const maKey = maNameStr.toLowerCase().trim();
-      const sessionDateStr = date ? String(date).trim() : new Date().toISOString().split('T')[0];
+      const sessionDateStr = date ? String(date).trim() : getManilaDateStr();
       const incomingIsLive = !cleanTimeOut && Boolean(cleanTimeIn);
       const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
       let isOlderRowEdit = false;
-      if (isRedisReady() && incomingRowNum > 0) {
-        const currentActiveRaw = await redis.hget('task_map:ma_active_sessions', maKey).catch(() => null);
-        if (currentActiveRaw) {
+      if (incomingRowNum > 0) {
+        const currentActiveObj = await getMaActiveSession(maKey).catch(() => null);
+        if (currentActiveObj) {
           try {
-            const parsed = JSON.parse(currentActiveRaw);
+            const parsed = currentActiveObj;
             const currentActiveRowNum = parsed?.rowNumber ? Number(parsed.rowNumber) : -1;
             const parseDateKey = (r?: string | null) => {
               const s = (r || '').trim();
@@ -1730,9 +1721,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           updatedAt: progressObj.updatedAt,
           active: incomingIsLive,
         };
-        if (isRedisReady()) {
-          await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
-        }
+        await setMaActiveSession(maKey, maSession).catch(() => { });
         io.emit('ma:session_updated', maSession);
         io.emit('task_map:ma_progress_changed', maSession);
       }
@@ -1879,8 +1868,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     let nextTaskStatus = targetTaskMeta?.status || null;
     let nextRecordStatuses: string[] = existingRecordStatuses;
     let nextHandedOver: boolean | undefined = undefined;
-    let nextAssigneeId: string | null | undefined = assignedUser?.id;
-    let nextAssigneeObj: { id: string; name: string } | null | undefined = assignedUser;
+    let nextAssigneeId: string | null | undefined = didAssignUserToTask ? assignedUser?.id : undefined;
+    let nextAssigneeObj: { id: string; name: string } | null | undefined = didAssignUserToTask ? assignedUser : undefined;
 
     if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
       // Live Working: transition any non-closed, non-recurring task into IN PROGRESS
@@ -1993,7 +1982,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         timeOut: cleanTimeOut,
         client: clientStr || 'General',
         taskName: task || 'Task',
-        date: date ? String(date).trim() : new Date().toISOString().split('T')[0],
+        date: date ? String(date).trim() : getManilaDateStr(),
         status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
         isUpwork,
         isMissingTime,
@@ -2003,9 +1992,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         active: !cleanTimeOut && Boolean(cleanTimeIn),
       };
       const maKey = maNameStr.toLowerCase().trim();
-      if (isRedisReady()) {
-        await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
-      }
+      await setMaActiveSession(maKey, maSession).catch(() => { });
       io.emit('ma:session_updated', maSession);
       io.emit('task_map:ma_progress_changed', maSession);
     }

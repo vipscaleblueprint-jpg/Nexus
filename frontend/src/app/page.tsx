@@ -10,9 +10,11 @@ import { CreatePageModal } from '@/components/modals/CreatePageModal';
 import dynamic from 'next/dynamic';
 import { EntityType } from '@/components/modals/CreateEntityModal';
 
+import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
+
 const TaskDetailModal = dynamic(
   () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
-  { ssr: false }
+  { ssr: false, loading: () => <TaskModalLoadingOverlay /> }
 );
 import { useAppStore } from '@/lib/store';
 import { Space, Folder, Doc, Task } from '@/lib/types';

@@ -1635,7 +1635,7 @@ export function createEmptyUserBlock(params?: {
   const rawTitle = (params?.taskTitle || '').trim();
   const assumedTitle =
     rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
-  const assumedDay = params?.day || new Date().toISOString().split('T')[0];
+  const assumedDay = params?.day || getManilaDateKey(new Date()) || new Date().toISOString().split('T')[0];
   const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
   const rawEffectiveStatus = params?.taskStatus || assumedStatus;
   const rawNorm = rawEffectiveStatus.trim().toUpperCase().replace(/[\s_-]+/g, '');

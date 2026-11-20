@@ -183,6 +183,7 @@ import {
   withoutRole,
   normalizeRoles,
   resolveUsersFromRoleRestrictions,
+  resolveAssignableUsersFromRoleRestrictions,
   isSystemUser,
   ACTIVITY_CACHE_TTL_MS,
   type ActivityCacheEntry,
@@ -206,6 +207,7 @@ export {
   withoutRole,
   normalizeRoles,
   resolveUsersFromRoleRestrictions,
+  resolveAssignableUsersFromRoleRestrictions,
   isSystemUser,
   ACTIVITY_CACHE_TTL_MS,
   type ActivityCacheEntry,
@@ -1527,11 +1529,7 @@ export function TaskDetailModalContent({
   const canAssignMember = canAssignTask && hasTeamRole;
 
   const assignableUsers = React.useMemo(() => {
-    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
-    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return nonSystemUsers;
-    }
-    return resolveUsersFromRoleRestrictions(localRoleRestrictions, nonSystemUsers, workspaceTeams);
+    return resolveAssignableUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams).users;
   }, [workspaceUsers, workspaceTeams, localRoleRestrictions]);
 
 
@@ -2743,7 +2741,18 @@ export function TaskDetailModalContent({
     };
     setActivities(prev => [...prev, optimisticActivity]);
 
-    const updatedTask = { ...currentTask, status: newStatus };
+    const isParentOnHold =
+      !(currentTask as any).parentTaskId &&
+      newStatus.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'ONHOLD';
+    const cascadedSubtasks =
+      isParentOnHold && Array.isArray(currentTask.subtasks)
+        ? currentTask.subtasks.map((st: any) =>
+            !st.completed && !isClosedStatus(st.status)
+              ? { ...st, status: newStatus }
+              : st
+          )
+        : currentTask.subtasks;
+    const updatedTask = { ...currentTask, status: newStatus, ...(cascadedSubtasks ? { subtasks: cascadedSubtasks } : {}) };
     useAppStore.getState().updateTask(updatedTask);
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
 
@@ -5856,11 +5865,7 @@ export function SubtaskDetailView({
   }, [subtask?.assigneeRoleRestrictions]);
 
   const subtaskAssignableUsers = React.useMemo(() => {
-    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
-    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return nonSystemUsers;
-    }
-    return resolveUsersFromRoleRestrictions(localRoleRestrictions, nonSystemUsers, workspaceTeams || []);
+    return resolveAssignableUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams || []).users;
   }, [localRoleRestrictions, workspaceUsers, workspaceTeams]);
 
   const [richComments, setRichComments] = useState<any[]>([]);

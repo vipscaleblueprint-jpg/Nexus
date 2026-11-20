@@ -31,6 +31,12 @@ import {
   duplicateTaskToPending,
   triggerRecurringRollover,
 } from '../controllers/task.controller';
+import {
+  getGalaxyClients,
+  getGalaxyParentTasks,
+  createGalaxyTask,
+  createGalaxySubtask,
+} from '../controllers/galaxy.controller';
 import { idParams, idAndSubtaskIdParams, idAndChecklistIdParams, idChecklistIdItemIdParams, idAndCommentIdParams, validate } from '../validation';
 import {
   attachmentUrlSchema,
@@ -46,6 +52,10 @@ import { commentRateLimiter } from '../middleware/security.middleware';
 export const taskRouter = Router();
 
 taskRouter.get('/live-blocks', getLiveBlocksData);
+taskRouter.get('/galaxy/clients', getGalaxyClients);
+taskRouter.get('/galaxy/parent-tasks', getGalaxyParentTasks);
+taskRouter.post('/galaxy/task', createGalaxyTask);
+taskRouter.post('/galaxy/subtask', createGalaxySubtask);
 taskRouter.get('/', validate({ query: listTasksQuery }), listTasks);
 taskRouter.get('/my-audits', optionalAuthenticateToken, listMyAudits);
 taskRouter.post('/', validate({ body: createTaskSchema }), createTask);

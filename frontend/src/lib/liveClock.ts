@@ -47,6 +47,6 @@ export function useLiveClock(enabled: boolean = true): Date {
 }
 
 export function getCurrentLiveTime(): Date {
-  return currentClockTime;
+  return listeners.size > 0 ? currentClockTime : new Date();
 }
 

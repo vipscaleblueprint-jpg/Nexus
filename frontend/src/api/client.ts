@@ -8,6 +8,7 @@ export const API_BASE_URL = apiBaseUrl;
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
   _retry?: boolean;
+  timeoutMs?: number;
 }
 
 // Single-flight lock for session refresh attempts so concurrent 401s don't hammer the endpoint
@@ -40,7 +41,7 @@ export async function apiClient<T = any>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { params, headers, _retry, ...restOptions } = options;
+  const { params, headers, _retry, timeoutMs = 45000, ...restOptions } = options;
 
   let url = endpoint.startsWith('http')
     ? endpoint
@@ -62,6 +63,27 @@ export async function apiClient<T = any>(
   const method = (restOptions.method || 'GET').toUpperCase();
   const startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
 
+  const externalSignal = restOptions.signal;
+  const timeoutController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timedOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let onExternalAbort: (() => void) | null = null;
+
+  if (timeoutController) {
+    if (externalSignal?.aborted) {
+      timeoutController.abort();
+    } else if (externalSignal) {
+      onExternalAbort = () => timeoutController.abort();
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+    if (timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        timeoutController.abort();
+      }, timeoutMs);
+    }
+  }
+
   let res: Response;
   try {
     res = await fetch(url, {
@@ -72,12 +94,24 @@ export async function apiClient<T = any>(
       },
       credentials: 'include',
       ...restOptions,
+      ...(timeoutController ? { signal: timeoutController.signal } : {}),
     });
   } catch (err: any) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (externalSignal && onExternalAbort) externalSignal.removeEventListener('abort', onExternalAbort);
     if (isPerfEnabled()) recordApi(method, url, 0, performance.now() - startedAt, null);
+    if (externalSignal?.aborted && !timedOut) {
+      throw err;
+    }
     console.warn(`[apiClient] Network request failed for ${url}:`, err?.message || err);
+    if (timedOut) {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s while connecting to backend.`);
+    }
     throw new Error(`Unable to connect to backend server at ${url}. Please make sure the server is running.`);
   }
+
+  if (timeoutId) clearTimeout(timeoutId);
+  if (externalSignal && onExternalAbort) externalSignal.removeEventListener('abort', onExternalAbort);
 
   const data = await res.json().catch(() => ({}));
 

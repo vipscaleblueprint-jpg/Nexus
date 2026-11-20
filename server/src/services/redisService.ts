@@ -247,18 +247,18 @@ function bumpFamilyGeneration(key: string) {
 
 export async function setCache(key: string, value: any, ttlSeconds: number = 300, generation?: string) {
   if (generation !== undefined && generation !== getCacheGeneration(key)) return;
+  const serialized = JSON.stringify(value);
   inMemoryCacheStore.set(key, {
-    value: JSON.stringify(value),
+    value: serialized,
     expiresAt: Date.now() + ttlSeconds * 1000,
   });
   if (isRedisReady()) {
     try {
-      const stringVal = JSON.stringify(value);
       const now = Date.now();
       const index = familyIndexKey(cacheFamily(key));
       await redis
         .multi()
-        .set(`cache:${key}`, stringVal, 'EX', ttlSeconds)
+        .set(`cache:${key}`, serialized, 'EX', ttlSeconds)
         .zadd(index, now + ttlSeconds * 1000, key)
         .zremrangebyscore(index, '-inf', now)
         .exec();

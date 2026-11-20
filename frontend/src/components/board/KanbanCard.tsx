@@ -9,7 +9,7 @@ import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck, Link2 } from 'lucide-react';
 import { getNexusTaskUrl } from '@/lib/links';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
 import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
@@ -244,7 +244,16 @@ const CardContent = memo(({
         }
       }
     } else {
-      const optimisticTask = { ...task, status: newStatus };
+      const isParentOnHold = newStatus.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'ONHOLD';
+      const cascadedSubtasks =
+        isParentOnHold && Array.isArray((task as Task).subtasks)
+          ? (task as Task).subtasks!.map((st) =>
+              !st.completed && !isClosedStatus(st.status)
+                ? { ...st, status: newStatus }
+                : st
+            )
+          : (task as Task).subtasks;
+      const optimisticTask = { ...task, status: newStatus, ...(cascadedSubtasks ? { subtasks: cascadedSubtasks } : {}) };
 
       // 1. Immediately update internal state
       setTask(optimisticTask);
@@ -377,13 +386,9 @@ const CardContent = memo(({
   const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
   const canAssignMember = canAssignTask && hasTeamRole;
 
-  // Role-based filter matching TaskDetailModal 1-to-1
+  // Role-based filter matching TaskDetailModal 1-to-1 (falls back to all users if no DB user/team matches the role)
   const assignableUsers = useMemo(() => {
-    const nonSystemUsers = (workspaceUsers || []).filter((u: any) => !isSystemUser(u));
-    if (!localRoleRestrictions || localRoleRestrictions.length === 0) {
-      return nonSystemUsers;
-    }
-    return resolveUsersFromRoleRestrictions(localRoleRestrictions, nonSystemUsers, workspaceTeams);
+    return resolveAssignableUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams).users;
   }, [workspaceUsers, workspaceTeams, localRoleRestrictions]);
 
   const handleAssigneeToggle = async (user: any) => {

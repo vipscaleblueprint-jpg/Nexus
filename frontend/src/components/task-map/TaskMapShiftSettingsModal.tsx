@@ -69,7 +69,7 @@ export const TaskMapShiftSettingsModal: React.FC<Props> = ({
             <div key={shift.shiftKey} className="p-3 bg-zinc-800/40 border border-zinc-800 rounded-lg space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-xs text-blue-400 uppercase tracking-wide">
-                  {shift.name} Shift ({shift.shiftKey})
+                  {/\bshift$/i.test(shift.name || '') ? shift.name : `${shift.name} Shift`} ({shift.shiftKey})
                 </span>
                 <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
                   <input

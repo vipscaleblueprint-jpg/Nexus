@@ -28,6 +28,40 @@ export function fromTaskMapShiftKey(key: string): string {
   return norm || 'AM';
 }
 
+export const ADMIN_LIST_NAMES = new Set([
+  'admin | jenesia red',
+  'harmony',
+  'jenesia red',
+  'jenesia red | personal',
+  'snaply',
+  'vip scale',
+  'xfnite',
+]);
+
+const HIDDEN_DEFAULT_FOLDER_KEYWORDS = [
+  'admin',
+  'dormant',
+  'startups',
+  'human resource',
+];
+
+/**
+ * Tasks under Admin, Dormant Clients, Startups, or Human Resource folders (or known Admin lists)
+ * are hidden from Available Tasks by default unless explicitly toggled or inputted via spreadsheet.
+ */
+export function isHiddenAdminOrInternalTask(
+  list?: { name?: string | null; folder?: { name?: string | null } | null } | null
+): boolean {
+  const folderName = (list?.folder?.name || '').trim().toLowerCase();
+  const listName = (list?.name || '').trim().toLowerCase();
+  return (
+    folderName === 'admin' ||
+    HIDDEN_DEFAULT_FOLDER_KEYWORDS.some((kw) => folderName.includes(kw)) ||
+    listName === 'admin' ||
+    ADMIN_LIST_NAMES.has(listName)
+  );
+}
+
 export interface TaskMapOption {
   id: string;
   label: string;
@@ -992,9 +1026,7 @@ export async function executeTaskMapDailyRollover(params?: {
       const reviewsList = parsePmReviewsSafe(rec?.pmReviews);
       const progress = reviewsList.find((r: any) => r?.type === 'SHEET_PROGRESS') || null;
       const upworkSession = reviewsList.find((r: any) => r?.type === 'UPWORK_SESSION' && r?.active) || null;
-      const folderName = (t.list?.folder?.name || '').toLowerCase();
-      const listName = (t.list?.name || '').toLowerCase();
-      const isAdminTask = folderName === 'admin' || folderName.includes('admin') || listName === 'admin';
+      const isAdminTask = isHiddenAdminOrInternalTask(t.list);
       const parentClosed = isClosedStatus(t.status);
 
       mappedTasks.push({
@@ -1321,16 +1353,194 @@ export function resolveLatestAssigneeId(params: {
 /**
  * Clears Task Map handover state and invalidates Task Map caches when a user is assigned directly.
  */
+export function isOnHoldStatus(status?: string | null): boolean {
+  const s = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return s === 'ONHOLD';
+}
+
+/**
+ * Cascades On-Hold state from a Parent Task down to all of its non-closed child subtasks
+ * (never affects already-closed subtasks, and never bubbles up from a subtask).
+ */
+export async function cascadeParentOnHoldToSubtasks(params: {
+  parentTaskId: string;
+  listId?: string | null;
+  actorId?: string | null;
+  actorName?: string;
+}): Promise<number> {
+  const { parentTaskId, listId, actorId, actorName } = params;
+  if (!parentTaskId) return 0;
+
+  const openSubtasks = await prisma.subtask.findMany({
+    where: {
+      taskId: parentTaskId,
+      completed: false,
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      completed: true,
+      task: {
+        select: {
+          listId: true,
+          list: {
+            select: {
+              statuses: { select: { name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const nonClosed = openSubtasks.filter((st) => !st.completed && !isClosedStatus(st.status));
+  if (nonClosed.length === 0) return 0;
+
+  const listStatuses = nonClosed[0]?.task?.list?.statuses || [];
+  const matchingOnHold = listStatuses.find((s) => isOnHoldStatus(s.name));
+  const canonicalOnHoldStatus = matchingOnHold?.name || 'ON-HOLD';
+  const resolvedListId = listId || nonClosed[0]?.task?.listId || null;
+
+  let actorUser: { id: string; name: string; avatarUrl: string | null } | null = null;
+  if (actorId) {
+    actorUser = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: { id: true, name: true, avatarUrl: true },
+    });
+  }
+  const effectiveActorName = actorUser?.name || actorName || 'System';
+  const effectiveUserId = actorUser?.id || (await getEffectiveUserId(actorId));
+
+  const parentRecord = await getOrCreateTaskMapRecord(parentTaskId);
+  const reviewsList = parsePmReviewsSafe(parentRecord.pmReviews);
+  const io = getIo();
+  const nowIso = new Date().toISOString();
+
+  let updatedStatusCount = 0;
+  let reviewsChanged = false;
+  const changedSubtaskStates: Array<{ subtaskId: string; statuses: string[]; handedOver: boolean }> = [];
+
+  for (const st of nonClosed) {
+    if (!isOnHoldStatus(st.status)) {
+      const updatedSub = await prisma.subtask.update({
+        where: { id: st.id },
+        data: { status: canonicalOnHoldStatus },
+        include: {
+          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        },
+      });
+      updatedStatusCount++;
+
+      let logCreatedAt = new Date();
+      let logId = `onhold-cascade-${st.id}-${Date.now()}`;
+      if (effectiveUserId) {
+        const log = await prisma.auditLog.create({
+          data: {
+            action: 'STATUS_CHANGE',
+            entity: 'TASK',
+            entityId: parentTaskId,
+            userId: effectiveUserId,
+            details: {
+              oldStatus: st.status || 'PENDING',
+              newStatus: updatedSub.status,
+              subtaskId: st.id,
+              subtaskTitle: st.title,
+              source: 'parent_on_hold_cascade',
+            },
+          },
+        }).catch(() => null);
+        if (log) {
+          logId = log.id;
+          logCreatedAt = log.createdAt;
+        }
+      }
+
+      io?.emit('subtask_updated', { taskId: parentTaskId, subtask: updatedSub });
+      io?.emit('task_activity', {
+        listId: resolvedListId,
+        taskId: parentTaskId,
+        activity: {
+          id: logId,
+          type: 'status_change',
+          author: effectiveActorName,
+          oldStatus: st.status || 'PENDING',
+          newStatus: updatedSub.status,
+          subtaskId: st.id,
+          subtaskTitle: st.title,
+          date: logCreatedAt,
+          user: actorUser,
+        },
+      });
+    }
+
+    const subIdx = reviewsList.findIndex(
+      (r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id
+    );
+    const prevEntry = subIdx !== -1 ? reviewsList[subIdx] : null;
+    const prevStatuses: string[] = Array.isArray(prevEntry?.statuses) ? prevEntry.statuses : [];
+    const alreadySubOnHold = prevStatuses.length === 1 && isOnHoldStatus(prevStatuses[0]);
+
+    if (!alreadySubOnHold) {
+      const nextEntry = {
+        type: 'SUBTASK_STATE',
+        subtaskId: st.id,
+        statuses: ['On-hold'],
+        handedOver: Boolean(prevEntry?.handedOver),
+        updatedAt: nowIso,
+      };
+      if (subIdx !== -1) reviewsList[subIdx] = nextEntry;
+      else reviewsList.push(nextEntry);
+      reviewsChanged = true;
+      changedSubtaskStates.push({
+        subtaskId: st.id,
+        statuses: nextEntry.statuses,
+        handedOver: nextEntry.handedOver,
+      });
+    }
+  }
+
+  let updatedParentRecord = parentRecord;
+  if (reviewsChanged) {
+    updatedParentRecord = await updateTaskMapRecord(parentTaskId, { pmReviews: reviewsList });
+  }
+
+  if (updatedStatusCount > 0 || reviewsChanged) {
+    await invalidateCache(
+      `task:${parentTaskId}`,
+      'tasks:all',
+      'dashboard:all',
+      'lists:all',
+      'task_map:all'
+    ).catch(() => {});
+
+    for (const stState of changedSubtaskStates) {
+      io?.emit('task_map:updated', {
+        taskId: `subtask:${stState.subtaskId}`,
+        subtaskId: stState.subtaskId,
+        parentTaskId,
+        statuses: stState.statuses,
+        handedOver: stState.handedOver,
+        taskMap: {
+          ...updatedParentRecord,
+          taskId: `subtask:${stState.subtaskId}`,
+          subtaskId: stState.subtaskId,
+          statuses: stState.statuses,
+          handedOver: stState.handedOver,
+        },
+      });
+    }
+  }
+
+  return updatedStatusCount;
+}
+
 export async function syncTaskMapOnDirectAssign(
   taskId: string,
   subtaskId?: string | null,
   assigneeId?: string | null
 ): Promise<void> {
-  if (!assigneeId) {
-    await invalidateCache('task_map:all', 'task_map:*').catch(() => {});
-    return;
-  }
-
   try {
     const rec = await getOrCreateTaskMapRecord(taskId);
     const cleanStatuses = (arr: string[] = []) =>
@@ -1344,6 +1554,45 @@ export async function syncTaskMapOnDirectAssign(
       try { reviews = JSON.parse(rec.pmReviews); } catch { reviews = []; }
     } else if (Array.isArray(rec.pmReviews)) {
       reviews = [...rec.pmReviews];
+    }
+
+    if (!assigneeId) {
+      // Unassigned directly: clear any stale PM_ASSIGNMENT for this task/subtask so it leaves the column
+      const filteredReviews = reviews.filter((r: any) =>
+        subtaskId
+          ? !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtaskId)
+          : !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId)
+      );
+
+      if (subtaskId) {
+        const idx = filteredReviews.findIndex((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtaskId);
+        const existing = idx !== -1 && Array.isArray(filteredReviews[idx].statuses) ? filteredReviews[idx].statuses : [];
+        const nextEntry = {
+          type: 'SUBTASK_STATE',
+          subtaskId,
+          statuses: existing,
+          handedOver: true,
+          updatedAt: new Date().toISOString(),
+        };
+        if (idx !== -1) filteredReviews[idx] = nextEntry;
+        else filteredReviews.push(nextEntry);
+        await updateTaskMapRecord(taskId, { pmReviews: filteredReviews });
+      } else {
+        await updateTaskMapRecord(taskId, {
+          handedOver: true,
+          ...(filteredReviews.length !== reviews.length ? { pmReviews: filteredReviews } : {}),
+        });
+      }
+
+      await invalidateCache('task_map:all', 'task_map:*').catch(() => {});
+      getIo()?.emit('task_map:updated', {
+        taskId: subtaskId ? `subtask:${subtaskId}` : taskId,
+        ...(subtaskId ? { subtaskId, parentTaskId: taskId } : {}),
+        assigneeId: null,
+        assignee: null,
+        handedOver: true,
+      });
+      return;
     }
 
     if (subtaskId) {

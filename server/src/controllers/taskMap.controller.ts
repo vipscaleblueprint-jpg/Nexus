@@ -5,6 +5,12 @@ import { logger } from '../config/logger';
 import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady } from '../services/redisService';
 import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
+import {
+  evaluateTaskMapMovePermission,
+  resolveEffectiveTaskMapOwnerId,
+  TaskMapMoveAction,
+  TaskMapMoveMode,
+} from '../utils/taskMapPermissions';
 import { isAuditorRole } from './auditShift.controller';
 import {
   extractLaunchMeta,
@@ -41,6 +47,10 @@ import {
   getAvailableHistoryDates,
   executeTaskMapDailyRollover,
   getManilaDateStr,
+  ADMIN_LIST_NAMES,
+  isHiddenAdminOrInternalTask,
+  isOnHoldStatus,
+  cascadeParentOnHoldToSubtasks,
 } from '../services/taskMapService';
 
 // Closed status check matching Nexus conventions
@@ -49,20 +59,41 @@ const isClosedStatus = (status?: string | null) => {
   return s === 'CLOSED' || s === 'DONE' || s === 'COMPLETE' || s === 'COMPLETED' || s === 'RESOLVED' || s === 'CANCELLED';
 };
 
-const ADMIN_LIST_NAMES = new Set([
-  'admin | jenesia red',
-  'harmony',
-  'jenesia red',
-  'jenesia red | personal',
-  'snaply',
-  'vip scale',
-  'xfnite',
+const CRM_TAG_SET = new Set([
+  'CRM',
+  'SENT',
+  'OUTREACH SENT',
+  'CLIENT SENT',
+  'TO SEND',
+  'TOSEND',
+  'FOLLOW UP',
+  'FOLLOWUP',
+  'OUTREACH',
 ]);
 
+const CLOSED_OR_EXCLUDED_STATUS_VARIANTS = [
+  'KYC',
+  'PIN BOARD',
+  'PINBOARD',
+  'CLOSED',
+  'DONE',
+  'COMPLETE',
+  'COMPLETED',
+  'RESOLVED',
+  'CANCELLED',
+];
+
+const inFlightTaskMapQueries = new Map<string, Promise<any>>();
+
 /**
- * Fetch all client lists residing under any "Client Dashboard" folder/space in PostgreSQL.
+ * Fetch all client lists residing under any "Client Dashboard" folder/space in PostgreSQL (cached briefly).
  */
 async function fetchClientDashboardLists(): Promise<Array<{ id: string; name: string }>> {
+  const clientListCacheKey = 'task_map:client_lists';
+  const cached = await getCache<Array<{ id: string; name: string }>>(clientListCacheKey);
+  if (cached) return cached;
+
+  const gen = getCacheGeneration(clientListCacheKey);
   const [clientDashboardFolders, clientDashboardSpaces, directClientLists] = await Promise.all([
     prisma.folder.findMany({
       where: {
@@ -144,7 +175,9 @@ async function fetchClientDashboardLists(): Promise<Array<{ id: string; name: st
     map.set(l.id, { id: l.id, name: l.name });
   }
 
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  await setCache(clientListCacheKey, sorted, 60, gen);
+  return sorted;
 }
 
 /**
@@ -175,11 +208,20 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const currentShift = isAllShifts ? 'ALL' : shiftTokens.join(',');
 
     const cacheKey = `task_map:data:${requestedDate}:${currentShift}:${clientQuery || 'ALL'}:${searchQuery || 'ALL'}`;
+    const cacheGen = getCacheGeneration(cacheKey);
     const cachedData = await getCache<any>(cacheKey);
     if (cachedData) {
       return res.json(cachedData);
     }
 
+    const singleFlightKey = `${cacheKey}:${cacheGen}`;
+    const existingInFlight = inFlightTaskMapQueries.get(singleFlightKey);
+    if (existingInFlight) {
+      const coalescedPayload = await existingInFlight;
+      return res.json(coalescedPayload);
+    }
+
+    const computePromise = (async () => {
     // If viewing a previous date, check if a preserved historical snapshot exists
     if (requestedDate !== todayManila) {
       const existingSnapshot = await getTaskMapDailySnapshot(requestedDate);
@@ -309,16 +351,45 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           upworkProjectClients: existingSnapshot.upworkProjectClients || [],
           maActiveSessions: existingSnapshot.maActiveSessions || {},
         };
-        await setCache(cacheKey, historyPayload, 3600);
-        return res.json(historyPayload);
+        await setCache(cacheKey, historyPayload, 3600, cacheGen);
+        return historyPayload;
       }
     }
 
-    // Fetch active tasks from PostgreSQL
+    // Fetch TaskMap records first so we know which (rare) closed tasks have active CRM workflow tags
+    const records = await prisma.$queryRawUnsafe<TaskMapRecordData[]>(
+      `SELECT * FROM "TaskMapRecord"`
+    );
+    const recordsMap = new Map<string, TaskMapRecordData>();
+    const closedCrmCandidateTaskIds: string[] = [];
+    for (const r of records) {
+      recordsMap.set(r.taskId, r);
+      const hasCrmTag = Array.isArray(r.statuses) && r.statuses.some((st) => CRM_TAG_SET.has((st || '').toUpperCase().trim()));
+      if (hasCrmTag) {
+        closedCrmCandidateTaskIds.push(r.taskId);
+      }
+    }
+
+    const kycPinboardExclusion = ['KYC', 'PIN BOARD', 'PINBOARD'].map((s) => ({
+      status: { equals: s, mode: 'insensitive' as const },
+    }));
+    const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
+      status: { equals: s, mode: 'insensitive' as const },
+    }));
+
+    // Fetch open tasks (plus the small set of closed CRM-tagged tasks) from PostgreSQL, omitting historical closed archive bloat
     const tasks = await prisma.task.findMany({
       where: {
         AND: [
-          { status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] } },
+          { NOT: { OR: kycPinboardExclusion } },
+          closedCrmCandidateTaskIds.length > 0
+            ? {
+                OR: [
+                  { NOT: { OR: closedOrExcludedFilters } },
+                  { id: { in: closedCrmCandidateTaskIds } },
+                ],
+              }
+            : { NOT: { OR: closedOrExcludedFilters } },
         ],
       },
       include: {
@@ -337,6 +408,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
         subtasks: {
+          where: { completed: false },
           include: {
             User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
             assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
@@ -355,15 +427,6 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
     });
 
-    // Fetch TaskMap records
-    const records = await prisma.$queryRawUnsafe<TaskMapRecordData[]>(
-      `SELECT * FROM "TaskMapRecord"`
-    );
-    const recordsMap = new Map<string, TaskMapRecordData>();
-    for (const r of records) {
-      recordsMap.set(r.taskId, r);
-    }
-
     // Options and Shift configs: filter out obsolete static Upwork options & internal client tags
     const rawOptions = await getStatusOptions();
     const options = rawOptions.filter((opt) => {
@@ -378,20 +441,40 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     });
     const shifts = await getShiftConfigs();
 
-    // PM Users for Review queue and tag matching
-    const allUsers = await prisma.user.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        avatarUrl: true,
-        roles: true,
-        team: { select: { id: true, name: true } },
-        systemRole: true,
-      },
-      orderBy: { name: 'asc' },
-    });
+    // PM Users for Review queue and tag matching + DB teams & workspace roles
+    const [allUsers, workspaceRoles, workspaceTeams] = await Promise.all([
+      prisma.user.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          avatarUrl: true,
+          roles: true,
+          teamId: true,
+          team: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+              teamRoles: { select: { id: true, name: true } },
+            },
+          },
+          systemRole: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.workspaceRole.findMany({
+        select: { id: true, name: true, color: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.team.findMany({
+        include: {
+          teamRoles: { select: { id: true, name: true }, orderBy: { createdAt: 'asc' } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
 
     // Determine shift members (normal users + auditors) for the selected shift from AuditShiftConfig
     const shiftAuditorIdSet = new Set<string>();
@@ -410,7 +493,17 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
       }
     } else {
-      const auditShiftKeys = Array.from(new Set(shiftTokens.map(fromTaskMapShiftKey)));
+      const auditShiftKeys = Array.from(
+        new Set(
+          shiftTokens.flatMap((token) => {
+            const norm = token.trim().toUpperCase();
+            if (norm === 'DAY' || norm === 'AM' || norm === 'MORNING') return ['AM', 'DAY', 'MORNING'];
+            if (norm === 'NOON' || norm === 'PM_AFTERNOON' || norm === 'AFTERNOON') return ['PM_AFTERNOON', 'NOON', 'AFTERNOON'];
+            if (norm === 'NIGHT' || norm === 'PM_NIGHT') return ['PM_NIGHT', 'NIGHT'];
+            return [norm, fromTaskMapShiftKey(norm), toTaskMapShiftKey(norm)];
+          })
+        )
+      );
       const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
         where: { shiftKey: { in: auditShiftKeys }, isActive: true },
       });
@@ -455,7 +548,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const pmUsers = allUsers.filter(isPmUser);
 
-    const deriveDefaultMapStatuses = (rawStatus?: string | null): string[] => {
+    const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
       if (statusKey === 'CRM') return ['To send'];
       if (statusKey === 'WAITING') return ['Waiting'];
@@ -475,7 +568,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       ) {
         return [];
       }
-      return ['Available Task'];
+      return isAssignedToMember ? [] : ['Available Task'];
     };
 
     const isSubtaskExcludedFromBoard = (st: any) => {
@@ -489,12 +582,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const enrichedTasks: any[] = [];
     for (const task of tasks as any[]) {
       let mapRecord = recordsMap.get(task.id);
+      const taskHasAssignee = Boolean(
+        task.assigneeId || (Array.isArray(task.assignees) && task.assignees.length > 0)
+      );
       if (!mapRecord) {
         mapRecord = {
           id: '',
           taskId: task.id,
           subtaskId: null,
-          statuses: deriveDefaultMapStatuses(task.status),
+          statuses: deriveDefaultMapStatuses(task.status, taskHasAssignee),
           shift: currentShift,
           shiftDate: new Date(),
           rolloverCount: 0,
@@ -507,6 +603,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           waitingReviewSince: null,
           createdAt: task.createdAt,
           updatedAt: task.updatedAt,
+        };
+      } else if (
+        taskHasAssignee &&
+        !mapRecord.handedOver &&
+        (!Array.isArray(mapRecord.statuses) || mapRecord.statuses.length === 0)
+      ) {
+        mapRecord = {
+          ...mapRecord,
+          statuses: deriveDefaultMapStatuses(task.status, true),
         };
       }
 
@@ -567,9 +672,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         };
       }
 
-      const folderName = (task.list?.folder?.name || '').toLowerCase();
-      const listName = (task.list?.name || '').toLowerCase();
-      const isAdminTask = folderName === 'admin' || folderName.includes('admin') || listName === 'admin';
+      const isAdminTask = isHiddenAdminOrInternalTask(task.list);
 
       const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(reviewsList, task.dueDate);
       const parentClosed = isClosedStatus(task.status);
@@ -590,15 +693,20 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       // Surface open non-audit subtasks as first-class TaskMapItems when parent task is open
       if (!parentClosed && Array.isArray(task.subtasks) && task.subtasks.length > 0) {
+        const parentIsOnHold =
+          isOnHoldStatus(task.status) ||
+          (Array.isArray(mapRecord.statuses) && mapRecord.statuses.some((s: string) => isOnHoldStatus(s)));
+        const listOnHoldStatus =
+          (Array.isArray(task.list?.statuses)
+            ? task.list.statuses.find((s: any) => isOnHoldStatus(s?.name))?.name
+            : null) || 'ON-HOLD';
+
         for (const st of task.subtasks) {
           if (isSubtaskExcludedFromBoard(st)) continue;
 
-          const subStatus = st.status || (st.completed ? 'CLOSED' : 'PENDING');
+          const rawSubStatus = st.status || (st.completed ? 'CLOSED' : 'PENDING');
+          const subStatus = parentIsOnHold ? listOnHoldStatus : rawSubStatus;
           const subState = reviewsList.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id);
-          const subStatuses: string[] = Array.isArray(subState?.statuses)
-            ? subState.statuses
-            : deriveDefaultMapStatuses(subStatus);
-
           const subPmAssignments = reviewsList.filter(
             (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id && r?.assignedTo
           );
@@ -606,6 +714,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             ? st.assignees
             : (st.User ? [st.User] : []);
           const subAssigneeId = st.assigneeId || null;
+          const subHasAssignee = Boolean(subAssigneeId || subAssignees.length > 0 || subPmAssignments.length > 0);
+          const subStatuses: string[] = parentIsOnHold
+            ? ['On-hold']
+            : Array.isArray(subState?.statuses)
+              ? subState.statuses
+              : deriveDefaultMapStatuses(subStatus, subHasAssignee && !subState?.handedOver);
           const subAssignee =
             (subAssigneeId && st.User?.id === subAssigneeId ? st.User : null) ||
             (subAssigneeId ? subAssignees.find((u: any) => u.id === subAssigneeId) : null) ||
@@ -1062,7 +1176,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         : null;
       if (sheetProg?.maName && sheetProg.timeIn && !sheetProg.timeOut && !sheetProg.isMissingTime) {
         const maKey = sheetProg.maName.toLowerCase().trim();
-        if (!maActiveSessions[maKey]) {
+        const existing = maActiveSessions[maKey];
+        const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+        const incomingUpdatedMs = sheetProg.updatedAt ? new Date(sheetProg.updatedAt).getTime() : 0;
+        const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+        if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
           maActiveSessions[maKey] = {
             maName: sheetProg.maName,
             taskId: t.id,
@@ -1080,6 +1198,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             status: sheetProg.status || 'IN PROGRESS',
             isUpwork: Boolean(sheetProg.isUpwork),
             rowNumber: sheetProg.sheetRow,
+            updatedAt: sheetProg.updatedAt,
             active: true,
           };
         }
@@ -1164,10 +1283,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Collect all main tasks with an effective launch date (both open and completed/done launches)
-    const launchTasks = filteredTasks.filter(
-      (t: any) => !t.isSubtask && Boolean(t.effectiveLaunchDate)
-    );
+    // Launch Map uses dedicated GET /api/task-map/launch; omit closed launch scans here
+    const launchTasks: any[] = [];
 
     const snapshotPayload = {
       tasks: openTasks,
@@ -1184,6 +1301,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       pmUsers,
       allUsers,
       shiftUsers,
+      workspaceRoles,
+      workspaceTeams,
       activeUpworkSessions,
       upworkClients,
       upworkProjectClients,
@@ -1214,16 +1333,29 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       pmUsers,
       allUsers,
       shiftUsers,
+      workspaceRoles,
+      workspaceTeams,
       activeUpworkSessions,
       upworkClients,
       upworkProjectClients,
       maActiveSessions,
     };
 
-    // Cache in Redis: 15 seconds for today (protects against thundering herd socket storms), 3600 seconds for historical dates
-    await setCache(cacheKey, responsePayload, isPastDate ? 3600 : 15);
+    // Cache in Redis: 30 seconds for today (protects against thundering herd; writes invalidate via task_map:all), 3600 seconds for historical dates
+    await setCache(cacheKey, responsePayload, isPastDate ? 3600 : 30, cacheGen);
 
-    res.json(responsePayload);
+    return responsePayload;
+    })();
+
+    inFlightTaskMapQueries.set(singleFlightKey, computePromise);
+    try {
+      const responsePayload = await computePromise;
+      return res.json(responsePayload);
+    } finally {
+      if (inFlightTaskMapQueries.get(singleFlightKey) === computePromise) {
+        inFlightTaskMapQueries.delete(singleFlightKey);
+      }
+    }
   } catch (error: any) {
     logger.error({ error }, 'Error fetching task map data');
     res.status(500).json({ error: 'Failed to fetch task map data' });
@@ -1408,10 +1540,23 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Statuses must be an array of strings' });
     }
 
-    const isPm = user?.systemRole === 'ADMIN' || (user?.roles || []).some((r: string) => {
-      const rl = r.toLowerCase();
-      return rl.includes('pm') || rl.includes('project manager') || rl.includes('team lead') || rl.includes('senior');
-    });
+    const isPm = await canUserSetAssignees(user?.id);
+
+    const actorUser = user?.id
+      ? await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { id: true, name: true, email: true },
+        })
+      : null;
+    const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
+
+    const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
+    const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
+    const isHandoverSubStatus = normSubStatuses.includes('HANDOVER') || isAvailableTaskStatus;
+    const isWorkflowTransferOut = normSubStatuses.some((norm) =>
+      ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'ASKCLIENT'].includes(norm)
+    );
+    const shouldClearAssignee = isHandoverSubStatus || isWorkflowTransferOut;
 
     const target = parseTaskMapTargetId(id);
 
@@ -1432,11 +1577,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       if (isUnassigned && !isPm) {
         return res.status(403).json({ error: 'Only Project Managers can modify statuses on Available Tasks' });
       }
-
-      const isHandoverSubStatus = statuses.some((s: string) => {
-        const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-        return norm === 'HANDOVER' || norm === 'AVAILABLETASK';
-      });
+      if (isAvailableTaskStatus && !isUnassigned && !isPm) {
+        return res.status(403).json({ error: 'Only Project Managers can move tasks to the Available column' });
+      }
 
       const parentRecord = await getOrCreateTaskMapRecord(subtask.taskId);
       let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
@@ -1446,19 +1589,21 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           ? pmReviews[subStateIdx].statuses
           : deriveDefaultTaskMapStatuses(subtask.status || (subtask.completed ? 'CLOSED' : 'PENDING'));
 
-      if (isHandoverSubStatus) {
+      if (shouldClearAssignee) {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
-        if (subtask.assigneeId) {
+        if (subtask.assigneeId || (subtask.assignees && subtask.assignees.length > 0)) {
           await prisma.subtask.update({
             where: { id: subtask.id },
-            data: { assigneeId: null },
+            data: { assigneeId: null, assignees: { set: [] } },
           });
         }
       }
 
       const nextHandedOver = isHandoverSubStatus
         ? true
-        : (subStateIdx !== -1 ? Boolean(pmReviews[subStateIdx].handedOver) : false);
+        : isWorkflowTransferOut
+          ? false
+          : (subStateIdx !== -1 ? Boolean(pmReviews[subStateIdx].handedOver) : false);
 
       const nextEntry = {
         type: 'SUBTASK_STATE',
@@ -1488,7 +1633,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             newStatuses: statuses,
             subtaskId: subtask.id,
             subtaskTitle: subtask.title,
-            actor: user?.name || user?.email,
+            actor: actorDisplayName,
           },
         },
       });
@@ -1506,7 +1651,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         parentTaskId: subtask.taskId,
         statuses,
         handedOver: nextHandedOver,
-        ...(isHandoverSubStatus ? { assigneeId: null, assignee: null } : {}),
+        ...(shouldClearAssignee ? { assigneeId: null, assignee: null } : {}),
         taskMap: subTaskMap,
       });
 
@@ -1537,6 +1682,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     if (isUnassigned && !isPm) {
       return res.status(403).json({ error: 'Only Project Managers can modify statuses on Available Tasks' });
     }
+    if (isAvailableTaskStatus && !isUnassigned && !isPm) {
+      return res.status(403).json({ error: 'Only Project Managers can move tasks to the Available column' });
+    }
 
     // Detect PM review tags
     const pmReviewTags = ['CHE', 'PAU', 'HAN'];
@@ -1554,7 +1702,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         pmReviews.push({
           pmTag: tag,
           status: 'PENDING',
-          requestedBy: user?.name || user?.email || 'User',
+          requestedBy: actorDisplayName,
           requestedAt: new Date().toISOString(),
         });
       }
@@ -1678,19 +1826,14 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       });
     }
 
-    const isHandoverStatus = statuses.some((s: string) => {
-      const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-      return norm === 'HANDOVER' || norm === 'AVAILABLETASK';
-    });
-
-    if (isHandoverStatus) {
+    if (shouldClearAssignee) {
       if (Array.isArray(pmReviews)) {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
       }
-      if (currentTask?.assigneeId) {
+      if (currentTask?.assigneeId || (currentTask?.assignees && currentTask.assignees.length > 0)) {
         await prisma.task.update({
           where: { id },
-          data: { assigneeId: null },
+          data: { assigneeId: null, assignees: { set: [] } },
         });
       }
     }
@@ -1699,8 +1842,17 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       statuses,
       waitingReviewSince,
       pmReviews,
-      ...(isHandoverStatus ? { handedOver: true } : {}),
+      ...(isHandoverSubStatus ? { handedOver: true } : isWorkflowTransferOut ? { handedOver: false } : {}),
     });
+
+    const isParentOnHoldSubStatus = statuses.some((s: string) => isOnHoldStatus(s));
+    if (isParentOnHoldSubStatus) {
+      await cascadeParentOnHoldToSubtasks({
+        parentTaskId: id,
+        actorId: user?.id || null,
+        actorName: actorDisplayName,
+      }).catch(() => {});
+    }
 
     // Invalidate Redis task and task_map caches
     await invalidateCache('task:*', 'tasks:all', `task:${id}`, 'task_map:*', 'launch_map:all');
@@ -1736,7 +1888,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         details: {
           oldStatuses,
           newStatuses: statuses,
-          actor: user?.name || user?.email,
+          actor: actorDisplayName,
         },
       },
     });
@@ -1745,7 +1897,8 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       taskId: id,
       statuses,
       taskMap: updated,
-      ...(isHandoverStatus ? { handedOver: true, assigneeId: null, assignee: null } : {}),
+      ...(isHandoverSubStatus ? { handedOver: true } : isWorkflowTransferOut ? { handedOver: false } : {}),
+      ...(shouldClearAssignee ? { assigneeId: null, assignee: null } : {}),
       upworkStartedAt,
       upworkSession,
       activeUpworkSessions,
@@ -1768,21 +1921,53 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
  * Assign or reassign a task on the Task Map board (drag-and-drop).
  * Strictly restricted: Only Project Managers, Seniors, and Admins can assign tasks.
  */
-export const assignTaskMapTask = async (req: Request, res: Response) => {
+/**
+ * Shared Task Map assignment & transfer executor with strict role enforcement:
+ * - MA (!isPm): can move tasks only within their own column (QUEUE <-> IN_PROGRESS).
+ * - PM (isPm): can assign/queue/transfer/unassign in QUEUE mode; cannot move into IN_PROGRESS.
+ * - Transfer: PM-only, always lands in target MA's To Do (QUEUE), never In Progress.
+ */
+async function executeTaskMapAssignment(
+  req: Request,
+  res: Response,
+  params: {
+    action: TaskMapMoveAction;
+    assigneeId: string | null;
+    mode: TaskMapMoveMode;
+  }
+) {
   try {
     const { id } = req.params;
-    const { assigneeId, mode = 'QUEUE' } = req.body;
+    const { action, assigneeId } = params;
+    const mode: TaskMapMoveMode = action === 'TRANSFER' ? 'QUEUE' : params.mode;
     const user = (req as any).user;
 
     if (!user) return res.status(401).json({ error: 'Authentication required' });
 
-    // Validate PM or Admin permission via assignPermission
-    const allowed = await canUserSetAssignees(user.id);
-    if (!allowed) {
+    const isPm = await canUserSetAssignees(user.id);
+
+    // Fast-fail obvious role violations before querying task details
+    if (action === 'TRANSFER' && !isPm) {
       return res.status(403).json({
-        error: 'Only Project Managers and Admins can assign tasks from Available tasks',
+        error: 'Only Project Managers and Admins can transfer tasks',
       });
     }
+    if (action === 'TRANSFER' && !assigneeId) {
+      return res.status(400).json({
+        error: 'Target MA is required to transfer a task',
+      });
+    }
+    if (action === 'ASSIGN' && mode === 'IN_PROGRESS' && isPm) {
+      return res.status(403).json({
+        error: 'Project Managers cannot move tasks into In Progress. Moving a task to In Progress is the MA\'s action only.',
+      });
+    }
+
+    const actorUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { id: true, name: true, email: true, avatarUrl: true },
+    });
+    const actorName = actorUser?.name || user.name || user.email || 'Team Member';
 
     const target = parseTaskMapTargetId(id);
 
@@ -1805,16 +1990,47 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
 
       const parentRecord = await getOrCreateTaskMapRecord(currentSubtask.taskId);
       let reviewsList = parsePmReviewsArray(parentRecord.pmReviews);
+      const subStateIdx = reviewsList.findIndex(
+        (r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === currentSubtask.id
+      );
+      const existingSubStatuses: string[] =
+        subStateIdx !== -1 && Array.isArray(reviewsList[subStateIdx].statuses)
+          ? [...reviewsList[subStateIdx].statuses]
+          : [];
+      const currentOwnerId = resolveEffectiveTaskMapOwnerId({
+        pmReviews: reviewsList,
+        handedOver: subStateIdx !== -1 ? Boolean(reviewsList[subStateIdx].handedOver) : false,
+        statuses: existingSubStatuses,
+        assigneeId: currentSubtask.assigneeId,
+        assignees: currentSubtask.assignees,
+        subtaskId: currentSubtask.id,
+      });
+
+      const perm = evaluateTaskMapMovePermission({
+        actorId: user.id,
+        isPm,
+        currentOwnerId,
+        targetAssigneeId: assigneeId,
+        mode,
+        action,
+      });
+      if (!perm.allowed) {
+        return res.status(perm.statusCode).json({ error: perm.error });
+      }
+
       const existingSubPmAssignment = reviewsList.find(
         (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === currentSubtask.id && r?.assignedTo === assigneeId
       );
 
+      const currentSubStatusNorm = (currentSubtask.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+      const isCurrentlyInProgressOrHold = currentSubStatusNorm === 'INPROGRESS' || currentSubStatusNorm === 'ONHOLD';
       const isAlreadyAssigned =
         assigneeId &&
         (currentSubtask.assigneeId === assigneeId ||
           (currentSubtask.assignees || []).some((a) => a.id === assigneeId)) &&
         existingSubPmAssignment &&
-        existingSubPmAssignment.mode === mode;
+        existingSubPmAssignment.mode === mode &&
+        !(mode === 'QUEUE' && isCurrentlyInProgressOrHold);
       if (isAlreadyAssigned) {
         return res.json({ success: true, task: currentSubtask, taskMap: parentRecord });
       }
@@ -1835,7 +2051,7 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         updateSubData.assignees = { set: [{ id: assigneeId }] };
         if (mode === 'IN_PROGRESS' && !isCadenceSubtask) {
           updateSubData.status = 'IN PROGRESS';
-        } else if (!currentSubtask.status) {
+        } else if (mode === 'QUEUE' && !isCadenceSubtask && (isCurrentlyInProgressOrHold || !currentSubtask.status)) {
           updateSubData.status = 'PENDING';
         }
       } else {
@@ -1855,20 +2071,21 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         },
       });
 
-      const subStateIdx = reviewsList.findIndex(
-        (r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === currentSubtask.id
-      );
       let subStatuses: string[] =
         subStateIdx !== -1 && Array.isArray(reviewsList[subStateIdx].statuses)
           ? [...reviewsList[subStateIdx].statuses]
-          : deriveDefaultTaskMapStatuses(currentSubtask.status || (currentSubtask.completed ? 'CLOSED' : 'PENDING'));
+          : [];
       let subHandedOver = subStateIdx !== -1 ? Boolean(reviewsList[subStateIdx].handedOver) : false;
 
       if (assigneeId) {
         subStatuses = subStatuses.filter((s) => {
           const up = s.toUpperCase().replace(/[\s_-]+/g, '');
+          if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
           return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
         });
+        if (mode === 'IN_PROGRESS' && !subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+          subStatuses.push('In progress');
+        }
         subHandedOver = false;
         reviewsList = reviewsList.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === currentSubtask.id));
         reviewsList.push({
@@ -1876,7 +2093,7 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
           subtaskId: currentSubtask.id,
           assignedTo: assigneeId,
           assignedBy: user.id,
-          assignedByName: user.name || user.email,
+          assignedByName: actorName,
           mode: mode || 'QUEUE',
           assignedAt: new Date().toISOString(),
         });
@@ -1916,7 +2133,27 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         'task_map:all'
       ).catch(() => {});
 
-      await prisma.auditLog.create({
+      const prevSubAssignees =
+        currentSubtask.assignees && currentSubtask.assignees.length > 0
+          ? currentSubtask.assignees
+          : currentSubtask.User
+            ? [currentSubtask.User]
+            : [];
+      const newSubAssignees =
+        updatedSubtask.assignees && updatedSubtask.assignees.length > 0
+          ? updatedSubtask.assignees
+          : updatedSubtask.User
+            ? [updatedSubtask.User]
+            : [];
+      const subAdded = newSubAssignees
+        .filter((u) => !prevSubAssignees.some((p) => p.id === u.id))
+        .map((u) => u.name);
+      const subRemoved = prevSubAssignees
+        .filter((p) => !newSubAssignees.some((u) => u.id === p.id))
+        .map((p) => p.name);
+      const subAssigneeName = updatedSubtask.User?.name || (newSubAssignees[0]?.name ?? 'Unassigned');
+
+      const subAssignLog = await prisma.auditLog.create({
         data: {
           action: 'ASSIGNMENT',
           entity: 'TASK',
@@ -1924,14 +2161,36 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
           userId: user.id,
           details: {
             assigneeId: assigneeId || null,
-            assigneeName: updatedSubtask.User?.name || 'Unassigned',
+            assigneeName: subAssigneeName,
+            added: subAdded,
+            removed: subRemoved,
             subtaskId: currentSubtask.id,
             subtaskTitle: currentSubtask.title,
-            assignedBy: user.name || user.email,
+            assignedBy: actorName,
             assignedAt: new Date().toISOString(),
           },
         },
-      }).catch(console.error);
+      }).catch(() => null);
+
+      const subStatusChanged =
+        updateSubData.status &&
+        (currentSubtask.status || '').trim().toUpperCase() !== String(updateSubData.status).trim().toUpperCase();
+      const subStatusLog = subStatusChanged
+        ? await prisma.auditLog.create({
+            data: {
+              action: 'STATUS_CHANGE',
+              entity: 'TASK',
+              entityId: currentSubtask.taskId,
+              userId: user.id,
+              details: {
+                oldStatus: currentSubtask.status,
+                newStatus: updatedSubtask.status,
+                subtaskId: currentSubtask.id,
+                subtaskTitle: currentSubtask.title,
+              },
+            },
+          }).catch(() => null)
+        : null;
 
       io.emit('subtask_updated', { taskId: currentSubtask.taskId, subtask: updatedSubtask });
       io.emit('task_map:updated', {
@@ -1939,7 +2198,42 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         subtaskId: currentSubtask.id,
         parentTaskId: currentSubtask.taskId,
         assigneeId,
+        statuses: subStatuses,
+        handedOver: subHandedOver,
       });
+      io.emit('task_activity', {
+        listId: currentSubtask.task?.listId,
+        taskId: currentSubtask.taskId,
+        activity: {
+          id: subAssignLog?.id || `assign-sub-${Date.now()}`,
+          type: 'assignment',
+          author: actorName,
+          assigneeName: subAssigneeName,
+          added: subAdded,
+          removed: subRemoved,
+          subtaskId: currentSubtask.id,
+          subtaskTitle: currentSubtask.title,
+          date: subAssignLog?.createdAt || new Date(),
+          user: actorUser,
+        },
+      });
+      if (subStatusLog) {
+        io.emit('task_activity', {
+          listId: currentSubtask.task?.listId,
+          taskId: currentSubtask.taskId,
+          activity: {
+            id: subStatusLog.id,
+            type: 'status_change',
+            author: actorName,
+            oldStatus: currentSubtask.status,
+            newStatus: updatedSubtask.status,
+            subtaskId: currentSubtask.id,
+            subtaskTitle: currentSubtask.title,
+            date: subStatusLog.createdAt,
+            user: actorUser,
+          },
+        });
+      }
 
       return res.json({ success: true, task: updatedSubtask, taskMap: updatedRecord });
     }
@@ -1948,6 +2242,7 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       where: { id },
       include: {
         list: true,
+        assignee: { select: { id: true, name: true } },
         assignees: true,
       },
     });
@@ -1958,9 +2253,32 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
 
     const record = await getOrCreateTaskMapRecord(id);
     let reviewsList = parsePmReviewsArray(record.pmReviews);
+    const currentOwnerId = resolveEffectiveTaskMapOwnerId({
+      pmReviews: reviewsList,
+      handedOver: record.handedOver,
+      statuses: record.statuses,
+      assigneeId: currentTask.assigneeId,
+      assignees: currentTask.assignees,
+    });
+
+    const perm = evaluateTaskMapMovePermission({
+      actorId: user.id,
+      isPm,
+      currentOwnerId,
+      targetAssigneeId: assigneeId,
+      mode,
+      action,
+    });
+    if (!perm.allowed) {
+      return res.status(perm.statusCode).json({ error: perm.error });
+    }
+
     const existingPmAssignment = reviewsList.find(
       (r: any) => r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId && r?.assignedTo === assigneeId
     );
+
+    const currentStatusNorm = (currentTask.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+    const isCurrentlyInProgressOrHold = currentStatusNorm === 'INPROGRESS' || currentStatusNorm === 'ONHOLD';
 
     // Guard: If task is already assigned to this user and has matching PM assignment mode, return early
     const isAlreadyAssigned =
@@ -1968,7 +2286,8 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       (currentTask.assigneeId === assigneeId ||
         (currentTask.assignees || []).some((a) => a.id === assigneeId)) &&
       existingPmAssignment &&
-      existingPmAssignment.mode === mode;
+      existingPmAssignment.mode === mode &&
+      !(mode === 'QUEUE' && isCurrentlyInProgressOrHold);
     if (isAlreadyAssigned) {
       return res.json({
         success: true,
@@ -2008,9 +2327,21 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       updateData.assigneeId = assigneeId;
       updateData.assignees = { set: [{ id: assigneeId }] };
       if (mode === 'IN_PROGRESS' && !isCadenceTask) {
-        updateData.status = 'IN PROGRESS';
-      } else if (!currentTask.status) {
-        updateData.status = 'PENDING';
+        const listStatus = currentTask.listId
+          ? await prisma.listStatus.findFirst({
+              where: { listId: currentTask.listId, name: { equals: 'IN PROGRESS', mode: 'insensitive' } },
+              select: { name: true },
+            })
+          : null;
+        updateData.status = listStatus?.name ?? 'IN PROGRESS';
+      } else if (mode === 'QUEUE' && !isCadenceTask && (isCurrentlyInProgressOrHold || !currentTask.status)) {
+        const pendingStatus = currentTask.listId
+          ? await prisma.listStatus.findFirst({
+              where: { listId: currentTask.listId, name: { equals: 'PENDING', mode: 'insensitive' } },
+              select: { name: true },
+            })
+          : null;
+        updateData.status = pendingStatus?.name ?? 'PENDING';
       }
     } else {
       updateData.assigneeId = null;
@@ -2051,8 +2382,12 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
     if (assigneeId) {
       newStatuses = newStatuses.filter((s) => {
         const up = s.toUpperCase().replace(/[\s_-]+/g, '');
+        if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
         return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
       });
+      if (mode === 'IN_PROGRESS' && !newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+        newStatuses.push('In progress');
+      }
       handedOver = false;
 
       // Record explicit PM assignment so task appears in that user's column (preserve subtask assignments!)
@@ -2061,7 +2396,7 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         type: 'PM_ASSIGNMENT',
         assignedTo: assigneeId,
         assignedBy: user.id,
-        assignedByName: user.name || user.email,
+        assignedByName: actorName,
         mode: mode || 'QUEUE',
         assignedAt: new Date().toISOString(),
       });
@@ -2135,8 +2470,28 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
       'task_map:all'
     ).catch(() => { });
 
+    const prevTaskAssignees =
+      currentTask.assignees && currentTask.assignees.length > 0
+        ? currentTask.assignees
+        : currentTask.assignee
+          ? [currentTask.assignee]
+          : [];
+    const nextTaskAssignees =
+      updatedTask.assignees && updatedTask.assignees.length > 0
+        ? updatedTask.assignees
+        : updatedTask.assignee
+          ? [updatedTask.assignee]
+          : [];
+    const addedNames = nextTaskAssignees
+      .filter((u) => !prevTaskAssignees.some((p) => p.id === u.id))
+      .map((u) => u.name);
+    const removedNames = prevTaskAssignees
+      .filter((p) => !nextTaskAssignees.some((u) => u.id === p.id))
+      .map((p) => p.name);
+    const finalAssigneeName = updatedTask.assignee?.name || 'Unassigned';
+
     // AuditLog
-    await prisma.auditLog.create({
+    const assignLog = await prisma.auditLog.create({
       data: {
         action: 'ASSIGNMENT',
         entity: 'TASK',
@@ -2144,32 +2499,98 @@ export const assignTaskMapTask = async (req: Request, res: Response) => {
         userId: user.id,
         details: {
           assigneeId: assigneeId || null,
-          assigneeName: updatedTask.assignee?.name || 'Unassigned',
-          assignedBy: user.name || user.email,
+          assigneeName: finalAssigneeName,
+          added: addedNames,
+          removed: removedNames,
+          assignedBy: actorName,
           assignedAt: new Date().toISOString(),
         },
       },
-    }).catch(console.error);
+    }).catch(() => null);
+
+    const statusChanged =
+      updateData.status &&
+      (currentTask.status || '').trim().toUpperCase() !== String(updatedTask.status || '').trim().toUpperCase();
+    const statusLog = statusChanged
+      ? await prisma.auditLog.create({
+          data: {
+            action: 'STATUS_CHANGE',
+            entity: 'TASK',
+            entityId: id,
+            userId: user.id,
+            details: {
+              oldStatus: currentTask.status,
+              newStatus: updatedTask.status,
+            },
+          },
+        }).catch(() => null)
+      : null;
 
     // Broadcast realtime Socket.io events
     io.emit('task:updated', updatedTask);
-    io.emit('task_map:updated', { taskId: id, task: updatedTask, taskMap: updatedRecord, assigneeId });
+    io.emit('task_map:updated', {
+      taskId: id,
+      task: updatedTask,
+      taskMap: updatedRecord,
+      assigneeId,
+      handedOver,
+      statuses: newStatuses,
+    });
     io.emit('task_activity', {
       listId: updatedTask.listId,
       taskId: id,
       activity: {
+        id: assignLog?.id || `assign-${Date.now()}`,
         type: 'assignment',
-        author: user.name || 'Project Manager',
-        assigneeName: updatedTask.assignee?.name || 'Unassigned',
-        date: new Date(),
+        author: actorName,
+        assigneeName: finalAssigneeName,
+        added: addedNames,
+        removed: removedNames,
+        date: assignLog?.createdAt || new Date(),
+        user: actorUser,
       },
     });
+    if (statusLog) {
+      io.emit('task_activity', {
+        listId: updatedTask.listId,
+        taskId: id,
+        activity: {
+          id: statusLog.id,
+          type: 'status_change',
+          author: actorName,
+          oldStatus: currentTask.status,
+          newStatus: updatedTask.status,
+          date: statusLog.createdAt,
+          user: actorUser,
+        },
+      });
+    }
 
     return res.json({ success: true, task: updatedTask, taskMap: updatedRecord });
   } catch (error: any) {
     logger.error({ error }, 'Error assigning task in Task Map');
     return res.status(500).json({ error: 'Failed to assign task' });
   }
+}
+
+export const assignTaskMapTask = async (req: Request, res: Response) => {
+  const { assigneeId = null, mode = 'QUEUE' } = req.body || {};
+  const normalizedMode: TaskMapMoveMode = mode === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'QUEUE';
+  return executeTaskMapAssignment(req, res, {
+    action: 'ASSIGN',
+    assigneeId: assigneeId || null,
+    mode: normalizedMode,
+  });
+};
+
+export const transferTaskMapTask = async (req: Request, res: Response) => {
+  const { targetUserId, assigneeId } = req.body || {};
+  const resolvedTargetId = targetUserId ?? assigneeId ?? null;
+  return executeTaskMapAssignment(req, res, {
+    action: 'TRANSFER',
+    assigneeId: resolvedTargetId,
+    mode: 'QUEUE',
+  });
 };
 
 /**

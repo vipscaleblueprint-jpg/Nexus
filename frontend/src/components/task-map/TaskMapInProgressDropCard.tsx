@@ -13,6 +13,7 @@ interface Props {
   queuedTasks: TaskMapItem[];
   onSelectTask: (taskId: string) => Promise<void> | void;
   disabled?: boolean;
+  canBrowse?: boolean;
 }
 
 export const TaskMapInProgressDropCard: React.FC<Props> = ({
@@ -22,7 +23,9 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
   queuedTasks,
   onSelectTask,
   disabled = false,
+  canBrowse,
 }) => {
+  const allowBrowse = canBrowse !== undefined ? canBrowse : !disabled;
   const { setNodeRef, isOver } = useDroppable({
     id: `in-progress-${userId}`,
     data: {
@@ -114,18 +117,23 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
     <>
       <div
         ref={setNodeRef}
-        className={`relative group w-full rounded-xl border-2 border-dashed transition-all duration-200 select-none flex flex-col items-center justify-center text-center p-3 min-h-[112px] ${
-          isOver
-            ? 'border-[#D04A7C] bg-[#D04A7C]/15 ring-2 ring-[#D04A7C]/50 shadow-lg shadow-[#D04A7C]/20 scale-[1.01]'
-            : 'border-zinc-700/70 hover:border-zinc-500/90 bg-zinc-900/40 hover:bg-zinc-900/70 shadow-xs'
+        data-in-progress-dropzone="true"
+        className={`relative group w-full rounded-xl border-2 border-dashed transition-colors duration-150 select-none flex flex-col items-center justify-center text-center p-3 min-h-[112px] ${
+          isOver && !allowBrowse
+            ? 'border-red-500/70 bg-red-950/20 ring-2 ring-red-500/40 shadow-lg shadow-red-950/20'
+            : isOver
+              ? 'border-[#D04A7C] bg-[#D04A7C]/15 ring-2 ring-[#D04A7C]/50 shadow-lg shadow-[#D04A7C]/20'
+              : 'border-zinc-700/70 hover:border-zinc-500/90 bg-zinc-900/40 hover:bg-zinc-900/70 shadow-xs'
         }`}
       >
         {/* Upload / Cloud Icon */}
         <div
           className={`size-7 rounded-full flex items-center justify-center mb-1 transition-colors ${
-            isOver
-              ? 'bg-[#D04A7C]/25 text-[#D04A7C]'
-              : 'bg-zinc-800 text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-200 group-hover:bg-zinc-700'
+            isOver && !allowBrowse
+              ? 'bg-red-500/20 text-red-400'
+              : isOver
+                ? 'bg-[#D04A7C]/25 text-[#D04A7C]'
+                : 'bg-zinc-800 text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-200 group-hover:bg-zinc-700'
           }`}
         >
           <UploadCloud className="size-4" />
@@ -134,29 +142,39 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
         {/* Primary Text */}
         <p
           className={`text-xs font-bold transition-colors ${
-            isOver ? 'text-[#D04A7C]' : 'text-zinc-800 dark:text-zinc-200 group-hover:text-zinc-950 dark:group-hover:text-white'
+            isOver && !allowBrowse
+              ? 'text-red-400'
+              : isOver
+                ? 'text-[#D04A7C]'
+                : 'text-zinc-800 dark:text-zinc-200 group-hover:text-zinc-950 dark:group-hover:text-white'
           }`}
         >
-          {isOver ? 'Drop task to start In Progress' : 'Choose a task or drag & drop it here'}
+          {isOver && !allowBrowse
+            ? 'Only the MA can move tasks to In Progress'
+            : isOver
+              ? 'Drop task to start In Progress'
+              : 'Choose a task or drag & drop it here'}
         </p>
 
         {/* Subtitle Text */}
         <p className="text-[10px] text-zinc-500 mt-0.5 mb-1.5">
-          Drop to set In Progress · Prioritized at top
+          {allowBrowse ? 'Drop to set In Progress · Prioritized at top' : 'Only the assigned MA can start In Progress'}
         </p>
 
-        {/* Browse Tasks Button */}
-        <button
-          ref={buttonRef}
-          type="button"
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={togglePopover}
-          className="px-3 py-1 rounded-md border border-zinc-700/80 bg-zinc-800 hover:bg-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-white hover:border-zinc-500 transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
-        >
-          <Search className="size-3 text-zinc-400" />
-          <span>Browse Tasks</span>
-        </button>
+        {/* Browse Tasks Button (MA own column only) */}
+        {allowBrowse && (
+          <button
+            ref={buttonRef}
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={togglePopover}
+            className="px-3 py-1 rounded-md border border-zinc-700/80 bg-zinc-800 hover:bg-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-white hover:border-zinc-500 transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+          >
+            <Search className="size-3 text-zinc-400" />
+            <span>Browse Tasks</span>
+          </button>
+        )}
       </div>
 
       {isOpen &&

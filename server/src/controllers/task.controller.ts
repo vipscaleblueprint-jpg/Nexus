@@ -51,7 +51,7 @@ import {
 } from '../utils/roleNotification';
 import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
 import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
-import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign } from '../services/taskMapService';
+import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -784,31 +784,54 @@ async function resolveUsersFromRoles(roleRestrictions: string[]): Promise<string
   const [users, teams] = await Promise.all([
     prisma.user.findMany({
       where: { isActive: true },
-      select: { id: true, roles: true, systemRole: true, teamId: true }
+      select: {
+        id: true,
+        roles: true,
+        systemRole: true,
+        teamId: true,
+        team: { select: { id: true, name: true, teamRoles: { select: { name: true } } } },
+      },
     }),
     prisma.team.findMany({
-      select: { id: true, name: true }
-    })
+      select: { id: true, name: true, teamRoles: { select: { name: true } } },
+    }),
   ]);
 
+  const teamById = new Map<string, any>();
   const teamNameToTeamId = new Map<string, string>();
-  teams.forEach(t => {
-    if (t.name) teamNameToTeamId.set(t.name.trim().toLowerCase(), t.id);
+  teams.forEach((t) => {
+    teamById.set(t.id, t);
+    if (t.name) {
+      const lower = t.name.trim().toLowerCase();
+      teamNameToTeamId.set(lower, t.id);
+      const stripped = lower.replace(/\s+team$/i, '').trim();
+      if (stripped && !teamNameToTeamId.has(stripped)) {
+        teamNameToTeamId.set(stripped, t.id);
+      }
+    }
   });
 
-  return users.filter(u => {
-    const userRoles = u.roles || [];
-    return roleRestrictions.some(role => {
-      // 1. Direct role match on user roles
-      if (userRoles.some(ur => matchesRole(ur, role))) return true;
-      // 2. System role match
-      if (u.systemRole && matchesRole(u.systemRole, role)) return true;
-      // 3. Whole team name match
-      const matchedTeamId = teamNameToTeamId.get(role.trim().toLowerCase());
-      if (matchedTeamId && u.teamId === matchedTeamId) return true;
-      return false;
-    });
-  }).map(u => u.id);
+  return users
+    .filter((u: any) => {
+      const userRoles = u.roles || [];
+      const userTeam = u.team || (u.teamId ? teamById.get(u.teamId) : null);
+      const teamRoleNames = (userTeam?.teamRoles || []).map((tr: any) => tr?.name).filter(Boolean);
+      return roleRestrictions.some((role) => {
+        // 1. Direct role match on user's DB roles
+        if (userRoles.some((ur: string) => matchesRole(ur, role))) return true;
+        // 2. System role match
+        if (u.systemRole && matchesRole(u.systemRole, role)) return true;
+        // 3. Whole team name match (e.g. "Design Team" or "Design")
+        const roleLower = role.trim().toLowerCase();
+        const roleStripped = roleLower.replace(/\s+team$/i, '').trim();
+        const matchedTeamId = teamNameToTeamId.get(roleLower) || teamNameToTeamId.get(roleStripped);
+        if (matchedTeamId && u.teamId === matchedTeamId) return true;
+        // 4. Fallback: if user has no explicit user.roles, inherit their DB team's teamRoles
+        if (userRoles.length === 0 && teamRoleNames.some((tr: string) => matchesRole(tr, role))) return true;
+        return false;
+      });
+    })
+    .map((u: any) => u.id);
 }
 
 // PATCH /api/tasks/:id
@@ -983,6 +1006,14 @@ export async function updateTask(req: Request, res: Response) {
       data: updateData,
     });
 
+    if (status && isOnHoldStatus(status)) {
+      await cascadeParentOnHoldToSubtasks({
+        parentTaskId: taskId,
+        listId: listId || currentListId || currentTask.listId,
+        actorId: effectiveUser?.id || null,
+      }).catch(() => {});
+    }
+
     // Manually construct the payload for frontend to merge efficiently
     const payload = { ...updated } as any;
     if (computedAssigneeIds !== undefined || assigneeId !== undefined) {
@@ -1001,8 +1032,8 @@ export async function updateTask(req: Request, res: Response) {
         payload.assignees[0] ||
         null;
 
-      if (updated.assigneeId && updated.assigneeId !== currentTask.assigneeId) {
-        syncTaskMapOnDirectAssign(taskId, null, updated.assigneeId).catch(() => {});
+      if (updated.assigneeId !== currentTask.assigneeId) {
+        syncTaskMapOnDirectAssign(taskId, null, updated.assigneeId || null).catch(() => {});
       } else {
         invalidateCache('task_map:all').catch(() => {});
       }
@@ -1570,6 +1601,14 @@ export async function moveTask(req: Request, res: Response) {
       where: { id },
       data: updateData,
     });
+
+    if (status && isOnHoldStatus(status)) {
+      await cascadeParentOnHoldToSubtasks({
+        parentTaskId: id,
+        listId: currentListId || currentTask.listId,
+        actorId: effectiveUser?.id || (userId ? userId : null),
+      }).catch(() => {});
+    }
 
     // Broadcast IMMEDIATELY after update
     const roomListId = currentListId || currentTask.listId;
@@ -2678,6 +2717,23 @@ export async function createSubtask(req: Request, res: Response) {
     const { id: taskId } = req.params;
     const { title, description, assigneeIds, assigneeId, teamId, priority, dueDate, status, assigneeRoleRestrictions, teamAssignAccessRole } = req.body;
 
+    const parentForStatus = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: {
+        status: true,
+        list: { select: { statuses: { select: { name: true } } } },
+      },
+    });
+    const parentRec = parentForStatus ? await getOrCreateTaskMapRecord(taskId).catch(() => null) : null;
+    const parentIsOnHold = Boolean(
+      (parentForStatus && isOnHoldStatus(parentForStatus.status)) ||
+      (parentRec && Array.isArray(parentRec.statuses) && parentRec.statuses.some((s) => isOnHoldStatus(s)))
+    );
+    const normalizedSubStatus = (status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    const isExplicitlyClosed = ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(normalizedSubStatus);
+    const parentListOnHold = parentForStatus?.list?.statuses?.find((s) => isOnHoldStatus(s.name))?.name || 'ON-HOLD';
+    const effectiveSubStatus = parentIsOnHold && !isExplicitlyClosed ? parentListOnHold : status;
+
     const effectiveAssigneeId = Array.isArray(assigneeIds)
       ? resolveLatestAssigneeId({ nextIds: assigneeIds, explicitAssigneeId: assigneeId })
       : (assigneeId || null);
@@ -2687,7 +2743,7 @@ export async function createSubtask(req: Request, res: Response) {
         title,
         description,
         // @ts-ignore: IDE stale Prisma types issue
-        status,
+        status: effectiveSubStatus,
         assigneeId: effectiveAssigneeId,
         ...(assigneeIds && Array.isArray(assigneeIds) && assigneeIds.length > 0
           ? { assignees: { connect: assigneeIds.map((id: string) => ({ id })) } }
@@ -2709,6 +2765,17 @@ export async function createSubtask(req: Request, res: Response) {
       } as any
     });
     await invalidateCache(`task:${taskId}`, `task:${subtask.id}`, 'task_map:all');
+    if (parentIsOnHold && !isExplicitlyClosed && parentRec) {
+      const revs = Array.isArray(parentRec.pmReviews) ? [...(parentRec.pmReviews as any[])] : [];
+      revs.push({
+        type: 'SUBTASK_STATE',
+        subtaskId: subtask.id,
+        statuses: ['On-hold'],
+        handedOver: false,
+        updatedAt: new Date().toISOString(),
+      });
+      await updateTaskMapRecord(taskId, { pmReviews: revs }).catch(() => {});
+    }
     if (effectiveAssigneeId) {
       await syncTaskMapOnDirectAssign(taskId, subtask.id, effectiveAssigneeId);
     }
@@ -2971,8 +3038,8 @@ export async function updateSubtask(req: Request, res: Response) {
     });
 
     if (assigneesChanging) {
-      if (subtask.assigneeId && subtask.assigneeId !== existingSubtask?.assigneeId) {
-        syncTaskMapOnDirectAssign(taskId, subtask.id, subtask.assigneeId).catch(() => {});
+      if (subtask.assigneeId !== existingSubtask?.assigneeId) {
+        syncTaskMapOnDirectAssign(taskId, subtask.id, subtask.assigneeId || null).catch(() => {});
       } else {
         invalidateCache('task_map:all').catch(() => {});
       }

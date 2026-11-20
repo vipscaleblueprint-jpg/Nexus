@@ -361,7 +361,7 @@ export default function UsersSettingsPage() {
             onClick={() => setActiveTab('shifts')}
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
           >
-            View Audit Shifts
+            Manage Audit Shifts
           </button>
           <button
             onClick={() => router.push('/')}
@@ -481,9 +481,7 @@ export default function UsersSettingsPage() {
           <p className="text-zinc-500 text-sm mt-0.5">
             {activeTab === 'users'
               ? 'Manage workspace members, invitations, and custom roles.'
-              : isAdmin
-              ? 'Configure shift schedules and auto-assigned auditors for in-review tasks.'
-              : 'View Manila Time (UTC+8) shift schedules and assigned shift members.'}
+              : 'Configure shift schedules and auto-assigned auditors for in-review tasks.'}
           </p>
         </div>
 
@@ -527,7 +525,7 @@ export default function UsersSettingsPage() {
       </div>
 
       {activeTab === 'shifts' ? (
-        <AuditShiftsTab onRefreshUsers={loadData} readOnly={!isAdmin} />
+        <AuditShiftsTab onRefreshUsers={loadData} />
       ) : (
         <div className="space-y-8">
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full">

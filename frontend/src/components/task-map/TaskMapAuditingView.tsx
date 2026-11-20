@@ -15,6 +15,7 @@ import {
   matchesMarketingNameSearch,
   subscribeTaskMapSaving,
   isTaskSavingToDb,
+  isTaskUnderAdmin,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { useLiveClock } from '@/lib/liveClock';
@@ -506,23 +507,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     }
     return Array.from(map.values());
   }, [tasks, availablePool]);
-
-  // Check if a task is under Admin folder
-  const isTaskUnderAdmin = (t: TaskMapItem) => {
-    if (t.isAdminTask) return true;
-    const fName = (t.list?.folder?.name || '').toLowerCase().trim();
-    const lName = (t.list?.name || '').toLowerCase().trim();
-    const ADMIN_LIST_NAMES = new Set([
-      'admin | jenesia red',
-      'harmony',
-      'jenesia red',
-      'jenesia red | personal',
-      'snaply',
-      'vip scale',
-      'xfnite',
-    ]);
-    return fName === 'admin' || fName.includes('admin') || lName === 'admin' || ADMIN_LIST_NAMES.has(lName);
-  };
 
   // All combined review candidates (admin & client filtering applied per column)
   const filteredReviewTasks = combinedTasks;
@@ -1078,7 +1062,13 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                     sortTasksUrgentFirst(visibleTasks).map((task) => {
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
-                          <div className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group">
+                          <div
+                            onClick={(e) => {
+                              if (e.defaultPrevented) return;
+                              onOpenDetail(task);
+                            }}
+                            className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer"
+                          >
                             <div className="flex items-stretch gap-3">
                               {/* Left: Task Info */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
@@ -1089,15 +1079,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
                               {/* Title */}
                               <h4
-                                onClick={() => onOpenDetail(task)}
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
                                 title={task.title}
                               >
                                 {task.title}
                               </h4>
 
                               {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
-                              <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
+                              <div
+                                className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 {/* Circle Dot Status Indicator */}
                                 <CardStatusDropdown
                                   taskId={task.id}
@@ -1179,6 +1171,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                 className="w-full"
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
                                   Sub-Status

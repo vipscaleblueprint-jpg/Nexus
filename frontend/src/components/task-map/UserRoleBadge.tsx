@@ -6,8 +6,8 @@ import { X, ShieldCheck, Tag } from 'lucide-react';
 import {
   getUserRoleDefinition,
   getRoleBadgeClass,
-  ROLE_SHORT_NAMES,
 } from '@/api/taskMap';
+import { useAppStore } from '@/lib/store';
 
 interface Props {
   user: any;
@@ -40,7 +40,9 @@ export const UserRoleBadge: React.FC<Props> = ({ user, className = '' }) => {
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const initialPosRef = useRef<{ top: number; left: number } | null>(null);
 
-  const roleInfo = getUserRoleDefinition(user);
+  const workspaceTeams = useAppStore((s) => s.workspaceTeams);
+  const workspaceRoles = useAppStore((s) => s.workspaceRoles);
+  const roleInfo = getUserRoleDefinition(user, workspaceTeams, workspaceRoles);
 
   useEffect(() => {
     if (!isOpen || !triggerRef.current) return;
@@ -191,12 +193,12 @@ export const UserRoleBadge: React.FC<Props> = ({ user, className = '' }) => {
               </button>
             </div>
 
-            {/* Main Role Section */}
+            {/* Main Role & Team Section */}
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
                 Main Role
               </span>
-              <div className="flex items-center">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span
                   className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold border ${roleInfo.badgeClass}`}
                   title={roleInfo.mainRole}
@@ -204,6 +206,14 @@ export const UserRoleBadge: React.FC<Props> = ({ user, className = '' }) => {
                   <Tag className="size-3 opacity-70" />
                   <span>{roleInfo.mainRole}</span>
                 </span>
+                {roleInfo.teamName && (
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border border-zinc-700/80 bg-zinc-800/70 text-zinc-300"
+                    title={`Team: ${roleInfo.teamName}`}
+                  >
+                    Team: {roleInfo.teamName}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -223,8 +233,7 @@ export const UserRoleBadge: React.FC<Props> = ({ user, className = '' }) => {
               ) : (
                 <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto custom-scrollbar pr-1">
                   {roleInfo.secondaryRoles.map((role, idx) => {
-                    const short = ROLE_SHORT_NAMES[role] || role;
-                    const badgeClass = getRoleBadgeClass(short);
+                    const badgeClass = getRoleBadgeClass(role);
                     return (
                       <span
                         key={`${role}-${idx}`}

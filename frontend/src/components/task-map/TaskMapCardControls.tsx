@@ -997,7 +997,7 @@ export function computeDuration(timeInStr?: string | null, timeOutStr?: string |
   return `${remM}m`;
 }
 
-/** Computes the duration in milliseconds between timeIn and now, resilient to sheet date offsets and midnight shifts */
+/** Computes the duration in milliseconds between timeIn (Manila time UTC+8) and now, resilient to sheet date formats, clock skew, and midnight shifts */
 export function getSessionDiffMs(timeInStr?: string | null, dateStr?: string | null, now = new Date()): number | null {
   if (!timeInStr) return null;
   const m = timeInStr.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
@@ -1009,35 +1009,66 @@ export function getSessionDiffMs(timeInStr?: string | null, dateStr?: string | n
   if (ampm === 'PM' && hrs < 12) hrs += 12;
   if (ampm === 'AM' && hrs === 12) hrs = 0;
 
-  // 1. Try relative to current day first (handles sheets edited across midnight or timezone date differences)
-  const startToday = new Date(now);
-  startToday.setHours(hrs, mins, 0, 0);
+  const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // Allow up to 5 minutes of clock skew without wrapping -24h
+  const toManilaEpochMs = (y: number, mo: number, d: number) => Date.UTC(y, mo - 1, d, hrs - 8, mins, 0, 0);
 
-  let diffMs = now.getTime() - startToday.getTime();
-  if (diffMs < 0) {
-    // If clocked in before midnight and current time is after midnight (e.g. 11:30 PM to 01:00 AM)
-    startToday.setDate(startToday.getDate() - 1);
-    diffMs = now.getTime() - startToday.getTime();
-  }
-
-  // If today-relative calculation produces an active session within normal shift window (<= 14h), use it!
-  if (diffMs >= 0 && diffMs <= MAX_LIVE_SHIFT_MS) {
-    return diffMs;
-  }
-
-  // 2. If dateStr is provided and today-relative diff exceeded 14h, try explicit dateStr (parsed in local timezone)
+  // 1. If an explicit dateStr is provided, try parsing YYYY-MM-DD, M/D/YYYY, or text date in Manila time
   if (dateStr) {
-    const parts = dateStr.trim().split(/[-/]/);
-    if (parts.length === 3) {
-      const year = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10) - 1;
-      const day = parseInt(parts[2], 10);
-      const explicitStart = new Date(year, month, day, hrs, mins, 0, 0);
-      const explicitDiff = now.getTime() - explicitStart.getTime();
-      if (explicitDiff >= 0 && explicitDiff <= MAX_LIVE_SHIFT_MS) {
-        return explicitDiff;
+    const cleanDate = dateStr.trim();
+    let y: number | null = null;
+    let mo: number | null = null;
+    let d: number | null = null;
+
+    const ymd = cleanDate.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    const mdy = cleanDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (ymd) {
+      y = parseInt(ymd[1], 10);
+      mo = parseInt(ymd[2], 10);
+      d = parseInt(ymd[3], 10);
+    } else if (mdy) {
+      mo = parseInt(mdy[1], 10);
+      d = parseInt(mdy[2], 10);
+      y = parseInt(mdy[3], 10);
+    } else {
+      const parsed = new Date(cleanDate.includes(':') ? cleanDate : `${cleanDate} 12:00:00`);
+      if (!isNaN(parsed.getTime())) {
+        const manilaStr = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Manila',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(parsed);
+        const parts = manilaStr.split('-').map(Number);
+        if (parts.length === 3) {
+          [y, mo, d] = parts;
+        }
       }
     }
+
+    if (y !== null && mo !== null && d !== null) {
+      const explicitDiff = now.getTime() - toManilaEpochMs(y, mo, d);
+      if (explicitDiff >= -CLOCK_SKEW_TOLERANCE_MS) {
+        return Math.max(0, explicitDiff);
+      }
+    }
+  }
+
+  // 2. Fallback relative to today's Manila calendar date (handles missing dates or midnight rollover)
+  const manilaTodayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  const [ty, tmo, td] = manilaTodayStr.split('-').map(Number);
+
+  let diffMs = now.getTime() - toManilaEpochMs(ty, tmo, td);
+  if (diffMs >= -CLOCK_SKEW_TOLERANCE_MS && diffMs < 0) {
+    return 0;
+  }
+  if (diffMs < -CLOCK_SKEW_TOLERANCE_MS) {
+    // Clocked in before midnight and current time is after midnight (e.g. 11:30 PM to 01:00 AM)
+    diffMs = now.getTime() - toManilaEpochMs(ty, tmo, td - 1);
   }
 
   return diffMs;

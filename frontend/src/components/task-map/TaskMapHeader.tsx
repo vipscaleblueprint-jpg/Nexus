@@ -294,6 +294,8 @@ export const TaskMapHeader: React.FC<Props> = ({
   const setUpworkClients = useAppStore((s) => s.setUpworkClients);
   const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
   const setUpworkProjectClients = useAppStore((s) => s.setUpworkProjectClients);
+  const workspaceTeams = useAppStore((s) => s.workspaceTeams);
+  const workspaceRoles = useAppStore((s) => s.workspaceRoles);
 
   const handleToggleUpworkClient = async (clientName: string) => {
     if (!isAaron) return; // Marking or removing Upwork clients is strictly limited to Aaron!
@@ -785,11 +787,13 @@ export const TaskMapHeader: React.FC<Props> = ({
 
   const shiftOptions = React.useMemo(() => {
     const baseLabel = (s: TaskMapShift) => {
+      const cleanName = (s.name || '').replace(/\s+shift$/i, '').trim();
+      if (cleanName) return cleanName;
       const k = (s.shiftKey || '').toUpperCase();
-      if (k === 'DAY') return 'Day';
-      if (k === 'NOON') return 'Noon';
-      if (k === 'NIGHT') return 'Night';
-      return s.name || s.shiftKey;
+      if (k === 'DAY' || k === 'AM' || k === 'MORNING') return 'Morning';
+      if (k === 'NOON' || k === 'PM_AFTERNOON' || k === 'AFTERNOON') return 'Afternoon';
+      if (k === 'NIGHT' || k === 'PM_NIGHT') return 'Night';
+      return s.shiftKey;
     };
 
     const dbActiveShifts = (shifts || []).filter((s) => s.isActive !== false);
@@ -802,8 +806,8 @@ export const TaskMapHeader: React.FC<Props> = ({
             hoursLabel: `${s.name} (${formatShiftHours(s)} Manila)`,
           }))
       : [
-          { key: 'DAY', label: 'Day', hoursLabel: 'Morning Shift' },
-          { key: 'NOON', label: 'Noon', hoursLabel: 'Afternoon Shift' },
+          { key: 'DAY', label: 'Morning', hoursLabel: 'Morning Shift' },
+          { key: 'NOON', label: 'Afternoon', hoursLabel: 'Afternoon Shift' },
           { key: 'NIGHT', label: 'Night', hoursLabel: 'Night Shift' },
         ];
 
@@ -1209,7 +1213,7 @@ export const TaskMapHeader: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Shift pills [All] [Day] [Noon] [Night] [Custom] */}
+            {/* Shift pills [All] [Live] [Active] [Morning] [Afternoon] [Night] [Custom] */}
             <div className="flex items-center gap-1 bg-card border border-zinc-300 dark:border-zinc-800/80 rounded-xl p-1 text-xs font-medium">
               {shiftOptions.map((opt) => {
                 const isCustom = opt.key === 'CUSTOM';
@@ -1350,7 +1354,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                                     <span className="truncate">{ma.name}</span>
                                   </div>
                                   {(() => {
-                                    const rDef = getUserRoleDefinition(ma);
+                                    const rDef = getUserRoleDefinition(ma, workspaceTeams, workspaceRoles);
                                     return (
                                       <span className={`text-[9px] px-1.5 py-0.5 rounded border shrink-0 font-medium ${rDef.badgeClass}`}>
                                         {rDef.mainRoleShort}
@@ -1373,10 +1377,10 @@ export const TaskMapHeader: React.FC<Props> = ({
             <Link
               href="/settings/users?tab=shifts"
               className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-zinc-700 rounded-xl text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors"
-              title={currentUser?.systemRole === 'ADMIN' ? 'Configure Shift Members & Audit Shifts' : 'View Audit Shifts Schedule'}
+              title="Configure Shift Members & Audit Shifts"
             >
               <Users className="size-3.5 text-indigo-400" />
-              <span className="hidden sm:inline">{currentUser?.systemRole === 'ADMIN' ? 'Manage Shifts' : 'Audit Shifts'}</span>
+              <span className="hidden sm:inline">Manage Shifts</span>
             </Link>
 
             {/* Upwork Clients Configuration Button (Restricted to Aaron) */}
@@ -1480,7 +1484,7 @@ export const TaskMapHeader: React.FC<Props> = ({
                         ? 'bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800/60 font-semibold'
                         : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60'
                         }`}
-                      title="Toggle Admin folder tasks: Admin | Jenesia Red, Harmony, Jenesia Red, Snaply, VIP Scale, Xfnite"
+                      title="Toggle Admin, Dormant, Startups & Human Resource folder tasks"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <div

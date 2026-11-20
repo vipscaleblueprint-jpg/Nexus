@@ -25,7 +25,7 @@ import { autoAssignAudits, sweepInReviewTasksForShiftAudits } from '../services/
 import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
-import { syncTaskMapOnDirectAssign } from '../services/taskMapService';
+import { syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus } from '../services/taskMapService';
 import { getTaskMoverAndUpdaters } from './task.controller';
 
 
@@ -1011,6 +1011,14 @@ export async function updateTask(req: Request, res: Response) {
         assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true } },
       }
     });
+
+    if (finalStatus !== undefined && isOnHoldStatus(finalStatus)) {
+      await cascadeParentOnHoldToSubtasks({
+        parentTaskId: task.id,
+        listId: task.listId,
+        actorId: apiKey.user?.id || null,
+      }).catch(() => {});
+    }
 
     // Re-fetch populated task with updated subtasks for broadcast
     const updatedFullTask = await prisma.task.findUnique({

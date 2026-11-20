@@ -34,7 +34,7 @@ import { isReviewStatus } from '../utils/auditChecklist';
 import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
-import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign } from '../services/taskMapService';
+import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus } from '../services/taskMapService';
 
 interface LinkedTarget {
   taskId: string;
@@ -412,6 +412,13 @@ async function applyStatus(target: LinkedTarget, newStatus: unknown, res: Respon
       data: { status: listStatus?.name ?? wanted },
       select: { id: true, title: true, status: true, assigneeId: true, listId: true, updatedAt: true },
     });
+
+    if (isOnHoldStatus(updated.status)) {
+      await cascadeParentOnHoldToSubtasks({
+        parentTaskId: target.taskId,
+        listId: target.listId,
+      }).catch(() => {});
+    }
 
     if (before?.status !== updated.status) {
       const actor = await getOrCreateVipScaleUser();
@@ -996,7 +1003,7 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
           JSON.stringify(updatedRevs),
           rec.taskId
         ).catch(() => { });
-        await invalidateCache(`task:${rec.taskId}`, 'task-map:data');
+        await invalidateCache(`task:${rec.taskId}`, 'task_map:all');
         if (isRedisReady()) {
           await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
         }
@@ -1052,7 +1059,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       body.sheetName ||
       body.assistant_name ||
       body.assistantName;
-    const maNameStr = rawMaName ? String(rawMaName).split('-')[0].trim() : null;
+    const maNameStr = rawMaName ? String(rawMaName).split(/\s+-\s+|\s+MA Daily Schedule/i)[0].trim() : null;
 
     // "if the user forgots to input time only the status or client it would mark as red a and an infinite logo time"
     const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);
@@ -1282,6 +1289,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             // Hold user's last inputted session throughout the day until 12:00 AM rollover
             await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
           }
+          await invalidateCache('task_map:all').catch(() => { });
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
           io.emit('task_map:updated', { maSession: sessionData });
@@ -1299,6 +1307,39 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           await cleanUpMaActiveUpworkSessions(maNameStr);
         }
       }
+
+      const normalizeSessionDateKey = (rawDate?: string | null): string | null => {
+        const raw = (rawDate || '').trim();
+        if (!raw) return null;
+        const ymd = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+        if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+        const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+        return raw;
+      };
+
+      const shouldSkipOlderRow = (
+        currentActiveRaw: string | null,
+        incomingRowNum: number,
+        incomingDateStr: string,
+        isIncomingLive: boolean
+      ): boolean => {
+        if (!currentActiveRaw || incomingRowNum <= 0) return false;
+        try {
+          const parsed = JSON.parse(currentActiveRaw);
+          const currentActiveRowNum = parsed?.rowNumber ? Number(parsed.rowNumber) : -1;
+          if (currentActiveRowNum <= 0 || incomingRowNum >= currentActiveRowNum) return false;
+          const existingDateKey = normalizeSessionDateKey(parsed?.date);
+          const incomingDateKey = normalizeSessionDateKey(incomingDateStr);
+          // Only compare row numbers within the same date; a new day or fresh sheet tab must not be blocked
+          if (existingDateKey && incomingDateKey && existingDateKey !== incomingDateKey) return false;
+          // An actively clocked-in row takes precedence over a completed/clocked-out row
+          if (parsed?.timeOut && isIncomingLive) return false;
+          return true;
+        } catch {
+          return false;
+        }
+      };
 
       // If user provided MA name and latest schedule input (day, time in/out, status) without a direct task card:
       // Prefill basic assumption and record as MA's latest session so Task Map can display it in the user's section
@@ -1337,20 +1378,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
         if (isRedisReady()) {
           const maKey = maNameStr.toLowerCase().trim();
-          let currentActiveRowNum = -1;
           const currentActiveRaw = await redis.hget('task_map:ma_active_sessions', maKey).catch(() => null);
-          if (currentActiveRaw) {
-            try {
-              const parsed = JSON.parse(currentActiveRaw);
-              if (parsed.rowNumber) currentActiveRowNum = Number(parsed.rowNumber);
-            } catch (_) { }
-          }
-
-          isOlderRowEdit = incomingRowNum > 0 && currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum;
+          isOlderRowEdit = shouldSkipOlderRow(currentActiveRaw, incomingRowNum, sessionDate, sessionData.active);
 
           if (!isOlderRowEdit) {
             // Hold user's last inputted session throughout the day until 12:00 AM rollover
             await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(sessionData)).catch(() => { });
+            await invalidateCache('task_map:all').catch(() => { });
             io.emit('ma:session_updated', sessionData);
             io.emit('task_map:ma_progress_changed', sessionData);
             io.emit('task_map:updated', {
@@ -1421,7 +1455,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 JSON.stringify(filteredRevs),
                 staleRec.taskId
               );
-              await invalidateCache(`task:${staleRec.taskId}`, 'task-map:data');
+              await invalidateCache(`task:${staleRec.taskId}`, 'task_map:all');
               const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
               io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
               io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
@@ -1611,7 +1645,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               JSON.stringify(updatedReviews),
               otherRec.taskId
             );
-            await invalidateCache(`task:${otherRec.taskId}`, 'task-map:data');
+            await invalidateCache(`task:${otherRec.taskId}`, 'task_map:all');
             const newProgress = updatedReviews.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
             io.emit('task:progress_updated', {
               taskId: otherRec.taskId,
@@ -1631,19 +1665,32 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Also update MA's latest active session in Redis for Task Map display
     if (maNameStr) {
       const maKey = maNameStr.toLowerCase().trim();
-      let currentActiveRowNum = -1;
-      if (isRedisReady()) {
+      const sessionDateStr = date ? String(date).trim() : new Date().toISOString().split('T')[0];
+      const incomingIsLive = !cleanTimeOut && Boolean(cleanTimeIn);
+      const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
+      let isOlderRowEdit = false;
+      if (isRedisReady() && incomingRowNum > 0) {
         const currentActiveRaw = await redis.hget('task_map:ma_active_sessions', maKey).catch(() => null);
         if (currentActiveRaw) {
           try {
             const parsed = JSON.parse(currentActiveRaw);
-            if (parsed.rowNumber) currentActiveRowNum = Number(parsed.rowNumber);
+            const currentActiveRowNum = parsed?.rowNumber ? Number(parsed.rowNumber) : -1;
+            const parseDateKey = (r?: string | null) => {
+              const s = (r || '').trim();
+              if (!s) return null;
+              const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+              if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+              const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+              if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+              return s;
+            };
+            const sameDate = !parsed?.date || !sessionDateStr || parseDateKey(parsed.date) === parseDateKey(sessionDateStr);
+            if (currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum && sameDate && !(parsed?.timeOut && incomingIsLive)) {
+              isOlderRowEdit = true;
+            }
           } catch (_) { }
         }
       }
-
-      const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
-      const isOlderRowEdit = incomingRowNum > 0 && currentActiveRowNum > 0 && incomingRowNum < currentActiveRowNum;
 
       if (!isOlderRowEdit) {
         const maSession = {
@@ -1657,14 +1704,14 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
           taskName: task || 'General Task',
-          date: date ? String(date).trim() : new Date().toISOString().split('T')[0],
+          date: sessionDateStr,
           status: statusStr || (cleanTimeOut ? 'Done' : 'In progress'),
           isUpwork,
           isMissingTime,
           rowNumber: sheet_row ? Number(sheet_row) : undefined,
           startedAt: startedAtIso,
           updatedAt: progressObj.updatedAt,
-          active: !cleanTimeOut && Boolean(cleanTimeIn),
+          active: incomingIsLive,
         };
         if (isRedisReady()) {
           await redis.hset('task_map:ma_active_sessions', maKey, JSON.stringify(maSession)).catch(() => { });
@@ -1802,7 +1849,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     await updateTaskMapRecord(target.taskId, { pmReviews: reviewsList });
 
     // Invalidate caches
-    await invalidateCache(`task:${target.taskId}`, 'task-map:data');
+    await invalidateCache(`task:${target.taskId}`, 'task_map:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
     if (maNameStr) {

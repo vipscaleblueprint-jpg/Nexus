@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { flushSync } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { InviteModal } from '@/components/modals/InviteModal';
 import { AddInvitationModal } from '@/components/modals/AddInvitationModal';
@@ -164,6 +165,12 @@ export function getFolderColor(folder?: { id?: string; name?: string; color?: st
 }
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
+
+// Lazy-loaded on demand when the user clicks "+ Add Task" — never preloaded on mount.
+const GalaxyTaskModal = dynamic(
+  () => import('@/components/modals/GalaxyTaskModal').then((m) => m.GalaxyTaskModal),
+  { ssr: false }
+);
 
 // ─── Tree preferences (kept in this browser) ─────────────────────────────────
 // Which folders/spaces are open and how each one is sorted survive a reload.
@@ -943,12 +950,15 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, isMobileSidebarOpen, setMobileSidebarOpen, unreadNotifications, activeDashboardTab } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
-  // ── Resizable Nexus sub-sidebar (width persisted per user) ──
+  // ── Resizable & Collapsible Nexus sub-sidebar (persisted per user) ──
   const NEXUS_DEFAULT_WIDTH = 224;
   const NEXUS_MIN_WIDTH = 180;
   const NEXUS_MAX_WIDTH = 480;
+  const NEXUS_COLLAPSED_WIDTH = 48;
   const widthStorageKey = `nexus-sidebar-width:${currentUser?.id ?? 'anon'}`;
+  const nexusCollapseStorageKey = `nexus-subsidebar-collapsed:${currentUser?.id ?? 'anon'}`;
   const [nexusWidth, setNexusWidth] = useState(NEXUS_DEFAULT_WIDTH);
+  const [isNexusCollapsed, setIsNexusCollapsed] = useState(false);
   const [isResizingNexus, setIsResizingNexus] = useState(false);
   const nexusPanelRef = useRef<HTMLDivElement>(null);
 
@@ -956,6 +966,24 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
     const stored = parseInt(localStorage.getItem(widthStorageKey) || '', 10);
     setNexusWidth(!isNaN(stored) ? Math.min(NEXUS_MAX_WIDTH, Math.max(NEXUS_MIN_WIDTH, stored)) : NEXUS_DEFAULT_WIDTH);
   }, [widthStorageKey]);
+
+  useEffect(() => {
+    try {
+      setIsNexusCollapsed(localStorage.getItem(nexusCollapseStorageKey) === 'true');
+    } catch {
+      setIsNexusCollapsed(false);
+    }
+  }, [nexusCollapseStorageKey]);
+
+  const toggleNexusCollapsed = (next?: boolean) => {
+    setIsNexusCollapsed((prev) => {
+      const resolved = typeof next === 'boolean' ? next : !prev;
+      try {
+        localStorage.setItem(nexusCollapseStorageKey, String(resolved));
+      } catch {}
+      return resolved;
+    });
+  };
 
   // Sync collapsed state from localStorage on mount so state is identical after reload
   useEffect(() => {
@@ -1331,6 +1359,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [isGalaxyTaskModalOpen, setIsGalaxyTaskModalOpen] = useState(false);
   const [isAddInvitationOpen, setIsAddInvitationOpen] = useState(false);
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
@@ -1491,15 +1520,17 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               <Bot className="size-4 shrink-0 text-fuchsia-500" style={{ fill: 'currentColor' }} />
               {!collapsed && <span>DM Agent</span>}
             </a>
-            <div
-              title={collapsed ? 'Nexus' : undefined}
-              className={`flex items-center overflow-hidden rounded-md outline-none font-medium bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}
+            <button
+              type="button"
+              onClick={() => { if (isNexusCollapsed) toggleNexusCollapsed(false); }}
+              title={collapsed ? 'Nexus' : isNexusCollapsed ? 'Expand Nexus panel' : undefined}
+              className={`flex items-center overflow-hidden rounded-md outline-none font-medium bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 cursor-pointer ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm text-left'}`}
             >
               <div className="size-4 shrink-0 rounded bg-indigo-500 flex items-center justify-center">
                 <span className="text-[10px] font-bold text-white leading-none">N</span>
               </div>
               {!collapsed && <span className="flex-1 truncate">Nexus</span>}
-            </div>
+            </button>
             <button onClick={toggleTheme} title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
               {isLightMode ? (
                 <Sun className="size-4 shrink-0 text-yellow-500" />
@@ -1518,51 +1549,155 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 
       {/* ── SECONDARY Nexus Sub-Sidebar ───────────────────────── */}
-      <div
-        ref={nexusPanelRef}
-        style={{ width: nexusWidth }}
-        className="relative h-full bg-card border-r border-zinc-800 flex flex-col text-zinc-100 shrink-0"
-      >
-          {/* Resize handle — press and drag to widen, double-click to reset */}
+      {(() => {
+        const effectiveNexusCollapsed = isNexusCollapsed && !isMobileSidebarOpen;
+        return (
           <div
-            onPointerDown={startNexusResize}
-            onDoubleClick={resetNexusWidth}
-            title="Drag to resize · Double-click to reset"
-            className={`absolute top-0 -right-1 h-full w-2 cursor-col-resize z-30 group/resize`}
+            ref={nexusPanelRef}
+            style={{ width: effectiveNexusCollapsed ? NEXUS_COLLAPSED_WIDTH : nexusWidth }}
+            className={`relative h-full bg-card border-r border-zinc-800 flex flex-col text-zinc-100 shrink-0 ${
+              isResizingNexus ? '' : 'transition-[width] duration-200 ease-in-out'
+            }`}
           >
-            <div className={`mx-auto h-full w-0.5 transition-colors ${isResizingNexus ? 'bg-indigo-500' : 'bg-transparent group-hover/resize:bg-indigo-500/70'}`} />
-          </div>
-          {/* Nexus header */}
-          <div className="flex h-[60px] items-center px-3 shrink-0 border-b border-zinc-800 gap-2 justify-between">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
-              <span className="text-[9px] font-bold text-white">N</span>
+            {/* Resize handle — press and drag to widen, double-click to reset */}
+            {!effectiveNexusCollapsed && (
+              <div
+                onPointerDown={startNexusResize}
+                onDoubleClick={resetNexusWidth}
+                title="Drag to resize · Double-click to reset"
+                className="absolute top-0 -right-1 h-full w-2 cursor-col-resize z-30 group/resize"
+              >
+                <div className={`mx-auto h-full w-0.5 transition-colors ${isResizingNexus ? 'bg-indigo-500' : 'bg-transparent group-hover/resize:bg-indigo-500/70'}`} />
+              </div>
+            )}
+
+            {/* Nexus header */}
+            <div className={`flex h-[60px] items-center shrink-0 border-b border-zinc-800 gap-2 ${effectiveNexusCollapsed ? 'justify-center px-1.5' : 'px-3 justify-between'}`}>
+              {effectiveNexusCollapsed ? (
+                <button
+                  type="button"
+                  onClick={() => toggleNexusCollapsed(false)}
+                  title="Expand Nexus sidebar"
+                  aria-label="Expand Nexus sidebar"
+                  className="hidden md:inline-flex items-center justify-center size-8 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-accent transition-colors cursor-pointer"
+                >
+                  <PanelLeftOpen className="size-4" />
+                </button>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
+                      <span className="text-[9px] font-bold text-white">N</span>
+                    </div>
+                    <span className="font-semibold text-sm truncate">Nexus</span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleNexusCollapsed(true)}
+                      title="Collapse Nexus sidebar"
+                      aria-label="Collapse Nexus sidebar"
+                      className="hidden md:inline-flex items-center justify-center size-7 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-accent transition-colors cursor-pointer"
+                    >
+                      <PanelLeftClose className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMobileSidebarOpen(false)}
+                      className="nexus-drawer-close-btn md:hidden"
+                      title="Close navigation"
+                      aria-label="Close navigation"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
-            <span className="font-semibold text-sm truncate">Nexus</span>
-            </div>
+
+            {/* Nexus nav */}
+            {effectiveNexusCollapsed ? (
+              <div className="flex-1 overflow-y-auto px-1.5 py-2 flex flex-col items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsGalaxyTaskModalOpen(true)}
+                  title="Add Task via Galaxy"
+                  className="flex items-center justify-center size-8 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-sm transition-all cursor-pointer"
+                >
+                  <Plus className="size-4" />
+                </button>
+                <Link
+                  href="/activity"
+                  onClick={() => {
+                    if (pathname === '/activity') {
+                      window.dispatchEvent(new CustomEvent('clear_activity_task'));
+                    }
+                  }}
+                  title={unreadNotifications > 0 ? `Activity (${unreadNotifications > 99 ? '99+' : unreadNotifications} unread)` : 'Activity'}
+                  className={`relative flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground ${
+                    pathname === '/activity' ? 'bg-accent text-accent-foreground' : 'text-zinc-400'
+                  }`}
+                >
+                  <Activity className="size-4" />
+                  {unreadNotifications > 0 && (
+                    <span className="absolute top-1 right-1 size-2 rounded-full bg-pink-500" />
+                  )}
+                </Link>
+                <Link
+                  href="/activity/priorities"
+                  title="Priorities Journal"
+                  className={`flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground ${
+                    pathname.startsWith('/activity/priorities') ? 'bg-accent text-accent-foreground' : 'text-zinc-400'
+                  }`}
+                >
+                  <Target className="size-4 text-rose-500" />
+                </Link>
+                <Link
+                  href="/activity/task-map"
+                  title="Task Map"
+                  onClick={() => {
+                    if (pathname?.startsWith('/activity/task-map') || pathname?.startsWith('/task-map')) {
+                      window.dispatchEvent(new CustomEvent('task_map:reload'));
+                    }
+                  }}
+                  className={`flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground ${
+                    pathname.startsWith('/activity/task-map') || pathname.startsWith('/task-map') ? 'bg-accent text-accent-foreground' : 'text-zinc-400'
+                  }`}
+                >
+                  <Map className="size-4 text-sky-400" />
+                </Link>
+                <Link
+                  href="/activity/launch-map"
+                  title="Launch Map"
+                  className={`flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground ${
+                    pathname.startsWith('/activity/launch-map') || pathname.startsWith('/launch-map') ? 'bg-accent text-accent-foreground' : 'text-zinc-400'
+                  }`}
+                >
+                  <Rocket className="size-4 text-indigo-400" />
+                </Link>
+                <div className="w-6 border-t border-zinc-800 my-1" />
+                <button
+                  type="button"
+                  onClick={() => toggleNexusCollapsed(false)}
+                  title="Expand Spaces & Lists"
+                  className="flex items-center justify-center size-8 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-accent transition-colors cursor-pointer"
+                >
+                  <FolderIcon className="size-4" />
+                </button>
+              </div>
+            ) : (
+            <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
             <button
               type="button"
-              onClick={() => setMobileSidebarOpen(false)}
-              className="nexus-drawer-close-btn md:hidden"
-              title="Close navigation"
-              aria-label="Close navigation"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-
-          {/* Nexus nav */}
-          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
-            <a
-              href={`${VIPSCALE_BASE}/protected/galaxy-task`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full py-2 px-3 mb-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-medium text-xs sm:text-sm shadow-sm hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer group select-none"
+              onClick={() => setIsGalaxyTaskModalOpen(true)}
+              className="flex items-center justify-center w-full py-2 px-3 mb-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-medium text-xs sm:text-sm shadow-sm hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer group select-none"
               title="Add Task via Galaxy"
             >
-              <Plus className="size-4 shrink-0 transition-transform group-hover:rotate-90 duration-200" />
-              <span>Add Task</span>
-            </a>
+              <span className="relative inline-flex items-center">
+                <Plus className="size-4 shrink-0 absolute right-full mr-1.5 transition-transform group-hover:rotate-90 duration-200" />
+                <span>Add Task</span>
+              </span>
+            </button>
             <Link
               id="sidebar-activity-link"
               href="/activity"
@@ -1595,6 +1730,11 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               </Link>
               <Link
                 href="/activity/task-map"
+                onClick={() => {
+                  if (pathname?.startsWith('/activity/task-map') || pathname?.startsWith('/task-map')) {
+                    window.dispatchEvent(new CustomEvent('task_map:reload'));
+                  }
+                }}
                 className={`flex items-center gap-2 overflow-hidden rounded-md p-2 text-sm cursor-pointer transition-colors hover:bg-accent hover:text-accent-foreground ${
                   pathname.startsWith('/activity/task-map') || pathname.startsWith('/task-map') ? 'bg-accent text-accent-foreground font-medium' : 'text-zinc-100'
                 }`}
@@ -1702,21 +1842,33 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               </DropIndicatorContext.Provider>
             </DndContext>
             
-          </div>
+            </div>
+            )}
 
-          {/* Nexus footer */}
-          <div className="border-t border-zinc-800 px-2 py-2 shrink-0">
-            <button
-              onClick={() => { if (currentUser?.systemRole === 'ADMIN') setIsAddInvitationOpen(true); else setIsInviteOpen(true); }}
-              className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <UserPlus className="size-4 shrink-0 text-green-500" />
-              <span>Invite</span>
-            </button>
+            {/* Nexus footer */}
+            <div className={`border-t border-zinc-800 shrink-0 ${effectiveNexusCollapsed ? 'px-1.5 py-2 flex justify-center' : 'px-2 py-2'}`}>
+              <button
+                onClick={() => { if (currentUser?.systemRole === 'ADMIN') setIsAddInvitationOpen(true); else setIsInviteOpen(true); }}
+                title={effectiveNexusCollapsed ? 'Invite' : undefined}
+                className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer ${
+                  effectiveNexusCollapsed ? 'justify-center size-8 p-0' : 'w-full gap-2 p-2 text-sm'
+                }`}
+              >
+                <UserPlus className="size-4 shrink-0 text-green-500" />
+                {!effectiveNexusCollapsed && <span>Invite</span>}
+              </button>
+            </div>
           </div>
-        </div>
+        );
+      })()}
       
       {/* Modals */}
+      {isGalaxyTaskModalOpen && (
+        <GalaxyTaskModal
+          isOpen={isGalaxyTaskModalOpen}
+          onClose={() => setIsGalaxyTaskModalOpen(false)}
+        />
+      )}
       <InviteModal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} />
       <AddInvitationModal isOpen={isAddInvitationOpen} onClose={() => setIsAddInvitationOpen(false)} onSuccess={() => {}} />
       <CreateSpaceModal isOpen={isCreateSpaceOpen} onClose={() => setIsCreateSpaceOpen(false)} onSuccess={loadSpaces} />

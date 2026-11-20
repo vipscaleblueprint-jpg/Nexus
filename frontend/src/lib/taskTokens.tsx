@@ -238,10 +238,17 @@ export function isSystemUser(user: any): boolean {
 
 export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[], teams?: any[]): any[] {
   if (!roles || roles.length === 0) return [];
+  const teamById = new Map<string, any>();
   const teamNameToTeamId = new Map<string, string>();
   (teams || []).forEach((team: any) => {
+    if (team?.id) teamById.set(team.id, team);
     if (team?.name && team?.id) {
-      teamNameToTeamId.set(team.name.toLowerCase().trim(), team.id);
+      const lower = team.name.toLowerCase().trim();
+      teamNameToTeamId.set(lower, team.id);
+      const stripped = lower.replace(/\s+team$/i, '').trim();
+      if (stripped && !teamNameToTeamId.has(stripped)) {
+        teamNameToTeamId.set(stripped, team.id);
+      }
     }
   });
 
@@ -249,15 +256,43 @@ export function resolveUsersFromRoleRestrictions(roles?: string[], users?: any[]
     if (isSystemUser(u)) return false;
     const userRoles = (u.roles || []) as string[];
     const userTeamId = u.teamId || u.team?.id;
+    const userTeam = (userTeamId ? teamById.get(userTeamId) : null) || u.team;
+    const teamRoleNames: string[] = (userTeam?.teamRoles || []).map((tr: any) => tr?.name).filter(Boolean);
+
     return roles.some((role: string) => {
-      // 1. Direct role match on user's assigned roles
+      // 1. Direct role match on user's DB roles
       if (userRoles.some((ur: string) => matchesRole(ur, role))) return true;
       // 2. Generic systemRole match (e.g. role is "ADMIN" and user is ADMIN)
       if (u.systemRole && matchesRole(u.systemRole, role)) return true;
-      // 3. Whole-team match (only if the role matches the entire team's name, e.g. "Dev Team")
-      const matchedTeamId = teamNameToTeamId.get(role.toLowerCase().trim());
+      // 3. Whole-team match (e.g. "Design Team" or "Design" matching team name)
+      const roleLower = role.toLowerCase().trim();
+      const roleStripped = roleLower.replace(/\s+team$/i, '').trim();
+      const matchedTeamId = teamNameToTeamId.get(roleLower) || teamNameToTeamId.get(roleStripped);
       if (matchedTeamId && userTeamId === matchedTeamId) return true;
+      // 4. Fallback: if user has no explicit user.roles, use their DB team's teamRoles
+      if (userRoles.length === 0 && teamRoleNames.some((tr: string) => matchesRole(tr, role))) return true;
       return false;
     });
   });
+}
+
+/**
+ * Resolves assignable users for a task's role restrictions, falling back to all non-system
+ * workspace users when no user or team in the database holds any of the restricted roles
+ * (e.g. assigning an MA to a "Design" task when no Design team exists).
+ */
+export function resolveAssignableUsersFromRoleRestrictions(
+  roles?: string[],
+  users?: any[],
+  teams?: any[]
+): { users: any[]; isFallbackNoMatchingRole: boolean } {
+  const nonSystemUsers = (users || []).filter((u: any) => !isSystemUser(u));
+  if (!roles || roles.length === 0) {
+    return { users: nonSystemUsers, isFallbackNoMatchingRole: false };
+  }
+  const matched = resolveUsersFromRoleRestrictions(roles, nonSystemUsers, teams);
+  if (matched.length === 0) {
+    return { users: nonSystemUsers, isFallbackNoMatchingRole: true };
+  }
+  return { users: matched, isFallbackNoMatchingRole: false };
 }

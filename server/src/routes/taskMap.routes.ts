@@ -9,6 +9,7 @@ import {
   updateTaskStatuses,
   claimTask,
   assignTaskMapTask,
+  transferTaskMapTask,
   resetColumnTasksHandler,
   handlePmReviewAction,
   runRollover,
@@ -48,6 +49,7 @@ taskMapRouter.put('/shifts', updateShifts);
 taskMapRouter.patch('/tasks/:id/statuses', updateTaskStatuses);
 taskMapRouter.patch('/tasks/:id/claim', claimTask);
 taskMapRouter.patch('/tasks/:id/assign', assignTaskMapTask);
+taskMapRouter.post('/tasks/:id/transfer', transferTaskMapTask);
 taskMapRouter.post('/columns/:columnId/reset', resetColumnTasksHandler);
 taskMapRouter.post('/tasks/:id/pm-review', handlePmReviewAction);
 taskMapRouter.post('/rollover', runRollover);

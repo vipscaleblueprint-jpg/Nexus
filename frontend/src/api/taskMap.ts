@@ -184,11 +184,18 @@ export function isProgressLoggedToday(
   let key: string | null = null;
   const raw = (prog.date || '').trim();
   const sheet = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const ymdSlash = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
   if (sheet) {
     key = `${sheet[3]}-${sheet[1].padStart(2, '0')}-${sheet[2].padStart(2, '0')}`;
+  } else if (ymdSlash) {
+    key = `${ymdSlash[1]}-${ymdSlash[2].padStart(2, '0')}-${ymdSlash[3].padStart(2, '0')}`;
   } else if (raw) {
-    key = getManilaDateKey(raw);
-  } else if (prog.updatedAt) {
+    // Parse text dates (e.g. "Nov 20, 2026") at noon when no time component is present to avoid midnight timezone shifts
+    const hasTime = /\d{1,2}:\d{2}/.test(raw);
+    const parsed = hasTime ? new Date(raw) : new Date(`${raw} 12:00:00`);
+    key = !isNaN(parsed.getTime()) ? getManilaDateKey(parsed) : getManilaDateKey(raw);
+  }
+  if (!key && prog.updatedAt) {
     key = getManilaDateKey(prog.updatedAt);
   }
   return !!key && key === today;
@@ -523,13 +530,16 @@ export function applyOptimisticTaskMapAssignment(
     ...(task.assignees || []).filter((u: any) => u && u.id !== targetUser.id),
   ];
 
+  const sameWorkerProgress = Boolean(
+    task.progress?.maName &&
+    targetUser.name &&
+    task.progress.maName.trim().toLowerCase() === targetUser.name.trim().toLowerCase()
+  );
   const nextProgress =
     mode === 'IN_PROGRESS'
-      ? {
-        ...(task.progress || {}),
-        maName: targetUser.name || task.progress?.maName || 'Team Member',
-        timeOut: null,
-      }
+      ? sameWorkerProgress
+        ? task.progress
+        : null
       : task.progress
         ? {
           ...task.progress,
@@ -655,6 +665,8 @@ export interface TaskMapDataResponse {
   pmUsers: any[];
   allUsers?: any[];
   shiftUsers?: ShiftUser[];
+  workspaceRoles?: Array<{ id: string; name: string; color?: string | null }>;
+  workspaceTeams?: any[];
   activeUpworkSessions?: UpworkSession[];
   upworkClients?: string[];
   upworkProjectClients?: string[];
@@ -662,14 +674,17 @@ export interface TaskMapDataResponse {
 }
 
 export const taskMapApi = {
-  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string }): Promise<TaskMapDataResponse> => {
+  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<TaskMapDataResponse> => {
     const q = new URLSearchParams();
     if (params?.shift) q.set('shift', params.shift);
     if (params?.date) q.set('date', params.date);
     if (params?.client) q.set('client', params.client);
     q.set('_t', String(Date.now()));
     const queryString = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`);
+    return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
+      signal: params?.signal,
+      timeoutMs: params?.timeoutMs ?? 25000,
+    });
   },
 
   getOptions: async (): Promise<{ success: boolean; options: TaskMapOption[] }> => {
@@ -748,6 +763,21 @@ export const taskMapApi = {
       return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/assign`, {
         method: 'PATCH',
         body: JSON.stringify({ assigneeId, mode }),
+      });
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
+  },
+
+  transferTask: async (
+    taskId: string,
+    targetUserId: string
+  ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
+    markTaskSavingToDb(taskId, true);
+    try {
+      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/transfer`, {
+        method: 'POST',
+        body: JSON.stringify({ targetUserId }),
       });
     } finally {
       markTaskSavingToDb(taskId, false);
@@ -975,22 +1005,37 @@ export interface AuditorRoleOption {
   fullRole: string;
 }
 
-export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] = []): AuditorRoleOption[] {
+export function extractAuditorRoles(
+  workspaceTeams: any[] = [],
+  allUsers: any[] = [],
+  workspaceRoles: any[] = []
+): AuditorRoleOption[] {
   const roleNameMap = new Map<string, string>();
 
-  // 1. Discover all teamRoles from teams with "audit" in the name (e.g. "Audit Team")
+  // 1. Discover all teamRoles from DB teams with "audit" in the name (e.g. "Audit Team") or audit role names
   for (const team of workspaceTeams || []) {
-    if (/audit/i.test(team?.name || '')) {
-      for (const tr of team.teamRoles || []) {
-        if (tr?.name && typeof tr.name === 'string') {
-          const canonical = tr.name.trim();
+    const isAuditTeam = /audit/i.test(team?.name || '');
+    for (const tr of team.teamRoles || []) {
+      if (tr?.name && typeof tr.name === 'string') {
+        const canonical = tr.name.trim();
+        if (isAuditTeam || /audit/i.test(canonical)) {
           roleNameMap.set(canonical.toLowerCase(), canonical);
         }
       }
     }
   }
 
-  // 2. Discover roles from allUsers where role includes "audit" or "auditor"
+  // 2. Discover DB WorkspaceRoles with "audit"
+  for (const wr of workspaceRoles || []) {
+    if (wr?.name && typeof wr.name === 'string' && /audit/i.test(wr.name.trim())) {
+      const canonical = wr.name.trim();
+      if (!roleNameMap.has(canonical.toLowerCase())) {
+        roleNameMap.set(canonical.toLowerCase(), canonical);
+      }
+    }
+  }
+
+  // 3. Discover roles from allUsers where role includes "audit" or "auditor"
   for (const u of allUsers || []) {
     for (const r of u?.roles || []) {
       if (typeof r === 'string' && /audit/i.test(r.trim())) {
@@ -1002,10 +1047,14 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
     }
   }
 
-  // Fallbacks if DB queries haven't loaded yet
-  const standardAuditorRoles = ['UI UX Auditor', 'Design Auditor', 'Instruction Auditor', 'Funnel Auditor'];
-  for (const r of standardAuditorRoles) {
-    if (!roleNameMap.has(r.toLowerCase())) {
+  // Initial pre-fetch fallback only before DB teams/roles/users arrive
+  if (
+    roleNameMap.size === 0 &&
+    workspaceTeams.length === 0 &&
+    allUsers.length === 0 &&
+    (workspaceRoles || []).length === 0
+  ) {
+    for (const r of ['UI UX Auditor', 'Design Auditor', 'Instruction Auditor', 'Funnel Auditor']) {
       roleNameMap.set(r.toLowerCase(), r);
     }
   }
@@ -1048,22 +1097,41 @@ export function extractAuditorRoles(workspaceTeams: any[] = [], allUsers: any[] 
   return options;
 }
 
-export function extractDeveloperRoles(workspaceTeams: any[] = [], allUsers: any[] = []): AuditorRoleOption[] {
+export function extractDeveloperRoles(
+  workspaceTeams: any[] = [],
+  allUsers: any[] = [],
+  workspaceRoles: any[] = []
+): AuditorRoleOption[] {
   const roleNameMap = new Map<string, string>();
 
-  // 1. Discover all teamRoles from teams with "dev" or "develop" in the name (e.g. "Dev Team", "Dev Management Team")
+  // 1. Discover all teamRoles from DB teams with "dev" or "develop" in the name (e.g. "Dev Team", "Dev Management Team")
   for (const team of workspaceTeams || []) {
-    if (/\bdev\b|develop/i.test(team?.name || '')) {
-      for (const tr of team.teamRoles || []) {
-        if (tr?.name && typeof tr.name === 'string') {
-          const canonical = tr.name.trim();
+    const isDevTeam = /\bdev\b|develop/i.test(team?.name || '');
+    for (const tr of team.teamRoles || []) {
+      if (tr?.name && typeof tr.name === 'string') {
+        const canonical = tr.name.trim();
+        if (isDevTeam || /\bdev\b|develop|back-?end|front-?end|full-?stack|dev\s*ops/i.test(canonical)) {
           roleNameMap.set(canonical.toLowerCase(), canonical);
         }
       }
     }
   }
 
-  // 2. Discover roles from allUsers where role includes dev-related keywords
+  // 2. Discover DB WorkspaceRoles with dev-related keywords
+  for (const wr of workspaceRoles || []) {
+    if (
+      wr?.name &&
+      typeof wr.name === 'string' &&
+      /\bdev\b|develop|back-?end|front-?end|full-?stack|dev\s*ops/i.test(wr.name.trim())
+    ) {
+      const canonical = wr.name.trim();
+      if (!roleNameMap.has(canonical.toLowerCase())) {
+        roleNameMap.set(canonical.toLowerCase(), canonical);
+      }
+    }
+  }
+
+  // 3. Discover roles from allUsers where role includes dev-related keywords
   for (const u of allUsers || []) {
     for (const r of u?.roles || []) {
       if (
@@ -1078,10 +1146,14 @@ export function extractDeveloperRoles(workspaceTeams: any[] = [], allUsers: any[
     }
   }
 
-  // Fallbacks if DB queries haven't loaded yet
-  const standardDevRoles = ['Back-end Developer', 'Dev Ops', 'Developer', 'Harmony', 'Dev Project Manager'];
-  for (const r of standardDevRoles) {
-    if (!roleNameMap.has(r.toLowerCase())) {
+  // Initial pre-fetch fallback only before DB teams/roles/users arrive
+  if (
+    roleNameMap.size === 0 &&
+    workspaceTeams.length === 0 &&
+    allUsers.length === 0 &&
+    (workspaceRoles || []).length === 0
+  ) {
+    for (const r of ['Back-end Developer', 'Dev Ops', 'Developer', 'Harmony', 'Dev Project Manager']) {
       roleNameMap.set(r.toLowerCase(), r);
     }
   }
@@ -1095,12 +1167,67 @@ export function extractDeveloperRoles(workspaceTeams: any[] = [], allUsers: any[
   for (const role of sortedRoles) {
     options.push({
       key: role,
-      label: ROLE_SHORT_NAMES[role] || role,
+      label: formatRoleShortLabel(role),
       fullRole: role,
     });
   }
 
   return options;
+}
+
+export const ADMIN_LIST_NAMES = new Set([
+  'admin | jenesia red',
+  'harmony',
+  'jenesia red',
+  'jenesia red | personal',
+  'snaply',
+  'vip scale',
+  'xfnite',
+]);
+
+const HIDDEN_DEFAULT_FOLDER_KEYWORDS = [
+  'admin',
+  'dormant',
+  'startups',
+  'human resource',
+];
+
+/**
+ * Returns true if a task belongs to Admin, Dormant Clients, Startups, or Human Resource
+ * folders (or known Admin lists), which are hidden from Available Tasks by default.
+ */
+export function isTaskUnderAdmin(task?: Pick<TaskMapItem, 'isAdminTask' | 'list'> | null): boolean {
+  if (!task) return false;
+  if (task.isAdminTask) return true;
+  const folderName = (task.list?.folder?.name || '').trim().toLowerCase();
+  const listName = (task.list?.name || '').trim().toLowerCase();
+  return (
+    folderName === 'admin' ||
+    HIDDEN_DEFAULT_FOLDER_KEYWORDS.some((kw) => folderName.includes(kw)) ||
+    listName === 'admin' ||
+    ADMIN_LIST_NAMES.has(listName)
+  );
+}
+
+/**
+ * Returns true when a task has spreadsheet input recorded for an MA
+ * (logged today, recently active without timeOut, or present on a historical snapshot).
+ */
+export function hasSpreadsheetTaskInput(
+  task?: TaskMapItem | null,
+  options?: { isHistory?: boolean; now?: Date }
+): boolean {
+  const prog = task?.progress;
+  if (!prog?.maName) return false;
+  if (!prog.timeIn && !prog.timeOut && !prog.isMissingTime) return false;
+  if (options?.isHistory) return true;
+  const now = options?.now ?? new Date();
+  const isRecentActive = Boolean(
+    prog.timeIn &&
+    !prog.timeOut &&
+    (!prog.updatedAt || now.getTime() - new Date(prog.updatedAt).getTime() <= 14 * 60 * 60 * 1000)
+  );
+  return isProgressLoggedToday(prog, now) || isRecentActive;
 }
 
 export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean {
@@ -1120,6 +1247,40 @@ export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean 
     if (!normUr) return false;
     return devRoleNorms.some((dr) => dr === normUr || normUr.includes(dr) || dr.includes(normUr));
   });
+}
+
+const DYNAMIC_ROLE_BADGE_PALETTE = [
+  'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/70 dark:text-pink-300 dark:border-pink-800/60',
+  'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/70 dark:text-orange-300 dark:border-orange-800/60',
+  'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60',
+  'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/70 dark:text-cyan-300 dark:border-cyan-800/60',
+  'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/70 dark:text-emerald-300 dark:border-emerald-800/60',
+  'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/70 dark:text-violet-300 dark:border-violet-800/60',
+  'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-950/70 dark:text-fuchsia-300 dark:border-fuchsia-800/60',
+  'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/70 dark:text-sky-300 dark:border-sky-800/60',
+  'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950/70 dark:text-indigo-300 dark:border-indigo-800/60',
+  'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950/70 dark:text-teal-300 dark:border-teal-800/60',
+  'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/70 dark:text-purple-300 dark:border-purple-800/60',
+  'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/70 dark:text-rose-300 dark:border-rose-800/60',
+];
+
+export function formatRoleShortLabel(roleName: string): string {
+  const clean = (roleName || '').trim();
+  if (!clean) return '';
+  if (ROLE_SHORT_NAMES[clean]) return ROLE_SHORT_NAMES[clean];
+  const ciMatch = Object.entries(ROLE_SHORT_NAMES).find(
+    ([k]) => k.toLowerCase() === clean.toLowerCase()
+  );
+  if (ciMatch) return ciMatch[1];
+
+  return clean
+    .replace(/\bproject\s+manager\b/gi, 'PM')
+    .replace(/\bproduction\b/gi, 'Prod')
+    .replace(/\bdeveloper\b/gi, 'Dev')
+    .replace(/\bauditor\b/gi, 'Aud')
+    .replace(/\bstrategist\b/gi, 'Strat')
+    .replace(/\bgeneration\b/gi, 'Gen')
+    .trim();
 }
 
 export function getRoleBadgeClass(shortOrFullRole: string): string {
@@ -1148,30 +1309,90 @@ export function getRoleBadgeClass(shortOrFullRole: string): string {
   if (r.includes('cyber sec') || r.includes('cybersecurity')) return 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/70 dark:text-red-300 dark:border-red-800/60';
   if (r.includes('motion')) return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/70 dark:text-purple-300 dark:border-purple-800/60';
   if (r.includes('super admin') || r.includes('admin')) return 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/70 dark:text-rose-300 dark:border-rose-800/60';
-  return 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700/60';
+  if (!r || r === 'member') return 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700/60';
+
+  let hash = 0;
+  for (let i = 0; i < r.length; i++) {
+    hash = (hash * 31 + r.charCodeAt(i)) >>> 0;
+  }
+  return DYNAMIC_ROLE_BADGE_PALETTE[hash % DYNAMIC_ROLE_BADGE_PALETTE.length];
 }
 
-export function getUserRoleDefinition(user: any): UserRoleMapping & { badgeClass: string } {
-  const dbRoles: string[] = Array.isArray(user?.roles)
-    ? user.roles.filter(Boolean)
+export function getUserRoleDefinition(
+  user: any,
+  workspaceTeams: any[] = [],
+  workspaceRoles: any[] = []
+): UserRoleMapping & { badgeClass: string; teamName?: string | null; teamRoles?: string[] } {
+  // Build canonical DB role names from WorkspaceRole and TeamRole records
+  const canonicalRoleNames = new Map<string, string>();
+  for (const wr of workspaceRoles || []) {
+    if (wr?.name && typeof wr.name === 'string') {
+      canonicalRoleNames.set(wr.name.trim().toLowerCase(), wr.name.trim());
+    }
+  }
+  for (const team of workspaceTeams || []) {
+    for (const tr of team?.teamRoles || []) {
+      if (tr?.name && typeof tr.name === 'string') {
+        const key = tr.name.trim().toLowerCase();
+        if (!canonicalRoleNames.has(key)) canonicalRoleNames.set(key, tr.name.trim());
+      }
+    }
+  }
+
+  const matchedTeam =
+    (user?.teamId && (workspaceTeams || []).find((t: any) => t?.id === user.teamId)) ||
+    (user?.team?.id && (workspaceTeams || []).find((t: any) => t?.id === user.team.id)) ||
+    user?.team ||
+    null;
+
+  const teamName: string = matchedTeam?.name || user?.team?.name || '';
+  const dbTeamRoles: string[] = Array.isArray(matchedTeam?.teamRoles)
+    ? matchedTeam.teamRoles.map((tr: any) => tr?.name).filter(Boolean)
     : [];
 
-  const teamName: string = user?.team?.name || '';
-  let mainRole = dbRoles[0] || teamName;
+  for (const trName of dbTeamRoles) {
+    const key = trName.trim().toLowerCase();
+    if (!canonicalRoleNames.has(key)) canonicalRoleNames.set(key, trName.trim());
+  }
 
+  // Merge explicit DB user.roles (preserving roles[0] as Main Role) with DB canonical casing,
+  // falling back to DB teamRoles if user.roles is empty
+  const rawUserRoles: string[] = Array.isArray(user?.roles)
+    ? user.roles.filter((r: any) => typeof r === 'string' && r.trim())
+    : [];
+
+  const mergedRoles: string[] = [];
+  const seenRoles = new Set<string>();
+  const pushRole = (raw: string) => {
+    const trimmed = raw.trim();
+    const lower = trimmed.toLowerCase();
+    if (!lower || seenRoles.has(lower)) return;
+    seenRoles.add(lower);
+    mergedRoles.push(canonicalRoleNames.get(lower) || trimmed);
+  };
+
+  rawUserRoles.forEach(pushRole);
+  if (mergedRoles.length === 0) {
+    dbTeamRoles.forEach(pushRole);
+  }
+
+  let mainRole = mergedRoles[0] || teamName;
   if (!mainRole) {
     mainRole = user?.systemRole === 'ADMIN' ? 'Super Admin' : 'Member';
   }
 
-  const shortRole = ROLE_SHORT_NAMES[mainRole] || mainRole;
-  const secondaryRoles = dbRoles.length > 1 ? dbRoles.slice(1) : [];
+  const resolvedRoles = mergedRoles.length > 0 ? mergedRoles : [mainRole];
+  const shortRole = formatRoleShortLabel(mainRole) || mainRole;
+  const secondaryRoles = resolvedRoles.length > 1 ? resolvedRoles.slice(1) : [];
 
   return {
     mainRole,
     mainRoleShort: shortRole,
-    roles: dbRoles.length ? dbRoles : [mainRole],
+    roles: resolvedRoles,
     secondaryRoles,
-    badgeClass: getRoleBadgeClass(shortRole || mainRole),
+    badgeClass: getRoleBadgeClass(mainRole),
+    teamName: teamName || null,
+    teamRoles: dbTeamRoles,
   };
 }
 
@@ -1375,10 +1596,13 @@ export function toCanonicalTaskStatus(status?: string | null): string {
 
 /**
  * Returns innate default sub-statuses when a task has no explicit Task Map sub-status.
- * Active Task Map tasks innately default to ['Available Task'], while Auditor queue
- * (IN REVIEW / CHECKING) and closed tasks stay clean unless explicitly tagged.
+ * Unassigned active Task Map pool tasks default to ['Available Task'], while assigned column tasks,
+ * Auditor queue (IN REVIEW / CHECKING), and closed tasks stay clean unless explicitly tagged.
  */
-export function getDefaultTaskMapSubStatuses(taskStatus?: string | null): string[] {
+export function getDefaultTaskMapSubStatuses(
+  taskStatus?: string | null,
+  options?: { isAssigned?: boolean }
+): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
   if (canonical === 'CRM') return ['To send'];
   if (canonical === 'WAITING') return ['Waiting'];
@@ -1392,6 +1616,9 @@ export function getDefaultTaskMapSubStatuses(taskStatus?: string | null): string
     canonical === 'RESOLVED' ||
     canonical === 'CANCELLED'
   ) {
+    return [];
+  }
+  if (options?.isAssigned) {
     return [];
   }
   return ['Available Task'];
@@ -1604,7 +1831,7 @@ export function attachDragToScroll(container: HTMLElement): () => void {
 
     if (
       target.closest('button, input, textarea, select, option, label, a') ||
-      target.closest('[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle]') ||
+      target.closest('[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle], [data-in-progress-dropzone], [data-no-drag-scroll]') ||
       target.closest('[role="dialog"], [role="menu"], [data-portal], [draggable="true"], [aria-roledescription="draggable"], .no-board-drag, .no-drag-scroll')
     ) {
       return;

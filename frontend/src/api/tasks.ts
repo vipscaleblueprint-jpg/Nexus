@@ -10,6 +10,43 @@ export interface MyAuditItem {
   subtask: { id: string; title: string; status?: string; completed?: boolean } | null;
 }
 
+export interface GalaxyClientOption {
+  id: string;
+  name: string;
+  clickup_id: string | null;
+  vps: string | null;
+}
+
+export interface GalaxyParentTaskOption {
+  clickup_task_link: string;
+  client_name: string;
+  task_name: string;
+  created_at?: string;
+}
+
+export interface GalaxyTaskPayload {
+  clients: {
+    name: string;
+    id: string | number;
+  };
+  prompt: string;
+  title?: string;
+  link?: string;
+  priority?: string;
+  complexity?: string;
+  task_link?: string;
+  goal?: string;
+}
+
+export interface GalaxyTaskResponse {
+  success?: boolean;
+  task_link?: string;
+  nexus_task_link?: string;
+  nexus_task_id?: string;
+  assigned_team?: string;
+  error?: string;
+}
+
 export const tasksApi = {
   async getTasks(params?: { lightweight?: boolean }): Promise<{ tasks: Task[] }> {
     // Default to lightweight=true — the global store only needs card-level fields.
@@ -203,6 +240,36 @@ export const tasksApi = {
   async duplicateToPending(id: string): Promise<{ task: Task }> {
     return apiClient<{ task: Task }>(`/api/tasks/${id}/duplicate-pending`, {
       method: 'POST',
+    });
+  },
+
+  async getGalaxyClients(): Promise<{ success: boolean; clients: GalaxyClientOption[] }> {
+    return apiClient<{ success: boolean; clients: GalaxyClientOption[] }>('/api/tasks/galaxy/clients', {
+      method: 'GET',
+      timeoutMs: 20000,
+    });
+  },
+
+  async getGalaxyParentTasks(): Promise<{ success: boolean; tasks: GalaxyParentTaskOption[] }> {
+    return apiClient<{ success: boolean; tasks: GalaxyParentTaskOption[] }>('/api/tasks/galaxy/parent-tasks', {
+      method: 'GET',
+      timeoutMs: 20000,
+    });
+  },
+
+  async createGalaxyTask(payload: GalaxyTaskPayload): Promise<GalaxyTaskResponse> {
+    return apiClient<GalaxyTaskResponse>('/api/tasks/galaxy/task', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 90000,
+    });
+  },
+
+  async createGalaxySubtask(payload: GalaxyTaskPayload): Promise<GalaxyTaskResponse> {
+    return apiClient<GalaxyTaskResponse>('/api/tasks/galaxy/subtask', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 90000,
     });
   },
 };

@@ -30,10 +30,10 @@ const BANNED_USER_AGENTS = [
   /node-fetch/i,
 ];
 
-// Simple in-memory rate limiter per IP (100 requests / minute)
+// Simple in-memory rate limiter per IP (600 requests / minute to accommodate shared office NAT IPs)
 const rateLimitMap = new Map<string, { count: number; expiresAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 120;
+const MAX_REQUESTS_PER_WINDOW = 600;
 
 // Expired entries are otherwise only replaced when the same IP comes back, so one-off visitors and scanners
 // would accumulate forever

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
@@ -20,6 +20,8 @@ import {
   isProgressLoggedToday,
   isDeveloperUser,
   attachDragToScroll,
+  isTaskUnderAdmin,
+  hasSpreadsheetTaskInput,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -57,12 +59,52 @@ export function doesProgressMatchUser(progMaName?: string | null, userName?: str
   return false;
 }
 
-import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2 } from 'lucide-react';
+export function findBestUserMatch<T extends { name?: string | null; email?: string | null }>(
+  progMaName: string | null | undefined,
+  users: T[],
+  predicate?: (u: T) => boolean
+): T | undefined {
+  if (!progMaName) return undefined;
+  const cleanMa = progMaName.trim().toLowerCase();
+  if (!cleanMa) return undefined;
+  const eligible = predicate ? users.filter(predicate) : users;
+
+  // 1. Exact full-name match
+  const exact = eligible.find((u) => (u.name || '').trim().toLowerCase() === cleanMa);
+  if (exact) return exact;
+
+  // 2. Exact email local-part match
+  const emailExact = eligible.find((u) => {
+    const local = (u.email || '').split('@')[0].trim().toLowerCase();
+    return Boolean(local && local === cleanMa);
+  });
+  if (emailExact) return emailExact;
+
+  // 3. Exact token / first-name match (prevents "Mae" matching "Ana Mae" before "Mae Santos")
+  const firstToken = eligible.find((u) => {
+    const parts = (u.name || '').trim().toLowerCase().split(/\s+/);
+    return parts.some((p) => p === cleanMa);
+  });
+  if (firstToken) return firstToken;
+
+  // 4. Fuzzy fallback
+  return eligible.find((u) => doesProgressMatchUser(progMaName, u.name));
+}
+
+import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2, ArrowRightLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { getCurrentLiveTime } from '@/lib/liveClock';
 import { getPriorityConfig } from '@/lib/priority';
-import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted } from '@/lib/taskTokens';
+import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted, isSystemUser } from '@/lib/taskTokens';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
+import {
+  canDragTaskMapCard,
+  canDropTaskMapCard,
+  canStartInProgressSlot,
+  canTransferTaskMapCard,
+  isOtherBoardWorkflowStatus,
+  resolveColumnCollapsedState,
+} from '@/lib/taskMapPermissions';
 import { resolveUsersFromRoleRestrictions } from '@/lib/taskTokens';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
@@ -70,7 +112,9 @@ import { ActionErrorModal, ActionErrorInfo } from '@/components/modals/ActionErr
 import {
   DndContext,
   DragOverlay,
-  closestCorners,
+  pointerWithin,
+  rectIntersection,
+  closestCenter,
   KeyboardSensor,
   PointerSensor,
   useSensor,
@@ -78,6 +122,7 @@ import {
   DragStartEvent,
   DragOverEvent,
   DragEndEvent,
+  CollisionDetection,
   useDroppable,
   useDraggable,
 } from '@dnd-kit/core';
@@ -99,6 +144,7 @@ interface Props {
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
   onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE') => Promise<void> | void;
+  onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   isHistory?: boolean;
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
@@ -188,7 +234,7 @@ export const isTaskLiveWorking = (task: TaskMapItem, userName?: string, now = ne
 
   // Synthetic assumption block representing assistant's open shift input
   if (task.isAssumptionBlock && task.progress?.timeIn && !task.progress?.timeOut && !task.progress?.isMissingTime) {
-    return true;
+    return !isStaleLiveSession(task.progress.timeIn, task.progress.date, now);
   }
 
   const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
@@ -275,12 +321,13 @@ const sortColumnTasks = (items: TaskMapItem[], userName?: string) => {
 // ---------------------------------------------------------------------------
 const DraggableTaskCard: React.FC<{
   task: TaskMapItem;
+  sourceUserId?: string | null;
   disabled?: boolean;
   children: React.ReactNode;
-}> = ({ task, disabled = false, children }) => {
+}> = memo(({ task, sourceUserId = null, disabled = false, children }) => {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
-    data: { task },
+    data: { task, sourceUserId },
     disabled,
   });
 
@@ -301,7 +348,7 @@ const DraggableTaskCard: React.FC<{
         ? 'opacity-25 scale-[0.98] border border-dashed border-zinc-700 rounded-xl bg-zinc-900/40 pointer-events-none'
         : disabled
           ? 'cursor-default'
-          : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
+          : 'cursor-grab active:cursor-grabbing'
         }`}
     >
       {isSaving && !isDragging && (
@@ -316,7 +363,7 @@ const DraggableTaskCard: React.FC<{
       {children}
     </div>
   );
-};
+});
 
 // ---------------------------------------------------------------------------
 // Droppable Column Wrapper (Matches KanbanBoard drop zone highlighting)
@@ -325,7 +372,7 @@ const DroppableColumn: React.FC<{
   id: string;
   children: React.ReactNode;
   className?: string;
-}> = ({ id, children, className }) => {
+}> = memo(({ id, children, className }) => {
   const { setNodeRef, isOver } = useDroppable({
     id,
   });
@@ -333,13 +380,44 @@ const DroppableColumn: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      className={`${className || ''} transition-all duration-200 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/25 shadow-xl shadow-blue-950/40 scale-[1.005]' : ''
+      className={`${className || ''} transition-colors duration-150 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/20 shadow-xl shadow-blue-950/30' : ''
         }`}
     >
       {children}
     </div>
   );
-};
+});
+
+// ---------------------------------------------------------------------------
+// Droppable wrapper for active In-Progress slot so dropping onto an occupied
+// top slot still reliably triggers IN_PROGRESS mode
+// ---------------------------------------------------------------------------
+const DroppableInProgressSlot: React.FC<{
+  userId: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}> = memo(({ userId, disabled = false, children }) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `in-progress-${userId}`,
+    data: {
+      type: 'in-progress-slot',
+      userId,
+    },
+    disabled,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-in-progress-dropzone="true"
+      className={`rounded-xl transition-colors duration-150 ${
+        isOver ? 'ring-2 ring-[#D04A7C] bg-[#D04A7C]/15 shadow-lg shadow-[#D04A7C]/20' : ''
+      }`}
+    >
+      {children}
+    </div>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Card Cut-Out Snapping Placeholder
@@ -349,9 +427,9 @@ const CardCutoutPlaceholder: React.FC<{
   task: TaskMapItem;
   targetName: string;
   isUnassign?: boolean;
-}> = ({ task, targetName, isUnassign }) => {
+}> = memo(({ task, targetName, isUnassign }) => {
   return (
-    <div className="p-3 bg-blue-500/10 border-2 border-dashed border-blue-400/90 rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all duration-150 ring-2 ring-blue-500/25 shadow-xl shadow-blue-950/50 animate-pulse my-1 pointer-events-none select-none">
+    <div className="p-3 bg-blue-500/10 border-2 border-dashed border-blue-400/90 rounded-xl min-h-[112px] flex items-stretch gap-3 ring-2 ring-blue-500/25 shadow-lg shadow-blue-950/40 my-1 pointer-events-none select-none">
       {/* Left: Ghost task info */}
       <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
         <div>
@@ -380,7 +458,7 @@ const CardCutoutPlaceholder: React.FC<{
       </div>
     </div>
   );
-};
+});
 
 // ---------------------------------------------------------------------------
 // Column Priority Filter Helpers & Dropdown
@@ -739,6 +817,210 @@ const ColumnPriorityDropdown: React.FC<{
   );
 };
 
+const CardTransferDropdown: React.FC<{
+  taskId: string;
+  currentAssigneeId?: string | null;
+  users: any[];
+  onTransfer: (targetUserId: string) => Promise<void> | void;
+}> = ({ currentAssigneeId, users, onTransfer }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  const calcPos = (rect: DOMRect) => {
+    const width = 232;
+    const height = 280;
+    let top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 10) {
+      top = Math.max(10, rect.top - height - 4);
+    }
+    let left = rect.left;
+    if (left + width > window.innerWidth - 10) {
+      left = Math.max(10, window.innerWidth - width - 10);
+    }
+    return { top, left };
+  };
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isOpen) {
+      setIsOpen(false);
+      setCoords(null);
+      setSearchQuery('');
+      return;
+    }
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setCoords(calcPos(rect));
+    setSearchQuery('');
+    setIsOpen(true);
+  };
+
+  useLayoutEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        triggerRef.current &&
+        !triggerRef.current.contains(e.target as Node) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+        setCoords(null);
+      }
+    };
+    const handleScrollOrResize = (e?: Event) => {
+      if (e && dropdownRef.current && dropdownRef.current.contains(e.target as Node)) return;
+      setIsOpen(false);
+      setCoords(null);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [isOpen]);
+
+  const filteredUsers = useMemo(() => {
+    const clean = searchQuery.trim().toLowerCase();
+    return users.filter((u) => {
+      if (!u || !u.id || isSystemUser(u)) return false;
+      if (!clean) return true;
+      return (u.name || '').toLowerCase().includes(clean) || (u.email || '').toLowerCase().includes(clean);
+    });
+  }, [users, searchQuery]);
+
+  return (
+    <div
+      className="relative inline-flex items-center shrink-0"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={handleToggle}
+        disabled={isSubmitting}
+        className={`inline-flex items-center justify-center size-5 rounded-md border transition-all cursor-pointer select-none ${
+          isOpen
+            ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/30'
+            : 'bg-blue-500/15 text-blue-400 border-blue-500/40 hover:bg-blue-500/25 hover:text-blue-200 hover:border-blue-400/70 shadow-xs'
+        }`}
+        title="Transfer to another MA (lands in To Do)"
+        aria-label="Transfer to..."
+      >
+        <ArrowRightLeft className="size-3 shrink-0" />
+      </button>
+
+      {isOpen &&
+        coords &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: `${coords.top}px`,
+              left: `${coords.left}px`,
+              zIndex: 999999,
+            }}
+            className="w-58 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-75"
+          >
+            <div className="px-2 pt-1 pb-1 border-b border-zinc-800/80 flex items-center justify-between">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                Transfer to...
+              </span>
+              <span className="text-[9px] text-zinc-500">Lands in To Do</span>
+            </div>
+
+            {users.length > 5 && (
+              <div className="px-1 pt-0.5">
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg">
+                  <Search className="size-3 text-zinc-500 shrink-0" />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search MA..."
+                    className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="max-h-52 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 p-0.5">
+              {filteredUsers.length === 0 ? (
+                <p className="text-[11px] text-zinc-500 italic text-center py-4">No matching MAs</p>
+              ) : (
+                filteredUsers.map((u) => {
+                  const isCurrent = Boolean(currentAssigneeId && currentAssigneeId === u.id);
+                  const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+                  const avatarBg = getAssigneeAvatarColor(u.name || 'U');
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      disabled={isCurrent || isSubmitting}
+                      onClick={async () => {
+                        setIsOpen(false);
+                        setCoords(null);
+                        setIsSubmitting(true);
+                        try {
+                          await onTransfer(u.id);
+                        } finally {
+                          setIsSubmitting(false);
+                        }
+                      }}
+                      className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors ${
+                        isCurrent
+                          ? 'bg-zinc-800/50 text-zinc-500 cursor-not-allowed'
+                          : 'text-zinc-200 hover:bg-zinc-800/80 hover:text-white cursor-pointer'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {u.avatarUrl ? (
+                          <img
+                            src={u.avatarUrl}
+                            alt={u.name}
+                            className="size-5 rounded-full object-cover shrink-0 border border-zinc-700/80"
+                          />
+                        ) : (
+                          <span
+                            className={`size-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${avatarBg}`}
+                          >
+                            {initials}
+                          </span>
+                        )}
+                        <span className="truncate font-medium">{u.name}</span>
+                      </div>
+                      {isCurrent && (
+                        <span className="text-[9px] uppercase font-semibold text-zinc-500 shrink-0">
+                          Current
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+};
+
 export const TaskMapBoardView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
@@ -756,6 +1038,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   clients = [],
   onTaskUpdate,
   onAssignTask,
+  onTransferTask,
   isHistory = false,
   search = '',
   trackFilter = 'ALL',
@@ -798,15 +1081,33 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return {};
     }
   });
+  const collapsedStorageKey = currentUser?.id
+    ? `nexus_taskmap_collapsed_columns_v2_${currentUser.id}`
+    : 'nexus_taskmap_collapsed_columns_v2';
+
   const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
     try {
-      const saved = localStorage.getItem('nexus_taskmap_collapsed_columns');
+      const key = currentUser?.id
+        ? `nexus_taskmap_collapsed_columns_v2_${currentUser.id}`
+        : 'nexus_taskmap_collapsed_columns_v2';
+      const saved = localStorage.getItem(key);
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
     }
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !currentUser?.id) return;
+    try {
+      const saved = localStorage.getItem(`nexus_taskmap_collapsed_columns_v2_${currentUser.id}`);
+      setCollapsedColumns(saved ? JSON.parse(saved) : {});
+    } catch {
+      setCollapsedColumns({});
+    }
+  }, [currentUser?.id]);
+
   const [actionError, setActionError] = useState<ActionErrorInfo | null>(null);
 
   // Low-frequency heartbeat (every 5 minutes) for 14h staleness boundary checks; active elapsed timers self-update via liveClock
@@ -832,9 +1133,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const toggleCollapseColumn = (columnId: string) => {
     setCollapsedColumns((prev) => {
-      const next = { ...prev, [columnId]: !prev[columnId] };
+      const currentlyCollapsed = resolveColumnCollapsedState(
+        columnId,
+        prev,
+        currentUser?.id,
+        isPmUser
+      );
+      const next = { ...prev, [columnId]: !currentlyCollapsed };
       try {
-        localStorage.setItem('nexus_taskmap_collapsed_columns', JSON.stringify(next));
+        localStorage.setItem(collapsedStorageKey, JSON.stringify(next));
       } catch (e) {
         console.error('Failed to save collapsed columns', e);
       }
@@ -924,23 +1231,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const effectiveShowAdmin = showAdminTasks !== undefined ? showAdminTasks : localShowAdmin;
 
-  // Helper to check if a task is under Admin folder
-  const isTaskUnderAdmin = (task: TaskMapItem) => {
-    if (task.isAdminTask) return true;
-    const folderName = (task.list?.folder?.name || '').toLowerCase().trim();
-    const listName = (task.list?.name || '').toLowerCase().trim();
-    const ADMIN_LIST_NAMES = new Set([
-      'admin | jenesia red',
-      'harmony',
-      'jenesia red',
-      'jenesia red | personal',
-      'snaply',
-      'vip scale',
-      'xfnite',
-    ]);
-    return folderName === 'admin' || folderName.includes('admin') || listName === 'admin' || ADMIN_LIST_NAMES.has(listName);
-  };
-
   // Filter tasks by Admin and Client visibility (default: both checked) and include Pending, Revision, Waiting, and On-hold statuses
   const displayPool = React.useMemo(() => {
     return availablePool.filter((t) => {
@@ -1013,15 +1303,37 @@ export const TaskMapBoardView: React.FC<Props> = ({
     });
   }, [availablePool, effectiveShowAdmin, selectedClients]);
 
-  // DnD sensors
+  // DnD sensors (memoized so DndContext never re-binds sensors during drag)
+  const pointerSensorOptions = useMemo(() => ({
+    activationConstraint: {
+      distance: 6,
+    },
+  }), []);
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5,
-      },
-    }),
+    useSensor(PointerSensor, pointerSensorOptions),
     useSensor(KeyboardSensor)
   );
+
+  // Pointer-first collision detection: prioritizes nested in-progress-<userId> dropzones over parent user-<userId> columns
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) {
+      const inProgressHits = pointerCollisions.filter((c) => String(c.id).startsWith('in-progress-'));
+      if (inProgressHits.length > 0) {
+        return inProgressHits;
+      }
+      return pointerCollisions;
+    }
+    const rectCollisions = rectIntersection(args);
+    if (rectCollisions.length > 0) {
+      const inProgressHits = rectCollisions.filter((c) => String(c.id).startsWith('in-progress-'));
+      if (inProgressHits.length > 0) {
+        return inProgressHits;
+      }
+      return rectCollisions;
+    }
+    return closestCenter(args);
+  }, []);
 
   // Helper to find full user profile
   const getUserProfile = (userId: string, fallbackUser?: any) => {
@@ -1055,15 +1367,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
     );
   };
 
-  // Helper to check if a task has an excluded status for user shift columns:
+  // Helper to check if a task has an excluded cadence status for user shift columns:
   // User columns must not show daily, monthly, weekly, or recurring tasks UNLESS an MA is actively working on it or has logged progress!
-  const isExcludedForUser = (task: TaskMapItem) => {
-    // CRITICAL: If an assistant has logged progress or is actively working on this task,
-    // NEVER exclude it! The worker must always see the task in their column regardless of its Weekly/Daily/Recurring status or assignee.
-    if (task.progress?.timeIn || task.progress?.maName) {
-      return false;
-    }
-
+  const isExcludedCadenceForUser = (task: TaskMapItem) => {
     const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
     const mapStatuses = (task.taskMap?.statuses || []).map((x: string) =>
       (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
@@ -1082,423 +1388,459 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
     };
 
-    const isOtherBoardWorkflow =
-      s === 'INREVIEW' ||
-      s === 'TOREVIEW' ||
-      s === 'REVIEW' ||
-      s === 'CHECKING' ||
-      s === 'INCHECKING' ||
-      s === 'WAITING' ||
-      s === 'CRM';
-
     return (
-      isOtherBoardWorkflow ||
       isExcludedStatus(s) ||
       !!(task as any)?.recurringConfig ||
       mapStatuses.some((st: string) => isExcludedStatus(st))
     );
   };
 
-  const userColumnsMap: Record<string, { user: any; tasks: TaskMapItem[] }> = {};
-
-  const isSystemAccount = (u: any) => {
-    const email = (u?.email || '').toLowerCase();
-    const name = (u?.name || '').toLowerCase();
-    return (
-      email.endsWith('@system.local') ||
-      name === 'clickup' ||
-      name === 'vip scale' ||
-      name === 'vipscale'
-    );
+  const isExcludedForUser = (task: TaskMapItem) => {
+    if (isOtherBoardWorkflowStatus(task)) return true;
+    if (task.progress?.timeIn || task.progress?.maName) {
+      return false;
+    }
+    return isExcludedCadenceForUser(task);
   };
-
-  const isAllShifts =
-    !currentShift ||
-    currentShift === 'ALL' ||
-    currentShift
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .includes('ALL');
-
-  // When viewing All shifts, ensure all active team members from allUsers have their own block/column!
-  const baseUsers =
-    isAllShifts && allUsers && allUsers.length > 0 ? allUsers : shiftUsers;
-
-  baseUsers.forEach((u) => {
-    if (!u || !u.id || isSystemAccount(u)) return;
-    userColumnsMap[u.id] = {
-      user: getUserProfile(u.id, u),
-      tasks: [],
-    };
-  });
-
-  // Ensure all users with tasks or defined in USER_ROLE_DEFINITIONS present in allUsers are also included when in ALL view
-  if (isAllShifts && allUsers) {
-    allUsers.forEach((u) => {
-      if (!u || !u.id || isSystemAccount(u)) return;
-      if (!userColumnsMap[u.id]) {
-        userColumnsMap[u.id] = {
-          user: getUserProfile(u.id, u),
-          tasks: [],
-        };
-      }
-    });
-  }
-
-  // Ensure any user who is actively live working on a task gets a column in userColumnsMap
-  tasks.forEach((t) => {
-    if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
-      const alreadyHasCol = Object.values(userColumnsMap).some((col) =>
-        doesProgressMatchUser(t.progress?.maName, col.user.name)
-      );
-      if (!alreadyHasCol) {
-        const matchingUser = allUsers.find(
-          (u) => !isSystemAccount(u) && doesProgressMatchUser(t.progress?.maName, u.name)
-        );
-        if (matchingUser && !userColumnsMap[matchingUser.id]) {
-          userColumnsMap[matchingUser.id] = {
-            user: getUserProfile(matchingUser.id, matchingUser),
-            tasks: [],
-          };
-        }
-      }
-    }
-  });
-
-  // Also ensure any user who has a held or active sheet session gets a column in userColumnsMap
-  Object.values(maActiveSessions || {}).forEach((sess: any) => {
-    if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
-      const alreadyHasCol = Object.values(userColumnsMap).some((col) =>
-        doesProgressMatchUser(sess.maName, col.user.name)
-      );
-      if (!alreadyHasCol) {
-        const matchingUser = allUsers.find(
-          (u) => !isSystemAccount(u) && doesProgressMatchUser(sess.maName, u.name)
-        );
-        if (matchingUser && !userColumnsMap[matchingUser.id]) {
-          userColumnsMap[matchingUser.id] = {
-            user: getUserProfile(matchingUser.id, matchingUser),
-            tasks: [],
-          };
-        }
-      }
-    }
-  });
 
   const cleanSearch = (search || '').trim().toLowerCase();
-  const isUserSearchMatch = (u: any) => {
-    if (!cleanSearch || !u) return false;
-    return matchesMarketingNameSearch(u, cleanSearch);
-  };
 
-  // If search matches a user in allUsers, ensure they are present in userColumnsMap so their column appears
-  if (cleanSearch && allUsers && allUsers.length > 0) {
-    allUsers.forEach((u) => {
-      if (!u || !u.id || isSystemAccount(u)) return;
-      if (isUserSearchMatch(u) && !userColumnsMap[u.id]) {
-        userColumnsMap[u.id] = {
-          user: getUserProfile(u.id, u),
-          tasks: [],
-        };
-      }
-    });
-  }
+  // Memoize column construction, progress attachment, and sorting so drag-over hover updates never recompute the entire board
+  const { poolIds, sortedUserColumns } = useMemo(() => {
+    const userColumnsMap: Record<string, { user: any; tasks: TaskMapItem[] }> = {};
 
-  // Tasks in availablePool that an active assistant is currently live working on, or routed to a user column,
-  // are attached to their respective user column; all other availablePool tasks belong strictly in poolIds!
-  const poolIds = new Set(
-    availablePool
-      .filter((p) => {
-        const isLiveWorkingOnCol = Boolean(
-          p.progress?.maName &&
-          !p.progress?.timeOut &&
-          Object.values(userColumnsMap).some(
-            (col) => doesProgressMatchUser(p.progress?.maName, col.user.name) && isTaskLiveWorking(p, col.user.name, boardTime)
-          )
-        );
-        const handlerId = getEffectiveTaskMapHandlerId(p);
-        const isAssignedToCol = Boolean(handlerId && userColumnsMap[handlerId]);
-        return !isLiveWorkingOnCol && !isAssignedToCol;
-      })
-      .map((p) => p.id)
-  );
-
-  // 2. Add non-closed, non-excluded tasks to user columns when:
-  //    a) Routed to this user by PM assignment or direct latest assignee (and not handed over), or
-  //    b) It is in historical view mode where assignments were frozen into the snapshot, or
-  //    c) An assistant is actively live working on it (live clock-in / in-progress)
-  const attachTaskToUserColumns = (task: TaskMapItem) => {
-    const effectiveHandlerId = isHistory
-      ? (task.assignee?.id || task.assigneeId || getEffectiveTaskMapHandlerId(task))
-      : getEffectiveTaskMapHandlerId(task);
-    const targetUser = effectiveHandlerId && effectiveHandlerId !== 'unassigned'
-      ? userColumnsMap[effectiveHandlerId]?.user
-      : undefined;
-    if (!effectiveShowAdmin && isTaskUnderAdmin(task) && !isDeveloperUser(targetUser, workspaceTeams)) return;
-    if (poolIds.has(task.id)) return;
-    const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
-    if (!hasProgress && (isClosedTask(task) || isExcludedForUser(task))) return;
-
-    if (effectiveHandlerId && effectiveHandlerId !== 'unassigned' && userColumnsMap[effectiveHandlerId]) {
-      if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
-        userColumnsMap[effectiveHandlerId].tasks.push(task);
-      }
-    }
-
-    // Only if an MA is actively live working on this task (and it's not assigned to someone else),
-    // display it in that worker's column so they see their live active task:
-    if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, boardTime)) {
-      const workerCol = Object.entries(userColumnsMap).find(
-        ([, col]) => doesProgressMatchUser(task.progress?.maName, col.user.name)
+    const isSystemAccount = (u: any) => {
+      const email = (u?.email || '').toLowerCase();
+      const name = (u?.name || '').toLowerCase();
+      return (
+        email.endsWith('@system.local') ||
+        name === 'clickup' ||
+        name === 'vip scale' ||
+        name === 'vipscale'
       );
-      if (workerCol && (!effectiveHandlerId || effectiveHandlerId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
-        workerCol[1].tasks.push(task);
-      }
-    }
-  };
+    };
 
-  tasks.forEach(attachTaskToUserColumns);
-  availablePool.forEach(attachTaskToUserColumns);
+    const isAllShifts =
+      !currentShift ||
+      currentShift === 'ALL' ||
+      currentShift
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .includes('ALL');
 
-  // 2.5 Ensure user columns reflect their latest MA schedule sheet input
-  // (only if they have an active sheet session not already attached to a card)
-  Object.entries(userColumnsMap).forEach(([userId, col]) => {
-    const activeSessionEntry = Object.entries(maActiveSessions || {}).find(
-      ([key, session]) =>
-        doesProgressMatchUser(key, col.user.name) ||
-        doesProgressMatchUser((session as any)?.maName, col.user.name)
-    );
-    const activeSession = activeSessionEntry ? (activeSessionEntry[1] as any) : null;
-    const hasHeldSession = Boolean(
-      activeSession &&
-      (activeSession.active || activeSession.timeIn || activeSession.timeOut || activeSession.client || activeSession.taskName || activeSession.status)
-    );
+    // When viewing All shifts or filtering by Live/Active, include all non-system workspace users
+    const baseUsers =
+      (isAllShifts || trackFilter !== 'ALL') && allUsers && allUsers.length > 0 ? allUsers : shiftUsers;
 
-    // Check if user already has an assigned task card actively matching this session (by taskId or active progress)
-    const hasActiveAssignedTask = col.tasks.some((t) => {
-      if (activeSession?.taskId && t.id === activeSession.taskId) return true;
-      // If the active session has no taskId, it is an unlinked sheet row and must NEVER be suppressed by unrelated assigned cards
-      if (!activeSession?.taskId) return false;
-      const isMyProg = doesProgressMatchUser(t.progress?.maName, col.user.name);
-      if (!isMyProg || !t.progress?.timeIn || t.progress?.timeOut || t.progress?.isMissingTime) return false;
-      // Stale sessions (>14h or past date) can never act as active assigned task
-      if (isStaleLiveSession(t.progress.timeIn, t.progress.date, boardTime)) return false;
-      // If the active session has a sheetRow, only match if this task actually has the same sheetRow!
-      if (activeSession?.rowNumber && t.progress?.sheetRow) {
-        return Number(t.progress.sheetRow) === Number(activeSession.rowNumber);
-      }
-      return false;
+    baseUsers.forEach((u) => {
+      if (!u || !u.id || isSystemAccount(u)) return;
+      userColumnsMap[u.id] = {
+        user: getUserProfile(u.id, u),
+        tasks: [],
+      };
     });
 
-    // Hold the user's last inputted sheet card throughout the day until 12:00 AM rollover when not already represented by a card in col.tasks
-    if (hasHeldSession && !hasActiveAssignedTask) {
-      const rawClient = activeSession?.client;
-      const effectiveClient = rawClient && rawClient.toLowerCase() !== 'general' ? rawClient : 'No client inputted';
-      const rawTask = activeSession?.taskName;
-      const effectiveTask = rawTask && rawTask.toLowerCase() !== 'general task' ? rawTask : 'No task inputted';
-
-      const cleanSessionTask = effectiveTask.replace(/\.{3}$/, '').trim().toLowerCase();
-      const cleanSessionClient = effectiveClient.trim().toLowerCase();
-      const matchedLocalTask = [...tasks, ...availablePool].find((t) => {
-        if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) {
-          return true;
-        }
-        if (!cleanSessionTask || cleanSessionTask === 'no task inputted') return false;
-        const tTitle = (t.title || '').trim().toLowerCase();
-        if (!tTitle || (tTitle !== cleanSessionTask && !tTitle.includes(cleanSessionTask))) return false;
-        if (!cleanSessionClient || cleanSessionClient === 'no client inputted') return tTitle === cleanSessionTask;
-        const tClient = (t.list?.name || '').trim().toLowerCase();
-        return tClient === cleanSessionClient || tClient.startsWith(cleanSessionClient);
-      });
-
-      const generalBlock = createEmptyUserBlock({
-        userId,
-        userName: col.user.name,
-        client: effectiveClient,
-        taskTitle: effectiveTask,
-        day: activeSession?.date || format(boardTime, 'yyyy-MM-dd'),
-        timeIn: activeSession?.timeIn || null,
-        timeOut: activeSession?.timeOut || null,
-        status: activeSession?.status || (activeSession?.timeOut ? 'CLOSED' : 'IN PROGRESS'),
-        taskStatus: activeSession?.taskStatus || matchedLocalTask?.status || null,
-        priority: activeSession?.priority || matchedLocalTask?.priority || null,
-        subStatuses: Array.isArray(activeSession?.subStatuses)
-          ? activeSession.subStatuses
-          : (matchedLocalTask?.taskMap?.statuses ?? null),
-        taskId: activeSession?.taskId || matchedLocalTask?.id || null,
-        listId: activeSession?.listId || matchedLocalTask?.listId || matchedLocalTask?.list?.id || null,
-        listStatuses: activeSession?.listStatuses || matchedLocalTask?.list?.statuses,
-        isUpwork: Boolean(activeSession?.isUpwork),
-        rowNumber: activeSession?.rowNumber,
-      });
-
-      col.tasks.unshift(generalBlock);
-    }
-  });
-
-  // 2.7 Sanitize worker column progress:
-  // - Deduplicate same sheetRow: only the task with the newest updatedAt keeps the sheetRow progress.
-  // - Close stale unclosed sessions: if the worker has a completed row with a later time / higher sheetRow,
-  //   any older row with missing timeOut is superseded and cannot be live working.
-  Object.values(userColumnsMap).forEach((col) => {
-    const workerName = col.user?.name;
-    if (!workerName) return;
-
-    // Map of sheetRow -> latest task id and latest timestamp
-    const rowLatestMap = new Map<number, { taskId: string; updatedAt: number }>();
-    col.tasks.forEach((t) => {
-      if (t.progress?.sheetRow && doesProgressMatchUser(t.progress?.maName, workerName)) {
-        const row = Number(t.progress.sheetRow);
-        const time = t.progress.updatedAt ? new Date(t.progress.updatedAt).getTime() : 0;
-        const cur = rowLatestMap.get(row);
-        if (!cur || time > cur.updatedAt) {
-          rowLatestMap.set(row, { taskId: t.id, updatedAt: time });
-        }
-      }
-    });
-
-    // Strip duplicate/stale progress from tasks that lost the sheetRow
-    col.tasks = col.tasks.map((t) => {
-      if (t.progress?.sheetRow && doesProgressMatchUser(t.progress?.maName, workerName)) {
-        const row = Number(t.progress.sheetRow);
-        const winner = rowLatestMap.get(row);
-        if (winner && winner.taskId !== t.id) {
-          // Stale row progress from prior binding, strip it
-          return { ...t, progress: null };
-        }
-      }
-      return t;
-    });
-
-    // Check if worker has completed their latest shift row
-    let maxCompletedRow = -1;
-    col.tasks.forEach((t) => {
-      if (t.progress?.sheetRow && t.progress?.timeOut && doesProgressMatchUser(t.progress?.maName, workerName)) {
-        const row = Number(t.progress.sheetRow);
-        if (row > maxCompletedRow) maxCompletedRow = row;
-      }
-    });
-
-    // Find active session for this worker if any
-    const activeSessionEntry = Object.entries(maActiveSessions || {}).find(
-      ([key, session]) =>
-        doesProgressMatchUser(key, workerName) ||
-        doesProgressMatchUser((session as any)?.maName, workerName)
-    );
-    const activeSession = activeSessionEntry ? (activeSessionEntry[1] as any) : null;
-
-    const effectiveMaxRow = Math.max(
-      maxCompletedRow,
-      activeSession?.rowNumber ? Number(activeSession.rowNumber) : -1
-    );
-
-    // If an older row was left unclosed (e.g. row < effectiveMaxRow has timeIn without timeOut, or stale),
-    // mark its effective progress as closed or stale so it never acts as a live working session
-    if (effectiveMaxRow > 0) {
-      col.tasks = col.tasks.map((t) => {
-        if (
-          t.progress?.sheetRow &&
-          Number(t.progress.sheetRow) < effectiveMaxRow &&
-          t.progress.timeIn &&
-          !t.progress.timeOut &&
-          doesProgressMatchUser(t.progress.maName, workerName)
-        ) {
-          return {
-            ...t,
-            progress: {
-              ...t.progress,
-              timeOut: '11:59 PM', // Superseded unclosed session
-            },
+    if (isAllShifts && allUsers) {
+      allUsers.forEach((u) => {
+        if (!u || !u.id || isSystemAccount(u)) return;
+        if (!userColumnsMap[u.id]) {
+          userColumnsMap[u.id] = {
+            user: getUserProfile(u.id, u),
+            tasks: [],
           };
+        }
+      });
+    }
+
+    // Ensure any user who is actively live working on a task (or pool task) gets a column in userColumnsMap
+    [...tasks, ...availablePool].forEach((t) => {
+      if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
+        const matchingUser = findBestUserMatch(t.progress.maName, allUsers, (u) => !isSystemAccount(u));
+        if (matchingUser && !userColumnsMap[matchingUser.id]) {
+          userColumnsMap[matchingUser.id] = {
+            user: getUserProfile(matchingUser.id, matchingUser),
+            tasks: [],
+          };
+        }
+      }
+    });
+
+    // Ensure any user who has a held or active sheet session gets a column in userColumnsMap
+    Object.values(maActiveSessions || {}).forEach((sess: any) => {
+      if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
+        const matchingUser = findBestUserMatch(sess.maName, allUsers, (u) => !isSystemAccount(u));
+        if (matchingUser && !userColumnsMap[matchingUser.id]) {
+          userColumnsMap[matchingUser.id] = {
+            user: getUserProfile(matchingUser.id, matchingUser),
+            tasks: [],
+          };
+        }
+      }
+    });
+
+    const isUserSearchMatch = (u: any) => {
+      if (!cleanSearch || !u) return false;
+      return matchesMarketingNameSearch(u, cleanSearch);
+    };
+
+    if (cleanSearch && allUsers && allUsers.length > 0) {
+      allUsers.forEach((u) => {
+        if (!u || !u.id || isSystemAccount(u)) return;
+        if (isUserSearchMatch(u) && !userColumnsMap[u.id]) {
+          userColumnsMap[u.id] = {
+            user: getUserProfile(u.id, u),
+            tasks: [],
+          };
+        }
+      });
+    }
+
+    const colEntries = Object.entries(userColumnsMap);
+    const findColumnForMa = (maName?: string | null) => {
+      if (!maName) return undefined;
+      const matchedUser = findBestUserMatch(
+        maName,
+        colEntries.map(([, c]) => c.user)
+      );
+      if (!matchedUser) return undefined;
+      return colEntries.find(([, c]) => c.user.id === matchedUser.id);
+    };
+
+    const nextPoolIds = new Set(
+      availablePool
+        .filter((p) => {
+          const workerCol = p.progress?.maName && !p.progress?.timeOut ? findColumnForMa(p.progress.maName) : undefined;
+          const isLiveWorkingOnCol = Boolean(
+            workerCol && isTaskLiveWorking(p, workerCol[1].user.name, boardTime)
+          );
+          const handlerId = getEffectiveTaskMapHandlerId(p);
+          const isAssignedToCol = Boolean(handlerId && userColumnsMap[handlerId]);
+          return !isLiveWorkingOnCol && !isAssignedToCol;
+        })
+        .map((p) => p.id)
+    );
+
+    const attachTaskToUserColumns = (task: TaskMapItem) => {
+      // Tasks moved to Auditor Map (To Review / In Review / Checking) or CRM Map (Waiting / CRM / Ask Client)
+      // must NEVER remain in Task Map user/PM columns, even if prior progress exists.
+      if (!task.isAssumptionBlock && isOtherBoardWorkflowStatus(task)) return;
+
+      const effectiveHandlerId = isHistory
+        ? (task.assignee?.id || task.assigneeId || getEffectiveTaskMapHandlerId(task))
+        : getEffectiveTaskMapHandlerId(task);
+      const targetUser = effectiveHandlerId && effectiveHandlerId !== 'unassigned'
+        ? userColumnsMap[effectiveHandlerId]?.user
+        : undefined;
+      const isAdmin = isTaskUnderAdmin(task);
+      const isDev = isDeveloperUser(targetUser, workspaceTeams);
+      const hasSheetInput = hasSpreadsheetTaskInput(task, { isHistory, now: boardTime });
+      if (!effectiveShowAdmin && isAdmin && !isDev && !hasSheetInput) return;
+      if (nextPoolIds.has(task.id)) return;
+      const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
+      if (isClosedTask(task) && !hasProgress) return;
+      if (!hasProgress && isExcludedForUser(task)) return;
+
+      // For hidden-by-default admin/dormant/startups/HR tasks inputted from the spreadsheet,
+      // attach strictly to the MA column matching the spreadsheet input.
+      if (!effectiveShowAdmin && isAdmin && !isDev && hasSheetInput) {
+        const workerCol = findColumnForMa(task.progress?.maName);
+        if (
+          effectiveHandlerId &&
+          effectiveHandlerId !== 'unassigned' &&
+          userColumnsMap[effectiveHandlerId] &&
+          doesProgressMatchUser(task.progress?.maName, targetUser?.name)
+        ) {
+          if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
+            userColumnsMap[effectiveHandlerId].tasks.push(task);
+          }
+        } else if (workerCol && !workerCol[1].tasks.some((t) => t.id === task.id)) {
+          workerCol[1].tasks.push(task);
+        }
+        return;
+      }
+
+      if (effectiveHandlerId && effectiveHandlerId !== 'unassigned' && userColumnsMap[effectiveHandlerId]) {
+        if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
+          userColumnsMap[effectiveHandlerId].tasks.push(task);
+        }
+      }
+
+      if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, boardTime)) {
+        const workerCol = findColumnForMa(task.progress.maName);
+        if (workerCol && (!effectiveHandlerId || effectiveHandlerId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
+          workerCol[1].tasks.push(task);
+        }
+      }
+    };
+
+    tasks.forEach(attachTaskToUserColumns);
+    availablePool.forEach(attachTaskToUserColumns);
+
+    const findActiveSessionForUser = (userName?: string | null) => {
+      if (!userName || !maActiveSessions) return null;
+      const cleanUser = userName.trim().toLowerCase();
+      const direct = maActiveSessions[cleanUser];
+      if (direct) return direct;
+
+      const entries = Object.entries(maActiveSessions);
+      const exactEntry = entries.find(([key, s]) => {
+        const k = key.trim().toLowerCase();
+        const m = ((s as any)?.maName || '').trim().toLowerCase();
+        return k === cleanUser || m === cleanUser;
+      });
+      if (exactEntry) return exactEntry[1];
+
+      const userParts = cleanUser.split(/\s+/);
+      const tokenEntry = entries.find(([key, s]) => {
+        const candidate = ((s as any)?.maName || key || '').trim().toLowerCase();
+        return Boolean(candidate && userParts.some((p) => p === candidate));
+      });
+      if (tokenEntry) return tokenEntry[1];
+
+      const fuzzyEntry = entries.find(
+        ([key, session]) =>
+          doesProgressMatchUser(key, userName) ||
+          doesProgressMatchUser((session as any)?.maName, userName)
+      );
+      return fuzzyEntry ? fuzzyEntry[1] : null;
+    };
+
+    // 2.5 Ensure user columns reflect their latest MA schedule sheet input
+    Object.entries(userColumnsMap).forEach(([userId, col]) => {
+      const activeSession = findActiveSessionForUser(col.user.name) as any;
+      const hasHeldSession = Boolean(
+        activeSession &&
+        (activeSession.active || activeSession.timeIn || activeSession.timeOut || activeSession.client || activeSession.taskName || activeSession.status)
+      );
+
+      // Only suppress the fallback block if col.tasks ALREADY has a live card belonging to THIS user (not another MA's progress)
+      const hasActiveAssignedTask = col.tasks.some((t) => {
+        const isMyProg = doesProgressMatchUser(t.progress?.maName, col.user.name);
+        if (!isMyProg || !t.progress?.timeIn || t.progress?.timeOut || t.progress?.isMissingTime) return false;
+        if (isStaleLiveSession(t.progress.timeIn, t.progress.date, boardTime)) return false;
+        if (activeSession?.rowNumber && t.progress?.sheetRow) {
+          return Number(t.progress.sheetRow) === Number(activeSession.rowNumber);
+        }
+        return Boolean(activeSession?.taskId && t.id === activeSession.taskId);
+      });
+
+      if (hasHeldSession && !hasActiveAssignedTask) {
+        const rawClient = activeSession?.client;
+        const effectiveClient = rawClient && rawClient.toLowerCase() !== 'general' ? rawClient : 'No client inputted';
+        const rawTask = activeSession?.taskName;
+        const effectiveTask = rawTask && rawTask.toLowerCase() !== 'general task' ? rawTask : 'No task inputted';
+
+        const cleanSessionTask = effectiveTask.replace(/\.{3}$/, '').trim().toLowerCase();
+        const cleanSessionClient = effectiveClient.trim().toLowerCase();
+        const matchedLocalTask = [...tasks, ...availablePool].find((t) => {
+          if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) {
+            return true;
+          }
+          if (!cleanSessionTask || cleanSessionTask === 'no task inputted') return false;
+          const tTitle = (t.title || '').trim().toLowerCase();
+          if (!tTitle || (tTitle !== cleanSessionTask && !tTitle.includes(cleanSessionTask))) return false;
+          if (!cleanSessionClient || cleanSessionClient === 'no client inputted') return tTitle === cleanSessionTask;
+          const tClient = (t.list?.name || '').trim().toLowerCase();
+          return tClient === cleanSessionClient || tClient.startsWith(cleanSessionClient);
+        });
+
+        const generalBlock = createEmptyUserBlock({
+          userId,
+          userName: col.user.name,
+          client: effectiveClient,
+          taskTitle: effectiveTask,
+          day: activeSession?.date || format(boardTime, 'yyyy-MM-dd'),
+          timeIn: activeSession?.timeIn || null,
+          timeOut: activeSession?.timeOut || null,
+          status: activeSession?.status || (activeSession?.timeOut ? 'CLOSED' : 'IN PROGRESS'),
+          taskStatus: activeSession?.taskStatus || matchedLocalTask?.status || null,
+          priority: activeSession?.priority || matchedLocalTask?.priority || null,
+          subStatuses: Array.isArray(activeSession?.subStatuses)
+            ? activeSession.subStatuses
+            : (matchedLocalTask?.taskMap?.statuses ?? null),
+          taskId: activeSession?.taskId || matchedLocalTask?.id || null,
+          listId: activeSession?.listId || matchedLocalTask?.listId || matchedLocalTask?.list?.id || null,
+          listStatuses: activeSession?.listStatuses || matchedLocalTask?.list?.statuses,
+          isUpwork: Boolean(activeSession?.isUpwork),
+          rowNumber: activeSession?.rowNumber,
+        });
+
+        col.tasks.unshift(generalBlock);
+      }
+    });
+
+    // 2.7 Sanitize worker column progress
+    Object.values(userColumnsMap).forEach((col) => {
+      const workerName = col.user?.name;
+      if (!workerName) return;
+
+      const rowLatestMap = new Map<number, { taskId: string; updatedAt: number }>();
+      col.tasks.forEach((t) => {
+        if (t.progress?.sheetRow && doesProgressMatchUser(t.progress?.maName, workerName)) {
+          const row = Number(t.progress.sheetRow);
+          const time = t.progress.updatedAt ? new Date(t.progress.updatedAt).getTime() : 0;
+          const cur = rowLatestMap.get(row);
+          if (!cur || time > cur.updatedAt) {
+            rowLatestMap.set(row, { taskId: t.id, updatedAt: time });
+          }
+        }
+      });
+
+      col.tasks = col.tasks.map((t) => {
+        if (t.progress?.sheetRow && doesProgressMatchUser(t.progress?.maName, workerName)) {
+          const row = Number(t.progress.sheetRow);
+          const winner = rowLatestMap.get(row);
+          if (winner && winner.taskId !== t.id) {
+            return { ...t, progress: null };
+          }
         }
         return t;
       });
-    }
-  });
 
-  // 3. Sort columns:
-  // Prioritize the current viewing user first (showing on the right side of Available tasks),
-  // then all remaining users sorted alphabetically next (A-Z)
-  const curUserId = currentUser?.id;
-  const curUserName = (currentUser?.name || '').trim().toLowerCase();
-
-  const isCurrentViewer = (u: any) => {
-    if (!u) return false;
-    if (curUserId && u.id === curUserId) return true;
-    if (curUserName && (u.name || '').trim().toLowerCase() === curUserName) return true;
-    return false;
-  };
-
-  const sortedUserColumns = Object.entries(userColumnsMap)
-    .filter(([id, col]) => {
-      // When searching marketing name, filter user columns to matching MAs only
-      if (cleanSearch) {
-        return isUserSearchMatch(col.user);
-      }
-      // Live = users clocked in on live working now; Active = users who logged progress today
-      if (trackFilter !== 'ALL') {
-        const userName = col.user?.name;
-        const allItems = [...col.tasks, ...tasks, ...availablePool];
-        if (trackFilter === 'LIVE') {
-          return allItems.some((t) => isTaskLiveWorking(t, userName, boardTime));
+      let maxCompletedRow = -1;
+      col.tasks.forEach((t) => {
+        if (t.progress?.sheetRow && t.progress?.timeOut && doesProgressMatchUser(t.progress?.maName, workerName)) {
+          const row = Number(t.progress.sheetRow);
+          if (row > maxCompletedRow) maxCompletedRow = row;
         }
-        return allItems.some(
-          (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, boardTime)
-        );
+      });
+
+      const activeSession = findActiveSessionForUser(workerName) as any;
+      const effectiveMaxRow = Math.max(
+        maxCompletedRow,
+        activeSession?.rowNumber ? Number(activeSession.rowNumber) : -1
+      );
+
+      if (effectiveMaxRow > 0) {
+        col.tasks = col.tasks.map((t) => {
+          if (
+            t.progress?.sheetRow &&
+            Number(t.progress.sheetRow) < effectiveMaxRow &&
+            t.progress.timeIn &&
+            !t.progress.timeOut &&
+            doesProgressMatchUser(t.progress.maName, workerName)
+          ) {
+            return {
+              ...t,
+              progress: {
+                ...t.progress,
+                timeOut: '11:59 PM',
+              },
+            };
+          }
+          return t;
+        });
       }
-      // If Custom shift is selected and specific MAs are chosen, filter by them
-      const activeShifts = (currentShift || '').toUpperCase().split(',').map((s) => s.trim());
-      if (activeShifts.includes('CUSTOM') && selectedCustomMAs.length > 0) {
-        return selectedCustomMAs.includes(id);
-      }
-      return true;
-    })
-    .sort(([idA, colA], [idB, colB]) => {
-      const matchA = isUserSearchMatch(colA.user);
-      const matchB = isUserSearchMatch(colB.user);
+    });
 
-      // 1. Search-matching MA columns move to the most left side
-      if (matchA && !matchB) return -1;
-      if (!matchA && matchB) return 1;
+    const curUserId = currentUser?.id;
+    const curUserName = (currentUser?.name || '').trim().toLowerCase();
 
-      if (matchA && matchB) {
-        const nameA = (colA.user?.name || '').trim().toLowerCase();
-        const nameB = (colB.user?.name || '').trim().toLowerCase();
-        const exactA = nameA === cleanSearch;
-        const exactB = nameB === cleanSearch;
-        if (exactA && !exactB) return -1;
-        if (!exactA && exactB) return 1;
+    const isCurrentViewer = (u: any) => {
+      if (!u) return false;
+      if (curUserId && u.id === curUserId) return true;
+      if (curUserName && (u.name || '').trim().toLowerCase() === curUserName) return true;
+      return false;
+    };
 
-        const startA = nameA.startsWith(cleanSearch);
-        const startB = nameB.startsWith(cleanSearch);
-        if (startA && !startB) return -1;
-        if (!startA && startB) return 1;
+    const nextSortedUserColumns = Object.entries(userColumnsMap)
+      .filter(([id, col]) => {
+        if (cleanSearch) {
+          return isUserSearchMatch(col.user);
+        }
+        if (trackFilter !== 'ALL') {
+          const userName = col.user?.name;
+          const allItems = [...col.tasks, ...tasks, ...availablePool];
+          const activeSession = findActiveSessionForUser(userName) as any;
+          if (trackFilter === 'LIVE') {
+            const hasLiveTask = allItems.some((t) => isTaskLiveWorking(t, userName, boardTime));
+            const hasLiveSession = Boolean(
+              activeSession &&
+              activeSession.timeIn &&
+              !activeSession.timeOut &&
+              !activeSession.isMissingTime &&
+              !isStaleLiveSession(activeSession.timeIn, activeSession.date, boardTime)
+            );
+            return hasLiveTask || hasLiveSession;
+          }
+          const hasLoggedTaskToday = allItems.some(
+            (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, boardTime)
+          );
+          const hasLoggedSessionToday = Boolean(
+            activeSession &&
+            (activeSession.timeIn || activeSession.timeOut) &&
+            isProgressLoggedToday(activeSession, boardTime)
+          );
+          return hasLoggedTaskToday || hasLoggedSessionToday;
+        }
+        const activeShifts = (currentShift || '').toUpperCase().split(',').map((s) => s.trim());
+        if (activeShifts.includes('CUSTOM') && selectedCustomMAs.length > 0) {
+          return selectedCustomMAs.includes(id);
+        }
+        return true;
+      })
+      .sort(([idA, colA], [idB, colB]) => {
+        const matchA = isUserSearchMatch(colA.user);
+        const matchB = isUserSearchMatch(colB.user);
+
+        if (matchA && !matchB) return -1;
+        if (!matchA && matchB) return 1;
+
+        if (matchA && matchB) {
+          const nameA = (colA.user?.name || '').trim().toLowerCase();
+          const nameB = (colB.user?.name || '').trim().toLowerCase();
+          const exactA = nameA === cleanSearch;
+          const exactB = nameB === cleanSearch;
+          if (exactA && !exactB) return -1;
+          if (!exactA && exactB) return 1;
+
+          const startA = nameA.startsWith(cleanSearch);
+          const startB = nameB.startsWith(cleanSearch);
+          if (startA && !startB) return -1;
+          if (!startA && startB) return 1;
+
+          const isPinnedA = !!pinnedColumns[idA];
+          const isPinnedB = !!pinnedColumns[idB];
+          if (isPinnedA && !isPinnedB) return -1;
+          if (!isPinnedA && isPinnedB) return 1;
+
+          return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+        }
 
         const isPinnedA = !!pinnedColumns[idA];
         const isPinnedB = !!pinnedColumns[idB];
+
         if (isPinnedA && !isPinnedB) return -1;
         if (!isPinnedA && isPinnedB) return 1;
 
-        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
-      }
+        const isCurA = isCurrentViewer(colA.user);
+        const isCurB = isCurrentViewer(colB.user);
 
-      // 2. Pinned columns come next
-      const isPinnedA = !!pinnedColumns[idA];
-      const isPinnedB = !!pinnedColumns[idB];
+        if (isCurA && !isCurB) return -1;
+        if (!isCurA && isCurB) return 1;
 
-      if (isPinnedA && !isPinnedB) return -1;
-      if (!isPinnedA && isPinnedB) return 1;
+        return (colA.user.name || '').localeCompare(colB.user.name || '', undefined, { sensitivity: 'base' });
+      });
 
-      // 3. Current viewer column next
-      const isCurA = isCurrentViewer(colA.user);
-      const isCurB = isCurrentViewer(colB.user);
-
-      if (isCurA && !isCurB) return -1;
-      if (!isCurA && isCurB) return 1;
-
-      // 4. Alphabetical order (A-Z)
-      return (colA.user.name || '').localeCompare(colB.user.name || '', undefined, { sensitivity: 'base' });
-    });
+    return { poolIds: nextPoolIds, sortedUserColumns: nextSortedUserColumns };
+  }, [
+    tasks,
+    availablePool,
+    allUsers,
+    shiftUsers,
+    currentShift,
+    maActiveSessions,
+    cleanSearch,
+    trackFilter,
+    selectedCustomMAs,
+    pinnedColumns,
+    currentUser?.id,
+    currentUser?.name,
+    effectiveShowAdmin,
+    workspaceTeams,
+    boardTime,
+    isHistory,
+  ]);
 
   // When search changes and matches an MA, auto-scroll to the far left so the user immediately sees the column
   useEffect(() => {
@@ -1506,6 +1848,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
       boardScrollRef.current.scrollTo({ left: 0, behavior: 'smooth' });
     }
   }, [cleanSearch]);
+
+  const transferableUsers = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const u of [...shiftUsers, ...allUsers, ...sortedUserColumns.map(([, c]) => c.user)]) {
+      if (!u || !u.id || isSystemUser(u)) continue;
+      if (!map.has(u.id)) map.set(u.id, u);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    );
+  }, [shiftUsers, allUsers, sortedUserColumns]);
 
   // DnD Handlers
   const handleDragStart = (event: DragStartEvent) => {
@@ -1517,8 +1870,22 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (!task) return;
 
     const isFromAvailable = poolIds.has(task.id);
-    if (isFromAvailable && !isPmUser) {
-      toast.error('Only Project Managers and Admins can assign tasks from the Available column');
+    const activeSourceUserId = event.active.data.current?.sourceUserId as string | null | undefined;
+    const sourceOwnerId = isFromAvailable ? null : (activeSourceUserId ?? getEffectiveTaskMapHandlerId(task));
+    if (
+      !canDragTaskMapCard({
+        isPmUser,
+        currentUserId: currentUser?.id,
+        columnUserId: sourceOwnerId,
+        isFromAvailable,
+        isAssumptionBlock: task.isAssumptionBlock,
+      })
+    ) {
+      toast.error(
+        isFromAvailable
+          ? 'Only Project Managers and Admins can assign tasks from the Available column'
+          : 'You can only drag tasks within your own column'
+      );
       return;
     }
 
@@ -1536,6 +1903,33 @@ export const TaskMapBoardView: React.FC<Props> = ({
     setActiveOverId(null);
   };
 
+  // Validate role restrictions dynamically against DB user roles + team roles.
+  // If no active user or team in DB (or none in the current shift for PMs) holds the required role
+  // (e.g. assigning an MA to a "Design" task when no Design team exists), allow assignment cleanly.
+  const canAssignUserToTask = (task: TaskMapItem | null | undefined, targetUser: any): boolean => {
+    const roleRestrictions = (task as any)?.assigneeRoleRestrictions as string[] | undefined;
+    if (!roleRestrictions || roleRestrictions.length === 0) return true;
+
+    const directMatch = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
+    if (directMatch.length > 0) return true;
+
+    const workspaceMatches = resolveUsersFromRoleRestrictions(roleRestrictions, allUsers, workspaceTeams);
+    if (workspaceMatches.length === 0) {
+      return true;
+    }
+
+    const activePoolUsers = shiftUsers.length > 0 ? shiftUsers : allUsers;
+    const shiftMatches = resolveUsersFromRoleRestrictions(roleRestrictions, activePoolUsers, workspaceTeams);
+    if (isPmUser && shiftMatches.length === 0) {
+      return true;
+    }
+
+    toast.error(
+      `${targetUser?.name || 'This user'} does not have a matching role (${roleRestrictions.join(', ')}) for this task`
+    );
+    return false;
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     const dragTask = activeDragTask;
@@ -1549,13 +1943,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const isFromAvailable = poolIds.has(taskId);
 
     const currentTask = dragTask || tasks.find((t) => t.id === taskId) || availablePool.find((t) => t.id === taskId);
+    const activeSourceUserId = active.data.current?.sourceUserId as string | null | undefined;
+    const sourceOwnerId = isFromAvailable ? null : (activeSourceUserId ?? getEffectiveTaskMapHandlerId(currentTask));
     const currentAssigneeId =
       currentTask?.assigneeId ||
       currentTask?.assignee?.id ||
       (currentTask?.assignees && currentTask.assignees[0]?.id);
 
-    if (isFromAvailable && !isPmUser) {
-      toast.error('Only Project Managers and Admins can assign tasks from the Available column');
+    const dropPerm = canDropTaskMapCard({
+      isPmUser,
+      currentUserId: currentUser?.id,
+      sourceUserId: sourceOwnerId,
+      isFromAvailable,
+      targetColumnId,
+    });
+    if (!dropPerm.allowed) {
+      if (dropPerm.reason) {
+        toast.error(dropPerm.reason);
+      }
       return;
     }
 
@@ -1564,16 +1969,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('in-progress-', '');
       const targetUser = getUserProfile(targetUserId);
 
-      // Enforce task Team Role restrictions (assigneeRoleRestrictions)
-      const roleRestrictions = (currentTask as any)?.assigneeRoleRestrictions as string[] | undefined;
-      if (roleRestrictions && roleRestrictions.length > 0) {
-        const allowed = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
-        if (allowed.length === 0) {
-          toast.error(
-            `${targetUser?.name || 'This user'} does not have the required team role (${roleRestrictions.join(', ')}) for this task`
-          );
-          return;
-        }
+      if (!canAssignUserToTask(currentTask, targetUser)) {
+        return;
       }
 
       // If already assigned to this user and already active in progress, no-op!
@@ -1607,16 +2004,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('user-', '');
       const targetUser = getUserProfile(targetUserId);
 
-      // Enforce task Team Role restrictions (assigneeRoleRestrictions)
-      const roleRestrictions = (currentTask as any)?.assigneeRoleRestrictions as string[] | undefined;
-      if (roleRestrictions && roleRestrictions.length > 0) {
-        const allowed = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
-        if (allowed.length === 0) {
-          toast.error(
-            `${targetUser?.name || 'This user'} does not have the required team role (${roleRestrictions.join(', ')}) for this task`
-          );
-          return;
-        }
+      if (!canAssignUserToTask(currentTask, targetUser)) {
+        return;
       }
 
       // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
@@ -1640,11 +2029,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (isFromAvailable) {
         return;
       }
-      // Unassign task to available pool (PMs only)
-      if (!isPmUser) {
-        toast.error('Only Project Managers can move tasks to the Available column');
-        return;
-      }
       toast.success('Task moved to available pool');
       try {
         if (onAssignTask) {
@@ -1660,17 +2044,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
   };
 
   const handleSelectInProgressTask = async (taskId: string, targetUserId: string) => {
+    if (!canStartInProgressSlot({ isPmUser, currentUserId: currentUser?.id, columnUserId: targetUserId })) {
+      toast.error("Moving a task to In Progress is the assigned MA's action only");
+      return;
+    }
     const targetUser = getUserProfile(targetUserId);
     const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
-    const roleRestrictions = (existingTask as any)?.assigneeRoleRestrictions as string[] | undefined;
-    if (roleRestrictions && roleRestrictions.length > 0) {
-      const allowed = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
-      if (allowed.length === 0) {
-        toast.error(
-          `${targetUser?.name || 'This user'} does not have the required team role (${roleRestrictions.join(', ')}) for this task`
-        );
-        return;
-      }
+    if (!canAssignUserToTask(existingTask, targetUser)) {
+      return;
     }
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
     toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
@@ -1689,6 +2070,28 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
     } catch (err: any) {
       toast.error(err.message || 'Failed to assign task');
+    }
+  };
+
+  const handleTransferTaskCard = async (task: TaskMapItem, targetUserId: string) => {
+    if (!canTransferTaskMapCard(isPmUser)) {
+      toast.error('Only Project Managers and Admins can transfer tasks');
+      return;
+    }
+    const targetUser = getUserProfile(targetUserId);
+    if (!canAssignUserToTask(task, targetUser)) {
+      return;
+    }
+    toast.success(`Task transferred to ${targetUser?.name || 'MA'}'s To Do`);
+    try {
+      if (onTransferTask) {
+        await onTransferTask(task.id, targetUserId);
+      } else {
+        await taskMapApi.transferTask(task.id, targetUserId);
+        onDataRefresh();
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to transfer task');
     }
   };
 
@@ -1778,37 +2181,34 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const cleanNext = isSelecting ? [label] : [];
     const norm = label.trim().toLowerCase();
 
-    // 0. Available Task: unassigns the MA (assigneeId = null), preserves main status, moves/keeps in Available Tasks
+    // 0. Available Task: unassigns the MA/PM (assigneeId = null), preserves main status, moves back to Available Tasks
     if (norm === 'available task' || norm === 'availabletask') {
-      if (isSelecting) {
-        const isAssigned =
-          !poolIds.has(task.id) ||
-          Boolean(task.assigneeId) ||
-          (task.assignees || []).length > 0;
-        if (isAssigned) {
-          if (!isPmUser) {
-            toast.error('Only Project Managers can move tasks to the Available column');
-            return;
-          }
-          onStatusChange(task.id, ['Available Task']);
-          try {
-            if (onAssignTask) {
-              await onAssignTask(task.id, null, 'QUEUE');
-            } else {
-              await taskMapApi.assignTask(task.id, null);
-              onDataRefresh();
-            }
-            toast.info('Task returned to Available Tasks');
-          } catch (err: any) {
-            toast.error(err?.message || 'Failed to move task to Available Tasks');
-            onDataRefresh();
-          }
+      const isAssigned =
+        !poolIds.has(task.id) ||
+        Boolean(getEffectiveTaskMapHandlerId(task)) ||
+        Boolean(task.assigneeId) ||
+        (task.assignees || []).length > 0;
+      if (isAssigned) {
+        if (!isPmUser) {
+          toast.error('Only Project Managers can move tasks to the Available column');
           return;
         }
         onStatusChange(task.id, ['Available Task']);
+        try {
+          if (onAssignTask) {
+            await onAssignTask(task.id, null, 'QUEUE');
+          } else {
+            await taskMapApi.assignTask(task.id, null);
+            onDataRefresh();
+          }
+          toast.info('Task returned to Available Tasks');
+        } catch (err: any) {
+          toast.error(err?.message || 'Failed to move task to Available Tasks');
+          onDataRefresh();
+        }
         return;
       }
-      onStatusChange(task.id, cleanNext);
+      onStatusChange(task.id, isSelecting ? ['Available Task'] : cleanNext);
       return;
     }
 
@@ -1837,23 +2237,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return;
     }
 
-    // 3. Ask Client: transfer to CRM Map pool, but stays at IN PROGRESS main status
+    // 3. Ask Client: transfer to CRM Map pool, remove from MA/PM column
     if (norm === 'ask client' || norm === 'askclient') {
       if (isSelecting) {
+        if (onTaskUpdate) {
+          await onTaskUpdate(task.id, { assigneeId: null });
+        }
         toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
       }
       return;
     }
 
     // 4. To Review: changes main status to IN REVIEW (if UI UX/Design audit present) or CHECKING (if no UI UX/Design audit)
+    // and removes from MA/PM column so it moves to the Auditor Map tab
     if (norm === 'to review' || norm === 'to_review') {
       if (isSelecting) {
         const hasL1 = hasUiUxOrDesignAudit(task);
         const targetStatus = hasL1 ? 'IN REVIEW' : 'CHECKING';
         if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: targetStatus });
+          await onTaskUpdate(task.id, { status: targetStatus, assigneeId: null });
         } else {
-          await tasksApi.updateTask(task.id, { status: targetStatus } as any).catch(console.error);
+          await tasksApi.updateTask(task.id, { status: targetStatus, assigneeId: null } as any).catch(console.error);
           onDataRefresh();
         }
         toast.info(`Task status changed to ${targetStatus} — transferred to Auditor Map`);
@@ -1870,13 +2274,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return;
     }
 
-    // 5. Waiting: changes main status to WAITING and transfers to CRM Map
+    // 5. Waiting: changes main status to WAITING, removes from PM/MA column, and transfers to CRM Map
     if (norm === 'waiting') {
       if (isSelecting) {
         if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: 'WAITING' });
+          await onTaskUpdate(task.id, { status: 'WAITING', assigneeId: null });
         } else {
-          await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
+          await tasksApi.updateTask(task.id, { status: 'WAITING', assigneeId: null } as any).catch(console.error);
           onDataRefresh();
         }
         toast.info('Task status changed to WAITING — transferred to CRM Map');
@@ -1920,7 +2324,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
@@ -1929,7 +2333,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
       <div ref={boardScrollRef} className="flex gap-5 px-6 pb-4 overflow-x-auto overflow-y-hidden custom-scrollbar h-full max-h-full min-h-0 select-none cursor-grab">
         {/* 1. Available Tasks Pool Column (Matches Image 1) */}
         {(() => {
-          const isCollapsed = !!collapsedColumns['available'];
+          const isCollapsed = resolveColumnCollapsedState(
+            'available',
+            collapsedColumns,
+            currentUser?.id,
+            isPmUser
+          );
           const isPinned = !!pinnedColumns['available'];
           const isSearchOpen = !!columnSearchOpen['available'];
           const searchQuery = columnSearches['available'] || '';
@@ -1982,6 +2391,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const showAvailableCutout = Boolean(
             activeOverId === 'available-pool' &&
             activeDragTask &&
+            isPmUser &&
             (activeDragTask.assigneeId || !poolIds.has(activeDragTask.id))
           );
 
@@ -2194,7 +2604,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             />
                           )}
                           <div
-                            className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}
+                            onClick={(e) => {
+                              if (e.defaultPrevented || activeDragTask) return;
+                              onOpenDetail(task);
+                            }}
+                            className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-colors group cursor-pointer ${cardBorderClass}`}
                             style={
                               isCustomLiveBorder
                                 ? {
@@ -2206,63 +2620,77 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           >
                             {/* Left: Task Info (Task title only in title line, circle dot beside bulletin below) */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-                              {/* Client Name + Subtask Marker */}
-                              <div className="text-[11px] font-medium truncate max-w-[190px] mb-1 flex items-center gap-1.5">
-                                {isSubtask && hasParentInColumn && (
-                                  <span
-                                    className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
-                                    title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
-                                  >
-                                    <CornerDownRight className="size-2.5 shrink-0" />
-                                  </span>
-                                )}
-                                {isSeparatedSubtask && (
-                                  <span
-                                    className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
-                                    title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
-                                  >
-                                    --
-                                  </span>
-                                )}
-                                {isUpwork && isLive ? (
-                                  <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1 truncate">
-                                    <span className="size-1.5 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
-                                    {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
-                                  </span>
-                                ) : isLive ? (
-                                  <span
-                                    className="font-semibold truncate flex items-center gap-1"
-                                    style={{ color: taskStatusHex }}
-                                  >
+                              {/* Client Name + Subtask Marker + PM Transfer Action */}
+                              <div className="flex items-center justify-between gap-1.5 mb-1 min-w-0">
+                                <div className="text-[11px] font-medium truncate min-w-0 flex items-center gap-1.5">
+                                  {isSubtask && hasParentInColumn && (
                                     <span
-                                      className="size-1.5 rounded-full animate-ping shrink-0"
-                                      style={{ backgroundColor: taskStatusHex }}
-                                    />
-                                    {task.progress?.client || task.list?.name || 'General'}
-                                  </span>
-                                ) : isMissingTime ? (
-                                  <span className="text-red-400 font-semibold truncate flex items-center gap-1">
-                                    <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
-                                    {task.progress?.client || task.list?.name || 'General'}
-                                  </span>
-                                ) : (
-                                  <span className="text-zinc-400 truncate">
-                                    {task.progress?.client || task.list?.name || 'General'}
-                                  </span>
+                                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                                      title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
+                                    >
+                                      <CornerDownRight className="size-2.5 shrink-0" />
+                                    </span>
+                                  )}
+                                  {isSeparatedSubtask && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
+                                      title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
+                                    >
+                                      --
+                                    </span>
+                                  )}
+                                  {isUpwork && isLive ? (
+                                    <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1 truncate">
+                                      <span className="size-1.5 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
+                                      {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
+                                    </span>
+                                  ) : isLive ? (
+                                    <span
+                                      className="font-semibold truncate flex items-center gap-1"
+                                      style={{ color: taskStatusHex }}
+                                    >
+                                      <span
+                                        className="size-1.5 rounded-full animate-ping shrink-0"
+                                        style={{ backgroundColor: taskStatusHex }}
+                                      />
+                                      {task.progress?.client || task.list?.name || 'General'}
+                                    </span>
+                                  ) : isMissingTime ? (
+                                    <span className="text-red-400 font-semibold truncate flex items-center gap-1">
+                                      <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
+                                      {task.progress?.client || task.list?.name || 'General'}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-400 truncate">
+                                      {task.progress?.client || task.list?.name || 'General'}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Transfer to... (PM only; not rendered for MAs) */}
+                                {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
+                                  <CardTransferDropdown
+                                    taskId={task.id}
+                                    currentAssigneeId={getEffectiveTaskMapHandlerId(task)}
+                                    users={transferableUsers}
+                                    onTransfer={(targetUserId) => handleTransferTaskCard(task, targetUserId)}
+                                  />
                                 )}
                               </div>
 
                               {/* Title */}
                               <h4
-                                onClick={() => onOpenDetail(task)}
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
                                 title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
                               >
                                 {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
                               </h4>
 
                               {/* Controls row: circle dot left of bulletin, priority flag */}
-                              <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
+                              <div
+                                className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 {/* Circle Dot Status Indicator */}
                                 <CardStatusDropdown
                                   taskId={task.id}
@@ -2322,6 +2750,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 className="w-full"
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
                                   Sub-Status
@@ -2352,7 +2781,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
         {sortedUserColumns.map(([userId, { user, tasks: userTasks }]) => {
           const initials = (user.name || 'U').substring(0, 2).toUpperCase();
           const avatarBg = getAssigneeAvatarColor(user.name || 'U');
-          const isCollapsed = !!collapsedColumns[userId];
+          const isCollapsed = resolveColumnCollapsedState(
+            userId,
+            collapsedColumns,
+            currentUser?.id,
+            isPmUser
+          );
           const isPinned = !!pinnedColumns[userId];
           const isSearchOpen = !!columnSearchOpen[userId];
           const searchQuery = columnSearches[userId] || '';
@@ -2369,9 +2803,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
             if (!matchesSearchFilter(t, searchQuery)) return false;
 
             // Admin task check: hide all tasks that are for the admin by default,
-            // but the General Task (assumption block) representing their current admin work MUST stay visible!
+            // except the General Task (assumption block) or real tasks inputted by this MA from the spreadsheet!
             const isAdmin = isTaskUnderAdmin(t);
-            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin) return false;
+            const hasUserSheetInput = Boolean(
+              hasSpreadsheetTaskInput(t, { isHistory, now: boardTime }) &&
+              doesProgressMatchUser(t.progress?.maName, user.name)
+            );
+            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput) return false;
 
             // Client filter check: the General Task representing the user's active schedule input is always shown in their column
             if (!t.isAssumptionBlock && userClientFilter !== 'ALL') {
@@ -2668,8 +3106,114 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             ? 'border-amber-500/30 hover:border-amber-400/55 shadow-sm'
                             : 'border-border dark:border-zinc-800/90 hover:border-zinc-700 shadow-sm';
 
+                  const canDragThisCard = canDragTaskMapCard({
+                    isPmUser,
+                    currentUserId: currentUser?.id,
+                    columnUserId: userId,
+                    isFromAvailable: false,
+                    isAssumptionBlock: task.isAssumptionBlock,
+                  });
+
+                  const realTaskId =
+                    task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+                      ? task.linkedTaskId
+                      : (!task.isAssumptionBlock ? task.id : null);
+                  const realListId =
+                    task.listId && task.listId !== 'general'
+                      ? task.listId
+                      : (task.list?.id && task.list.id !== 'general' ? task.list.id : null);
+
+                  const syncSessionPatch = (patch: Record<string, unknown>) => {
+                    if (!user?.name) return;
+                    const sKey = (user.name || '').trim().toLowerCase();
+                    const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
+                    useAppStore.getState().updateMaActiveSession(user.name, {
+                      ...prevSess,
+                      ...patch,
+                    });
+                  };
+
+                  const toRedirectTaskParam = (id?: string | null) =>
+                    id ? (id.startsWith('subtask:') ? id.slice('subtask:'.length) : id) : null;
+
+                  const openResolvedSubtaskOrTaskModal = async (targetId: string, fallbackListId?: string | null) => {
+                    if (targetId.startsWith('subtask:')) {
+                      const subId = targetId.slice('subtask:'.length);
+                      const res = await tasksApi.getTask(subId).catch(() => null);
+                      if (res?.task) {
+                        onOpenDetail({
+                          isSubtask: true,
+                          parentTaskId: res.task.id,
+                          parentTaskTitle: res.task.title,
+                          subtaskId: res.subtask?.id || subId,
+                          listId: res.task.listId || fallbackListId,
+                          list: res.task.list || task.list,
+                          priority: res.task.priority || task.priority,
+                        } as any);
+                        return true;
+                      }
+                      return false;
+                    }
+                    onOpenDetail({
+                      ...task,
+                      id: targetId,
+                      ...(fallbackListId ? { listId: fallbackListId } : {}),
+                    });
+                    return true;
+                  };
+
+                  const handleCardClick = async () => {
+                    if (!task.isAssumptionBlock) {
+                      onOpenDetail(task);
+                      return;
+                    }
+                    if (realTaskId) {
+                      const opened = await openResolvedSubtaskOrTaskModal(realTaskId, realListId);
+                      if (opened) return;
+                    }
+                    if (realListId && !realTaskId) {
+                      router.push(`/lists/${realListId}`);
+                      return;
+                    }
+                    try {
+                      const resolved = await taskMapApi.getTaskDescription({
+                        taskId: realTaskId,
+                        title: task.title,
+                        client: effectiveProgress?.client || task.list?.name || null,
+                      });
+                      if (resolved?.taskId || resolved?.listId) {
+                        syncSessionPatch({
+                          taskId: resolved.taskId || realTaskId,
+                          listId: resolved.listId,
+                          taskStatus: resolved.status || undefined,
+                          priority: resolved.priority || undefined,
+                          subStatuses: resolved.subStatuses,
+                        });
+                        if (resolved.taskId) {
+                          const opened = await openResolvedSubtaskOrTaskModal(
+                            resolved.taskId,
+                            resolved.listId || realListId
+                          );
+                          if (opened) return;
+                        }
+                        if (resolved.listId) {
+                          const redirectId = toRedirectTaskParam(resolved.taskId || realTaskId);
+                          router.push(
+                            redirectId
+                              ? `/lists/${resolved.listId}?task=${encodeURIComponent(redirectId)}`
+                              : `/lists/${resolved.listId}`
+                          );
+                          return;
+                        }
+                      }
+                      toast.info('No matching project found for this task.');
+                    } catch {
+                      toast.error('Failed to resolve project for this task.');
+                    }
+                  };
+
                   return (
-                    <DraggableTaskCard key={task.id} task={task} disabled={!isPmUser || task.isAssumptionBlock}>
+                    <DraggableTaskCard key={task.id} task={task} sourceUserId={userId} disabled={!canDragThisCard}>
                       <div className={isSubtask && hasParentInColumn ? 'relative pl-4' : ''}>
                         {isSubtask && hasParentInColumn && (
                           <div
@@ -2678,7 +3222,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           />
                         )}
                         <div
-                          className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group ${cardBorderClass}`}
+                          onClick={(e) => {
+                            if (e.defaultPrevented || activeDragTask) return;
+                            void handleCardClick();
+                          }}
+                          className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-colors group cursor-pointer ${cardBorderClass}`}
                           style={
                             isCustomLiveWorkingBorder
                               ? {
@@ -2697,218 +3245,166 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 ? rawClientName
                                 : (task.isAssumptionBlock ? 'No client inputted' : 'General');
                               return (
-                                <div className="text-[11px] font-medium truncate max-w-[190px] mb-1 flex items-center gap-1.5">
-                                  {isSubtask && hasParentInColumn && (
-                                    <span
-                                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
-                                      title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
-                                    >
-                                      <CornerDownRight className="size-2.5 shrink-0" />
-                                    </span>
-                                  )}
-                                  {isSeparatedSubtask && (
-                                    <span
-                                      className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
-                                      title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
-                                    >
-                                      --
-                                    </span>
-                                  )}
-                                  {isUpwork && isLiveWorking ? (
-                                    <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
-                                      <span className="size-2 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
-                                      {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
-                                    </span>
-                                  ) : isLiveWorking ? (
-                                    <span
-                                      className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate"
-                                      style={{ color: taskStatusHex }}
-                                    >
-                                      <span className="relative flex size-2 shrink-0">
-                                        <span
-                                          className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                                          style={{ backgroundColor: taskStatusHex }}
-                                        />
-                                        <span
-                                          className="relative inline-flex rounded-full size-2"
-                                          style={{ backgroundColor: taskStatusHex }}
-                                        />
+                                <div className="flex items-center justify-between gap-1.5 mb-1 min-w-0">
+                                  <div className="text-[11px] font-medium truncate min-w-0 flex items-center gap-1.5">
+                                    {isSubtask && hasParentInColumn && (
+                                      <span
+                                        className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                                        title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
+                                      >
+                                        <CornerDownRight className="size-2.5 shrink-0" />
                                       </span>
-                                      {displayClientName}
-                                    </span>
-                                  ) : isMissingTime ? (
-                                    <span className="text-red-400 font-semibold truncate flex items-center gap-1">
-                                      <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
-                                      {displayClientName}
-                                    </span>
-                                  ) : (
-                                    <span className="text-zinc-400 truncate">
-                                      {displayClientName}
-                                    </span>
+                                    )}
+                                    {isSeparatedSubtask && (
+                                      <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
+                                        title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
+                                      >
+                                        --
+                                      </span>
+                                    )}
+                                    {isUpwork && isLiveWorking ? (
+                                      <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
+                                        <span className="size-2 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
+                                        {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
+                                      </span>
+                                    ) : isLiveWorking ? (
+                                      <span
+                                        className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate"
+                                        style={{ color: taskStatusHex }}
+                                      >
+                                        <span className="relative flex size-2 shrink-0">
+                                          <span
+                                            className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                                            style={{ backgroundColor: taskStatusHex }}
+                                          />
+                                          <span
+                                            className="relative inline-flex rounded-full size-2"
+                                            style={{ backgroundColor: taskStatusHex }}
+                                          />
+                                        </span>
+                                        {displayClientName}
+                                      </span>
+                                    ) : isMissingTime ? (
+                                      <span className="text-red-400 font-semibold truncate flex items-center gap-1">
+                                        <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
+                                        {displayClientName}
+                                      </span>
+                                    ) : (
+                                      <span className="text-zinc-400 truncate">
+                                        {displayClientName}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Transfer to... (PM only; not rendered for MAs) */}
+                                  {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
+                                    <CardTransferDropdown
+                                      taskId={task.id}
+                                      currentAssigneeId={getEffectiveTaskMapHandlerId(task) || userId}
+                                      users={transferableUsers}
+                                      onTransfer={(targetUserId) => handleTransferTaskCard(task, targetUserId)}
+                                    />
                                   )}
                                 </div>
                               );
                             })()}
 
                             {/* Title */}
-                            {(() => {
-                              const realTaskId =
-                                task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
-                                  ? task.linkedTaskId
-                                  : (!task.isAssumptionBlock ? task.id : null);
-                              const realListId =
-                                task.listId && task.listId !== 'general'
-                                  ? task.listId
-                                  : (task.list?.id && task.list.id !== 'general' ? task.list.id : null);
+                            <h4
+                              className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
+                              title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
+                            >
+                              {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
+                            </h4>
 
-                              const syncSessionPatch = (patch: Record<string, unknown>) => {
-                                if (!user?.name) return;
-                                const sKey = (user.name || '').trim().toLowerCase();
-                                const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
-                                useAppStore.getState().updateMaActiveSession(user.name, {
-                                  ...prevSess,
-                                  ...patch,
-                                });
-                              };
-
-                              const toRedirectTaskParam = (id?: string | null) =>
-                                id ? (id.startsWith('subtask:') ? id.slice('subtask:'.length) : id) : null;
-
-                              const handleTitleClick = async () => {
-                                if (!task.isAssumptionBlock) {
-                                  onOpenDetail(task);
-                                  return;
-                                }
-                                if (realListId) {
-                                  const redirectId = toRedirectTaskParam(realTaskId);
-                                  router.push(
-                                    redirectId
-                                      ? `/lists/${realListId}?task=${encodeURIComponent(redirectId)}`
-                                      : `/lists/${realListId}`
-                                  );
-                                  return;
-                                }
-                                try {
-                                  const resolved = await taskMapApi.getTaskDescription({
-                                    taskId: realTaskId,
-                                    title: task.title,
-                                    client: effectiveProgress?.client || task.list?.name || null,
-                                  });
-                                  if (resolved?.listId) {
-                                    syncSessionPatch({
-                                      taskId: resolved.taskId || realTaskId,
-                                      listId: resolved.listId,
-                                      taskStatus: resolved.status || undefined,
-                                      priority: resolved.priority || undefined,
-                                      subStatuses: resolved.subStatuses,
-                                    });
-                                    const redirectId = toRedirectTaskParam(resolved.taskId);
-                                    router.push(
-                                      redirectId
-                                        ? `/lists/${resolved.listId}?task=${encodeURIComponent(redirectId)}`
-                                        : `/lists/${resolved.listId}`
-                                    );
-                                    return;
+                            {/* Controls row: circle dot left of bulletin, priority flag */}
+                            <div
+                              className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {/* Circle Dot Status Indicator */}
+                              <CardStatusDropdown
+                                taskId={realTaskId || task.id}
+                                currentStatus={task.status || 'In progress'}
+                                listId={realListId || undefined}
+                                listStatuses={task.list?.statuses}
+                                onSelect={(newStatus: string) => {
+                                  let effectiveStatus = newStatus;
+                                  if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
+                                    effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
                                   }
-                                  toast.info('No matching project found for this task.');
-                                } catch {
-                                  toast.error('Failed to resolve project for this task.');
-                                }
-                              };
+                                  if (task.isAssumptionBlock) {
+                                    task.status = effectiveStatus;
+                                    syncSessionPatch({
+                                      taskStatus: effectiveStatus,
+                                      status: effectiveStatus,
+                                    });
+                                    if (!realTaskId) {
+                                      toast.success(`Status updated to ${effectiveStatus}`);
+                                      return;
+                                    }
+                                  }
+                                  const targetId = realTaskId || task.id;
+                                  const leavesUserColumn = isOtherBoardWorkflowStatus({ status: effectiveStatus });
+                                  const updatePayload: Partial<TaskMapItem> = leavesUserColumn
+                                    ? { status: effectiveStatus, assigneeId: null }
+                                    : { status: effectiveStatus };
+                                  if (onTaskUpdate) {
+                                    onTaskUpdate(targetId, updatePayload);
+                                  } else {
+                                    tasksApi
+                                      .updateTask(targetId, updatePayload as any)
+                                      .then(() => onDataRefresh())
+                                      .catch((e: any) => toast.error(e.message));
+                                  }
+                                }}
+                              />
 
-                              return (
-                                <>
-                                  <h4
-                                    onClick={handleTitleClick}
-                                    className="text-[13px] font-bold text-zinc-100 group-hover:text-white cursor-pointer line-clamp-2 leading-snug hover:underline my-0.5 h-[36px]"
-                                    title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
-                                  >
-                                    {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
-                                  </h4>
+                              {/* Bulletin Icon - click shows task description (lazy-fetched on press for session blocks) */}
+                              <TaskDescriptionButton
+                                description={task.description}
+                                taskTitle={task.title}
+                                taskId={realTaskId}
+                                clientName={effectiveProgress?.client || task.list?.name || null}
+                                lazyFetch={Boolean(task.isAssumptionBlock)}
+                                onResolvedTaskMeta={(meta) => {
+                                  if (!task.isAssumptionBlock) return;
+                                  syncSessionPatch({
+                                    ...(meta.taskId ? { taskId: meta.taskId } : {}),
+                                    ...(meta.listId ? { listId: meta.listId } : {}),
+                                    ...(meta.status ? { taskStatus: meta.status } : {}),
+                                    ...(meta.priority ? { priority: meta.priority } : {}),
+                                    ...(Array.isArray(meta.subStatuses) ? { subStatuses: meta.subStatuses } : {}),
+                                  });
+                                }}
+                              />
 
-                                  {/* Controls row: circle dot left of bulletin, priority flag */}
-                                  <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
-                                    {/* Circle Dot Status Indicator */}
-                                    <CardStatusDropdown
-                                      taskId={realTaskId || task.id}
-                                      currentStatus={task.status || 'In progress'}
-                                      listId={realListId || undefined}
-                                      listStatuses={task.list?.statuses}
-                                      onSelect={(newStatus: string) => {
-                                        let effectiveStatus = newStatus;
-                                        if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                          effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
-                                        }
-                                        if (task.isAssumptionBlock) {
-                                          task.status = effectiveStatus;
-                                          syncSessionPatch({
-                                            taskStatus: effectiveStatus,
-                                            status: effectiveStatus,
-                                          });
-                                          if (!realTaskId) {
-                                            toast.success(`Status updated to ${effectiveStatus}`);
-                                            return;
-                                          }
-                                        }
-                                        const targetId = realTaskId || task.id;
-                                        if (onTaskUpdate) {
-                                          onTaskUpdate(targetId, { status: effectiveStatus });
-                                        } else {
-                                          tasksApi
-                                            .updateTask(targetId, { status: effectiveStatus })
-                                            .then(() => onDataRefresh())
-                                            .catch((e: any) => toast.error(e.message));
-                                        }
-                                      }}
-                                    />
-
-                                    {/* Bulletin Icon - click shows task description (lazy-fetched on press for session blocks) */}
-                                    <TaskDescriptionButton
-                                      description={task.description}
-                                      taskTitle={task.title}
-                                      taskId={realTaskId}
-                                      clientName={effectiveProgress?.client || task.list?.name || null}
-                                      lazyFetch={Boolean(task.isAssumptionBlock)}
-                                      onResolvedTaskMeta={(meta) => {
-                                        if (!task.isAssumptionBlock) return;
-                                        syncSessionPatch({
-                                          ...(meta.taskId ? { taskId: meta.taskId } : {}),
-                                          ...(meta.listId ? { listId: meta.listId } : {}),
-                                          ...(meta.status ? { taskStatus: meta.status } : {}),
-                                          ...(meta.priority ? { priority: meta.priority } : {}),
-                                          ...(Array.isArray(meta.subStatuses) ? { subStatuses: meta.subStatuses } : {}),
-                                        });
-                                      }}
-                                    />
-
-                                    {/* Priority Flag and Label */}
-                                    <CardPriorityDropdown
-                                      taskId={realTaskId || task.id}
-                                      priority={task.priority || 'NORMAL'}
-                                      onSelect={(newPriority: string) => {
-                                        if (task.isAssumptionBlock) {
-                                          task.priority = newPriority as any;
-                                          syncSessionPatch({ priority: newPriority });
-                                          if (!realTaskId) {
-                                            toast.success(`Priority updated to ${newPriority}`);
-                                            return;
-                                          }
-                                        }
-                                        const targetId = realTaskId || task.id;
-                                        if (onTaskUpdate) {
-                                          onTaskUpdate(targetId, { priority: newPriority });
-                                        } else {
-                                          tasksApi
-                                            .updateTask(targetId, { priority: newPriority as any })
-                                            .then(() => onDataRefresh())
-                                            .catch((e: any) => toast.error(e.message));
-                                        }
-                                      }}
-                                    />
-                                  </div>
-                                </>
-                              );
-                            })()}
+                              {/* Priority Flag and Label */}
+                              <CardPriorityDropdown
+                                taskId={realTaskId || task.id}
+                                priority={task.priority || 'NORMAL'}
+                                onSelect={(newPriority: string) => {
+                                  if (task.isAssumptionBlock) {
+                                    task.priority = newPriority as any;
+                                    syncSessionPatch({ priority: newPriority });
+                                    if (!realTaskId) {
+                                      toast.success(`Priority updated to ${newPriority}`);
+                                      return;
+                                    }
+                                  }
+                                  const targetId = realTaskId || task.id;
+                                  if (onTaskUpdate) {
+                                    onTaskUpdate(targetId, { priority: newPriority });
+                                  } else {
+                                    tasksApi
+                                      .updateTask(targetId, { priority: newPriority as any })
+                                      .then(() => onDataRefresh())
+                                      .catch((e: any) => toast.error(e.message));
+                                  }
+                                }}
+                              />
+                            </div>
                           </div>
 
                           {/* SEPARATOR: Vertical line between task info and statuses */}
@@ -2924,6 +3420,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               className="w-full"
                               onPointerDown={(e) => e.stopPropagation()}
                               onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
                             >
                               <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
                                 Sub-Status
@@ -2945,11 +3442,28 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   );
                 };
 
-                const showColumnCutout = Boolean(
+                const activeDragIsFromPool = Boolean(activeDragTask && poolIds.has(activeDragTask.id));
+                const activeDragSourceOwnerId = activeDragTask && !activeDragIsFromPool
+                  ? getEffectiveTaskMapHandlerId(activeDragTask)
+                  : null;
+                const canShowColumnCutout = Boolean(
                   activeOverId === `user-${userId}` &&
                   activeDragTask &&
-                  (poolIds.has(activeDragTask.id) || !activeDragTask.assigneeId || activeDragTask.assigneeId !== userId)
+                  canDropTaskMapCard({
+                    isPmUser,
+                    currentUserId: currentUser?.id,
+                    sourceUserId: activeDragSourceOwnerId,
+                    isFromAvailable: activeDragIsFromPool,
+                    targetColumnId: `user-${userId}`,
+                  }).allowed &&
+                  (activeDragIsFromPool || !activeDragTask.assigneeId || activeDragTask.assigneeId !== userId)
                 );
+                const showColumnCutout = canShowColumnCutout;
+                const allowStartInProgress = canStartInProgressSlot({
+                  isPmUser,
+                  currentUserId: currentUser?.id,
+                  columnUserId: userId,
+                });
 
                 return (
                   <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
@@ -3004,7 +3518,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       </div>
 
                       {activeInProgTask ? (
-                        renderCard(activeInProgTask)
+                        <DroppableInProgressSlot userId={userId} disabled={false}>
+                          {renderCard(activeInProgTask)}
+                        </DroppableInProgressSlot>
                       ) : (
                         <TaskMapInProgressDropCard
                           userId={userId}
@@ -3012,7 +3528,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           availableTasks={sortAvailablePoolTasks(availablePool)}
                           queuedTasks={queuedTasks}
                           onSelectTask={(taskId) => handleSelectInProgressTask(taskId, userId)}
-                          disabled={!isPmUser && currentUser?.id !== userId}
+                          disabled={false}
+                          canBrowse={allowStartInProgress}
                         />
                       )}
                     </div>
@@ -3044,9 +3561,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
       {/* Drag Overlay Preview (High-fidelity card using board's signature drag animation) */}
       <DragOverlay
         zIndex={100}
+        className="will-change-transform"
         dropAnimation={{
-          duration: 250,
-          easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
+          duration: 180,
+          easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
         }}
       >
         {activeDragTask ? (() => {

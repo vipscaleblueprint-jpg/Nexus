@@ -633,6 +633,17 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       }
     });
 
+    s.on('ma:session_updated', (data) => {
+      window.dispatchEvent(new CustomEvent('ma:session_updated', { detail: data }));
+      if (data?.maName) {
+        useAppStore.getState().updateMaActiveSession(data.maName, data?.cleared ? null : data);
+      }
+    });
+
+    s.on('task:progress_updated', (data) => {
+      window.dispatchEvent(new CustomEvent('task:progress_updated', { detail: data }));
+    });
+
     s.on('task:deleted', ({ id }) => {
       useAppStore.getState().removeTask(id);
       window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));

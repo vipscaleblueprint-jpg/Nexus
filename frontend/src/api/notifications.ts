@@ -39,6 +39,7 @@ export interface GetNotificationsResponse {
   notifications: TaskNotification[];
   total: number;
   unreadCount: number;
+  taskMapUnreadCount?: number;
   hasMore: boolean;
   page?: number;
   limit?: number;

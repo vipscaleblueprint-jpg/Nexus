@@ -123,6 +123,54 @@ export interface ListStatusToken {
   order?: number;
 }
 
+export type CrmFollowUpTier =
+  | 'TODAY'
+  | 'NEXT_DAY'
+  | 'THIRD_DAY'
+  | 'FIFTH_DAY'
+  | 'SEVENTH_PLUS';
+
+export interface CrmFollowUpRule {
+  tier: CrmFollowUpTier;
+  label: string;
+  colorName: 'neutral' | 'yellow' | 'orange' | 'red' | 'violet';
+  hex: string;
+  breathe: boolean;
+  requiresModal: boolean;
+}
+
+export interface CrmWaitingMeta {
+  waitingSince: string;
+  daysPassed: number;
+  rule: CrmFollowUpRule;
+  lastResponseAt?: string | null;
+  lastResponseByName?: string | null;
+  lastResponseNote?: string | null;
+  lastResponseAction?: string | null;
+}
+
+export interface PendingCrmFollowUpItem {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  listId: string;
+  list: { id: string; name: string } | null;
+  waitingSince: string;
+  daysPassed: number;
+  rule: CrmFollowUpRule;
+  lastResponseAt: string | null;
+  lastResponseByName: string | null;
+  lastResponseNote: string | null;
+  subStatuses: string[];
+}
+
+export type CrmFollowUpResponseAction =
+  | 'FOLLOWED_UP'
+  | 'REVISIONS'
+  | 'MOVE_TO_POOL'
+  | 'CLOSED';
+
 export interface TaskMapItem {
   id: string;
   isSubtask?: boolean;
@@ -164,6 +212,7 @@ export interface TaskMapItem {
   upworkStartedAt?: string | null;
   upworkSession?: UpworkSession | null;
   progress?: TaskProgress | null;
+  crmWaitingMeta?: CrmWaitingMeta | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -321,9 +370,9 @@ export function isTaskHandedOver(task?: TaskMapItem | null): boolean {
 
 export function getEffectiveTaskMapHandlerId(task?: TaskMapItem | null): string | null {
   if (!task) return null;
+  if (isTaskHandedOver(task)) return null;
   const pmAssignedId = getPmAssignedUserId(task);
   if (pmAssignedId) return pmAssignedId;
-  if (isTaskHandedOver(task)) return null;
   return task.assigneeId || task.assignee?.id || null;
 }
 
@@ -452,13 +501,13 @@ export function applyOptimisticTaskMapAssignment(
   const existingStatuses = Array.isArray(task.taskMap?.statuses) ? [...task.taskMap.statuses] : [];
 
   if (!targetUser) {
-    // Unassign / return to Available Tasks pool
+    // Unassign / return to Available Tasks pool (preserve status & mark Available Task to match backend)
     return {
       ...task,
       assigneeId: null,
       assignee: null,
       assignees: [],
-      status: isCadence ? task.status : 'PENDING',
+      status: isCadence ? task.status : task.status || 'PENDING',
       progress: task.progress
         ? {
           ...task.progress,
@@ -469,13 +518,13 @@ export function applyOptimisticTaskMapAssignment(
       taskMap: {
         ...(task.taskMap || {
           taskId: task.id,
-          statuses: ['Hand-over'],
+          statuses: ['Available Task'],
           shift: 'DAY',
           stepOrder: 0,
           dontRollover: false,
         }),
         handedOver: true,
-        statuses: ['Hand-over'],
+        statuses: ['Available Task'],
         pmReviews: filteredReviews,
       },
     };
@@ -496,7 +545,7 @@ export function applyOptimisticTaskMapAssignment(
 
   const cleanedStatuses = existingStatuses.filter((st) => {
     const norm = st.trim().toUpperCase().replace(/[\s_-]+/g, '');
-    if (norm === 'HANDOVER') return false;
+    if (norm === 'HANDOVER' || norm === 'AVAILABLETASK' || norm === 'REVISION' || norm === 'REVISIONS') return false;
     if (mode === 'QUEUE' && norm === 'INPROGRESS') return false;
     return true;
   });
@@ -946,6 +995,34 @@ export const taskMapApi = {
     if (params.client) q.set('client', params.client);
     const qs = q.toString() ? `?${q.toString()}` : '';
     return apiClient(`/api/task-map/task-description${qs}`);
+  },
+
+  getPendingCrmFollowUps: async (): Promise<{
+    success: boolean;
+    items: PendingCrmFollowUpItem[];
+  }> => {
+    return apiClient(`/api/task-map/crm/follow-ups?_t=${Date.now()}`);
+  },
+
+  respondCrmFollowUp: async (
+    taskId: string,
+    payload: { note: string; action: CrmFollowUpResponseAction }
+  ): Promise<{
+    success: boolean;
+    task?: any;
+    error?: string;
+    uncheckedAudits?: string[];
+    openSubtasks?: string[];
+  }> => {
+    markTaskSavingToDb(taskId, true);
+    try {
+      return await apiClient(`/api/task-map/crm/follow-ups/${taskId}/respond`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } finally {
+      markTaskSavingToDb(taskId, false);
+    }
   },
 };
 
@@ -1525,6 +1602,8 @@ export {
   areLevel1AuditsComplete,
   isInstructionAuditComplete,
   canPerformAudit,
+  getCompletedAuditActorIds,
+  getTaskAuditStatus,
   isUiUxAudit,
   isDesignAudit,
   isInstructionAudit,
@@ -1605,7 +1684,7 @@ export function getDefaultTaskMapSubStatuses(
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
   if (canonical === 'CRM') return ['To send'];
-  if (canonical === 'WAITING') return ['Waiting'];
+  if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
   if (
     canonical === 'IN REVIEW' ||
@@ -1799,6 +1878,104 @@ export function collectClientDashboardLists(
   }
 
   return Array.from(clientMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getCrmFollowUpRule(daysPassed: number): CrmFollowUpRule {
+  if (daysPassed >= 7) {
+    return {
+      tier: 'SEVENTH_PLUS',
+      label: '7th Day+',
+      colorName: 'violet',
+      hex: '#8b5cf6',
+      breathe: true,
+      requiresModal: true,
+    };
+  }
+  if (daysPassed >= 5) {
+    return {
+      tier: 'FIFTH_DAY',
+      label: '5th Day',
+      colorName: 'red',
+      hex: '#ef4444',
+      breathe: true,
+      requiresModal: true,
+    };
+  }
+  if (daysPassed >= 3) {
+    return {
+      tier: 'THIRD_DAY',
+      label: '3rd Day',
+      colorName: 'orange',
+      hex: '#f97316',
+      breathe: true,
+      requiresModal: daysPassed >= 4,
+    };
+  }
+  if (daysPassed >= 1) {
+    return {
+      tier: 'NEXT_DAY',
+      label: 'Next Day',
+      colorName: 'yellow',
+      hex: '#eab308',
+      breathe: true,
+      requiresModal: false,
+    };
+  }
+  return {
+    tier: 'TODAY',
+    label: 'Today',
+    colorName: 'neutral',
+    hex: '#71717a',
+    breathe: false,
+    requiresModal: false,
+  };
+}
+
+export function getManilaCalendarDaysPassed(
+  sinceInput?: Date | string | null,
+  now: Date = new Date()
+): number {
+  if (!sinceInput) return 0;
+  const sinceStr = getManilaDateKey(sinceInput);
+  const todayStr = getManilaDateKey(now);
+  if (!sinceStr || !todayStr) return 0;
+  const [sy, sm, sd] = sinceStr.split('-').map(Number);
+  const [ty, tm, td] = todayStr.split('-').map(Number);
+  if (!sy || !sm || !sd || !ty || !tm || !td) return 0;
+  const sinceUtc = Date.UTC(sy, sm - 1, sd);
+  const todayUtc = Date.UTC(ty, tm - 1, td);
+  return Math.max(0, Math.floor((todayUtc - sinceUtc) / 86_400_000));
+}
+
+export function getTaskCrmWaitingInfo(task: TaskMapItem, now: Date = new Date()): CrmWaitingMeta {
+  if (task.crmWaitingMeta?.waitingSince) {
+    const daysPassed = getManilaCalendarDaysPassed(task.crmWaitingMeta.waitingSince, now);
+    return {
+      ...task.crmWaitingMeta,
+      daysPassed,
+      rule: getCrmFollowUpRule(daysPassed),
+    };
+  }
+
+  const revs = parseTaskPmReviewsList(task);
+  const meta = revs.find((r: any) => r && r.type === 'CRM_WAITING_META');
+  const since =
+    meta?.waitingSince ||
+    task.taskMap?.updatedAt ||
+    task.updatedAt ||
+    task.createdAt ||
+    new Date().toISOString();
+  const daysPassed = getManilaCalendarDaysPassed(since, now);
+
+  return {
+    waitingSince: since,
+    daysPassed,
+    rule: getCrmFollowUpRule(daysPassed),
+    lastResponseAt: meta?.lastResponseAt || null,
+    lastResponseByName: meta?.lastResponseByName || null,
+    lastResponseNote: meta?.lastResponseNote || null,
+    lastResponseAction: meta?.lastResponseAction || null,
+  };
 }
 
 

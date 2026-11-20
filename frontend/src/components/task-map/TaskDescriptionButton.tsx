@@ -213,6 +213,7 @@ export const TaskDescriptionButton: React.FC<Props> = ({
         ref={triggerRef}
         type="button"
         onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={handleToggle}
         className={`p-0.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer shrink-0 ${
           hasDesc || isPendingLazyFetch

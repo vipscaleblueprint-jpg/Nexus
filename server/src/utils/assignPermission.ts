@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma';
 
 // Same PM/Senior match as findUsersByRoleCategory('PM') and the frontend's isProjectManagerOrAdmin
-const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|^pm$|\bsenior\b/i;
+const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|\bpm\b|\bsenior\b/i;
 
 /**
  * Names the PM/Senior role(s) exactly as they are written in the WorkspaceRole table.

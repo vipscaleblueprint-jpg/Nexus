@@ -199,6 +199,8 @@ interface AppState {
   unreadNotifications: number;
   setUnreadNotifications: (count: number) => void;
   decrementUnreadNotifications: () => void;
+  taskMapUnreadCount: number;
+  setTaskMapUnreadCount: (count: number) => void;
 
   // Page & Modal Titles (for browser tab and header display)
   pageTitle: string | null;
@@ -508,6 +510,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   unreadNotifications: 0,
   setUnreadNotifications: (count) => set({ unreadNotifications: count }),
   decrementUnreadNotifications: () => set((state) => ({ unreadNotifications: Math.max(0, state.unreadNotifications - 1) })),
+  taskMapUnreadCount: 0,
+  setTaskMapUnreadCount: (count) => set({ taskMapUnreadCount: count }),
 
   pageTitle: null,
   modalTitle: null,

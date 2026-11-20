@@ -237,8 +237,15 @@
   --color-violet-200: #5b21b6;
   --color-violet-300: #6d28d9;
 
+  /* Pale fuchsia text → readable on light */
+  --color-fuchsia-100: #701a75;
+  --color-fuchsia-200: #86198f;
+  --color-fuchsia-300: #a21caf;
+
   /* Deep 950 backgrounds on dark → soft tinted backgrounds on light */
   --color-purple-950: #f3e8ff;
+  --color-violet-950: #f5f3ff;
+  --color-fuchsia-950: #fdf4ff;
   --color-blue-950: #eff6ff;
   --color-emerald-950: #ecfdf5;
   --color-amber-950: #fffbeb;
@@ -409,6 +416,24 @@ html.disable-transitions * {
   ::view-transition-new(root) {
     animation: none !important;
   }
+  .animate-border-glow-breathe {
+    animation: none !important;
+  }
+}
+
+/* Breathing animation for glowing card borders only (keeps card contents crisp) */
+@keyframes border-glow-breathe {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-border-glow-breathe {
+  animation: border-glow-breathe 2.8s ease-in-out infinite;
+  will-change: opacity;
 }
 
 /* Ensure typing cursor only on actually typable fields */

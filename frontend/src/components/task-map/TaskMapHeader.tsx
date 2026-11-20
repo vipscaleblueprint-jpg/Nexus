@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
 import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, AuditorRoleOption, isProjectBasedUpwork, subscribeTaskMapSaving } from '@/api/taskMap';
-import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus, Loader2 } from 'lucide-react';
+import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus, Loader2, ArrowUpDown, ArrowDownWideNarrow, ArrowUpNarrowWide } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { isAaronUser, isProjectManagerOrAdmin } from '@/lib/permissions';
 
@@ -32,7 +32,11 @@ interface Props {
   onSelectClients?: (clients: string[] | 'ALL') => void;
   selectedClient?: string;
   onClientChange?: (clientId: string) => void;
+  taskMapQueueCount?: number;
   auditingCount?: number;
+  crmCount?: number;
+  maSortMode?: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC';
+  onMaSortModeChange?: (mode: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC') => void;
   availableMAs?: Array<{ id: string; name: string; avatarUrl?: string | null; roles?: string[] }>;
   selectedMAs?: string[];
   onSelectedMAsChange?: (maIds: string[]) => void;
@@ -108,7 +112,11 @@ export const TaskMapHeader: React.FC<Props> = ({
   onSelectClients,
   selectedClient = 'ALL',
   onClientChange,
+  taskMapQueueCount = 0,
   auditingCount = 0,
+  crmCount = 0,
+  maSortMode = 'DEFAULT',
+  onMaSortModeChange,
   availableMAs = [],
   selectedMAs = [],
   onSelectedMAsChange,
@@ -854,6 +862,17 @@ export const TaskMapHeader: React.FC<Props> = ({
               >
                 <Kanban className="size-3.5" />
                 <span>Task Map</span>
+                {taskMapQueueCount > 0 && (
+                  <span
+                    className={`inline-flex items-center justify-center whitespace-nowrap shrink-0 leading-none text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                      currentView === 'BOARD'
+                        ? 'bg-white/20 text-white'
+                        : 'bg-blue-500/15 text-blue-500 dark:text-blue-400 border border-blue-500/30'
+                    }`}
+                  >
+                    {taskMapQueueCount > 99 ? '99+' : taskMapQueueCount}
+                  </span>
+                )}
               </button>
 
               <button
@@ -866,6 +885,17 @@ export const TaskMapHeader: React.FC<Props> = ({
               >
                 <ShieldCheck className="size-3.5" />
                 <span>Auditor Map</span>
+                {auditingCount > 0 && (
+                  <span
+                    className={`inline-flex items-center justify-center whitespace-nowrap shrink-0 leading-none text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                      currentView === 'AUDITING'
+                        ? 'bg-white/20 text-white'
+                        : 'bg-amber-500/15 text-amber-500 dark:text-amber-400 border border-amber-500/30'
+                    }`}
+                  >
+                    {auditingCount > 99 ? '99+' : auditingCount}
+                  </span>
+                )}
               </button>
 
               {hasCrmAccess && (
@@ -879,12 +909,23 @@ export const TaskMapHeader: React.FC<Props> = ({
                 >
                   <UserCheck className="size-3.5" />
                   <span>CRM Map</span>
+                  {crmCount > 0 && (
+                    <span
+                      className={`inline-flex items-center justify-center whitespace-nowrap shrink-0 leading-none text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                        currentView === 'CRM'
+                          ? 'bg-white/20 text-white'
+                          : 'bg-[#22A3AE]/15 text-[#22A3AE] border border-[#22A3AE]/30'
+                      }`}
+                    >
+                      {crmCount > 99 ? '99+' : crmCount}
+                    </span>
+                  )}
                 </button>
               )}
             </div>
           )}
 
-          {/* Right: Status Indicator + Clean Search Marketing Name Input */}
+          {/* Right: Status Indicator + Manage Shifts + Clean Search Marketing Name Input */}
           <div className="flex items-center gap-2.5">
             {savingCount > 0 ? (
               <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[11px] font-semibold animate-in fade-in duration-150">
@@ -897,6 +938,16 @@ export const TaskMapHeader: React.FC<Props> = ({
                 <span>Loading filter...</span>
               </div>
             ) : null}
+
+            {/* Link to Audit Shifts configuration / schedule view */}
+            <Link
+              href="/settings/users?tab=shifts"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-zinc-700 rounded-xl text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors shrink-0"
+              title="Configure Shift Members & Audit Shifts"
+            >
+              <Users className="size-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">Manage Shifts</span>
+            </Link>
 
             <div className="relative flex items-center">
               <Search className="size-3.5 text-zinc-500 absolute left-3 pointer-events-none" />
@@ -1373,16 +1424,6 @@ export const TaskMapHeader: React.FC<Props> = ({
               })}
             </div>
 
-            {/* Link to Audit Shifts configuration / schedule view */}
-            <Link
-              href="/settings/users?tab=shifts"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-zinc-700 rounded-xl text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors"
-              title="Configure Shift Members & Audit Shifts"
-            >
-              <Users className="size-3.5 text-indigo-400" />
-              <span className="hidden sm:inline">Manage Shifts</span>
-            </Link>
-
             {/* Upwork Clients Configuration Button (Restricted to Aaron) */}
             {isAaron && (
               <button
@@ -1728,6 +1769,42 @@ export const TaskMapHeader: React.FC<Props> = ({
                 </div>
               )}
             </div>
+
+            {/* MA Column Queue Sort Toggle */}
+            {currentView === 'BOARD' && onMaSortModeChange && (
+              <button
+                type="button"
+                onClick={() => {
+                  const next =
+                    maSortMode === 'DEFAULT'
+                      ? 'QUEUE_DESC'
+                      : maSortMode === 'QUEUE_DESC'
+                        ? 'QUEUE_ASC'
+                        : 'DEFAULT';
+                  onMaSortModeChange(next);
+                }}
+                className={`flex items-center justify-center p-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer shadow-xs select-none ${
+                  maSortMode !== 'DEFAULT'
+                    ? 'bg-blue-100 hover:bg-blue-200 text-blue-700 border border-blue-300 dark:bg-blue-950/70 dark:hover:bg-blue-950 dark:text-blue-200 dark:border-blue-700/80 shadow-sm'
+                    : 'bg-card border border-zinc-800/80 hover:border-zinc-700 text-zinc-400 hover:text-zinc-100'
+                }`}
+                title={
+                  maSortMode === 'QUEUE_DESC'
+                    ? 'Sorted by Queued Tasks: Highest first (click for Lowest first)'
+                    : maSortMode === 'QUEUE_ASC'
+                      ? 'Sorted by Queued Tasks: Lowest first (click for Default)'
+                      : 'Sort MA columns by queued tasks count'
+                }
+              >
+                {maSortMode === 'QUEUE_DESC' ? (
+                  <ArrowDownWideNarrow className="size-3.5" />
+                ) : maSortMode === 'QUEUE_ASC' ? (
+                  <ArrowUpNarrowWide className="size-3.5" />
+                ) : (
+                  <ArrowUpDown className="size-3.5" />
+                )}
+              </button>
+            )}
           </div>
         </div>
       </header>

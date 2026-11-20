@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
 import {
   TaskMapItem,
   TaskMapOption,
@@ -9,6 +8,7 @@ import {
   hasUiUxOrDesignAudit,
   isProjectBasedUpwork,
   hasPmAssignmentForUser,
+  isTaskHandedOver,
   getEffectiveTaskMapHandlerId,
   countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
@@ -148,6 +148,7 @@ interface Props {
   isHistory?: boolean;
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
+  maSortMode?: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC';
 }
 
 // Priority ranking for user columns:
@@ -908,15 +909,16 @@ const CardTransferDropdown: React.FC<{
         type="button"
         onClick={handleToggle}
         disabled={isSubmitting}
-        className={`inline-flex items-center justify-center size-5 rounded-md border transition-all cursor-pointer select-none ${
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-semibold border transition-all cursor-pointer select-none leading-none ${
           isOpen
             ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/30'
-            : 'bg-blue-500/15 text-blue-400 border-blue-500/40 hover:bg-blue-500/25 hover:text-blue-200 hover:border-blue-400/70 shadow-xs'
+            : 'bg-blue-500/15 text-blue-300 border-blue-500/35 hover:bg-blue-500/25 hover:text-white hover:border-blue-400/70'
         }`}
-        title="Transfer to another MA (lands in To Do)"
+        title="Transfer task to another MA (lands in To Do)"
         aria-label="Transfer to..."
       >
-        <ArrowRightLeft className="size-3 shrink-0" />
+        <ArrowRightLeft className="size-2.5 shrink-0" />
+        <span>Transfer</span>
       </button>
 
       {isOpen &&
@@ -1042,8 +1044,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
   isHistory = false,
   search = '',
   trackFilter = 'ALL',
+  maSortMode = 'DEFAULT',
 }) => {
-  const router = useRouter();
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
   const workspaceTeams = useAppStore((s) => s.workspaceTeams) || [];
@@ -1252,11 +1254,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
       if (hasActiveWorker) return false;
 
-      // Exclude from available pool if task was explicitly queued/assigned to an active shift user by a PM
-      const isQueuedByPm = Boolean(
-        (shiftUsers && shiftUsers.some((u) => hasPmAssignmentForUser(t, u.id))) ||
-        (allUsers && allUsers.some((u) => hasPmAssignmentForUser(t, u.id)))
-      );
+      // Exclude from available pool if task was explicitly queued/assigned to an active shift user by a PM (unless handed over)
+      const isQueuedByPm =
+        !isTaskHandedOver(t) &&
+        Boolean(
+          (shiftUsers && shiftUsers.some((u) => hasPmAssignmentForUser(t, u.id))) ||
+          (allUsers && allUsers.some((u) => hasPmAssignmentForUser(t, u.id)))
+        );
       if (isQueuedByPm) return false;
 
       const isExcluded =
@@ -1279,7 +1283,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         s.includes('RECURRING') ||
         !!(t as any)?.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
+          ['WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
           st.includes('WAITING') ||
           st.includes('CRM') ||
           st.includes('DAILY') ||
@@ -1813,6 +1817,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
         if (isPinnedA && !isPinnedB) return -1;
         if (!isPinnedA && isPinnedB) return 1;
 
+        if (maSortMode === 'QUEUE_DESC' || maSortMode === 'QUEUE_ASC') {
+          const countA = countNonOnHoldTasks(colA.tasks);
+          const countB = countNonOnHoldTasks(colB.tasks);
+          if (countA !== countB) {
+            return maSortMode === 'QUEUE_DESC' ? countB - countA : countA - countB;
+          }
+        }
+
         const isCurA = isCurrentViewer(colA.user);
         const isCurB = isCurrentViewer(colB.user);
 
@@ -1840,6 +1852,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     workspaceTeams,
     boardTime,
     isHistory,
+    maSortMode,
   ]);
 
   // When search changes and matches an MA, auto-scroll to the far left so the user immediately sees the column
@@ -2102,12 +2115,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const getUnifiedTaskMapOptions = (task: TaskMapItem, _user?: any): TaskMapOption[] => {
     const list: TaskMapOption[] = [
       { id: 'opt-status-avail', label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff', order: 0 },
-      { id: 'opt-status-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 1 },
+      { id: 'opt-status-handover', label: 'Hand Over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 1 },
       { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12', order: 2 },
       { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75', order: 3 },
       { id: 'opt-status-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 4 },
       { id: 'opt-status-waiting', label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#fef2f2', order: 5 },
       { id: 'opt-status-onhold', label: 'On-hold', color: TASK_MAP_STATUS_COLORS.ON_HOLD, textColor: '#ffffff', order: 6 },
+      { id: 'opt-status-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 7 },
     ];
 
     const EXCLUDED_FROM_TASK_MAP = new Set([
@@ -2115,10 +2129,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
       'NOTSTARTED',
       'IN PROGRESS',
       'INPROGRESS',
-      'REVISION',
       'TO SEND',
       'TOSEND',
+      'READY TO SEND',
+      'READYTOSEND',
       'SENT',
+      'SENT BUT WAITING',
+      'SENTBUTWAITING',
       'FOLLOW UP',
       'FOLLOWUP',
       'DONE REVIEW',
@@ -2127,7 +2144,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     ]);
 
     // Ensure any currently selected statuses on this task are also present so user can toggle them off,
-    // but strictly exclude Revision, To send, Sent, Follow up, Done Review, and Done from Task Map dropdown.
+    // but strictly exclude To send, Sent, Follow up, Done Review, and Done from Task Map dropdown.
     (task.taskMap?.statuses || []).forEach((st: string) => {
       const up = (st || '').toUpperCase().trim();
       const norm = up.replace(/[\s_-]+/g, '');
@@ -2214,8 +2231,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     onStatusChange(task.id, cleanNext);
 
-    // 1. Hand-over: stays at IN PROGRESS main status, transfer to Available Tasks so PMs can reassign to other MAs
-    if (norm === 'hand-over' || norm === 'handover' || norm.includes('hand-over')) {
+    // 1. Hand Over: stays at main status, transfers to Available Tasks so PMs can reassign to other MAs
+    const compactNorm = norm.replace(/[\s_-]+/g, '');
+    if (compactNorm === 'handover') {
       if (isSelecting) {
         const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
         if (onTaskUpdate) {
@@ -2225,6 +2243,29 @@ export const TaskMapBoardView: React.FC<Props> = ({
           onDataRefresh();
         }
         toast.info('Task handed over — transferred to Available Tasks for PM reassignment');
+      }
+      return;
+    }
+
+    // 1b. Revision: returns/keeps task in the original assigned MA's column with REVISION status
+    if (compactNorm === 'revision' || compactNorm === 'revisions') {
+      if (isSelecting) {
+        if (onTaskUpdate) {
+          await onTaskUpdate(task.id, { status: 'REVISION' });
+        } else {
+          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
+          onDataRefresh();
+        }
+        toast.info('Task marked for Revision');
+      } else {
+        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
+        if (onTaskUpdate) {
+          await onTaskUpdate(task.id, { status: revertStatus });
+        } else {
+          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+          onDataRefresh();
+        }
+        toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
       }
       return;
     }
@@ -2608,7 +2649,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               if (e.defaultPrevented || activeDragTask) return;
                               onOpenDetail(task);
                             }}
-                            className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-colors group cursor-pointer ${cardBorderClass}`}
+                            className={`p-3 bg-zinc-900 hover:bg-zinc-800/80 hover:border-zinc-600/80 hover:shadow-md active:scale-[0.99] border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${cardBorderClass}`}
                             style={
                               isCustomLiveBorder
                                 ? {
@@ -2620,67 +2661,55 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           >
                             {/* Left: Task Info (Task title only in title line, circle dot beside bulletin below) */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-                              {/* Client Name + Subtask Marker + PM Transfer Action */}
-                              <div className="flex items-center justify-between gap-1.5 mb-1 min-w-0">
-                                <div className="text-[11px] font-medium truncate min-w-0 flex items-center gap-1.5">
-                                  {isSubtask && hasParentInColumn && (
+                              {/* Client Name + Subtask Marker */}
+                              <div className="text-[11px] font-medium truncate max-w-[170px] mb-1 flex items-center gap-1.5">
+                                {isSubtask && hasParentInColumn && (
+                                  <span
+                                    className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                                    title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
+                                  >
+                                    <CornerDownRight className="size-2.5 shrink-0" />
+                                  </span>
+                                )}
+                                {isSeparatedSubtask && (
+                                  <span
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
+                                    title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
+                                  >
+                                    --
+                                  </span>
+                                )}
+                                {isUpwork && isLive ? (
+                                  <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1 truncate">
+                                    <span className="size-1.5 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
+                                    {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
+                                  </span>
+                                ) : isLive ? (
+                                  <span
+                                    className="font-semibold truncate flex items-center gap-1"
+                                    style={{ color: taskStatusHex }}
+                                  >
                                     <span
-                                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
-                                      title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
-                                    >
-                                      <CornerDownRight className="size-2.5 shrink-0" />
-                                    </span>
-                                  )}
-                                  {isSeparatedSubtask && (
-                                    <span
-                                      className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
-                                      title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
-                                    >
-                                      --
-                                    </span>
-                                  )}
-                                  {isUpwork && isLive ? (
-                                    <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1 truncate">
-                                      <span className="size-1.5 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
-                                      {isProjectBased ? `[PROJ] ${task.progress?.client || task.list?.name || 'Upwork'}` : (task.progress?.client || task.list?.name || 'Upwork')}
-                                    </span>
-                                  ) : isLive ? (
-                                    <span
-                                      className="font-semibold truncate flex items-center gap-1"
-                                      style={{ color: taskStatusHex }}
-                                    >
-                                      <span
-                                        className="size-1.5 rounded-full animate-ping shrink-0"
-                                        style={{ backgroundColor: taskStatusHex }}
-                                      />
-                                      {task.progress?.client || task.list?.name || 'General'}
-                                    </span>
-                                  ) : isMissingTime ? (
-                                    <span className="text-red-400 font-semibold truncate flex items-center gap-1">
-                                      <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
-                                      {task.progress?.client || task.list?.name || 'General'}
-                                    </span>
-                                  ) : (
-                                    <span className="text-zinc-400 truncate">
-                                      {task.progress?.client || task.list?.name || 'General'}
-                                    </span>
-                                  )}
-                                </div>
-
-                                {/* Transfer to... (PM only; not rendered for MAs) */}
-                                {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
-                                  <CardTransferDropdown
-                                    taskId={task.id}
-                                    currentAssigneeId={getEffectiveTaskMapHandlerId(task)}
-                                    users={transferableUsers}
-                                    onTransfer={(targetUserId) => handleTransferTaskCard(task, targetUserId)}
-                                  />
+                                      className="size-1.5 rounded-full animate-ping shrink-0"
+                                      style={{ backgroundColor: taskStatusHex }}
+                                    />
+                                    {task.progress?.client || task.list?.name || 'General'}
+                                  </span>
+                                ) : isMissingTime ? (
+                                  <span className="text-red-400 font-semibold truncate flex items-center gap-1">
+                                    <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
+                                    {task.progress?.client || task.list?.name || 'General'}
+                                  </span>
+                                ) : (
+                                  <span className="text-zinc-400 truncate">
+                                    {task.progress?.client || task.list?.name || 'General'}
+                                  </span>
                                 )}
                               </div>
 
                               {/* Title */}
                               <h4
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
                                 title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
                               >
                                 {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
@@ -2689,6 +2718,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               {/* Controls row: circle dot left of bulletin, priority flag */}
                               <div
                                 className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {/* Circle Dot Status Indicator */}
@@ -2752,9 +2783,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
-                                  Sub-Status
-                                </span>
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                  <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">
+                                    Sub-Status
+                                  </span>
+                                  {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
+                                    <CardTransferDropdown
+                                      taskId={task.id}
+                                      currentAssigneeId={getEffectiveTaskMapHandlerId(task)}
+                                      users={transferableUsers}
+                                      onTransfer={(targetUserId) => handleTransferTaskCard(task, targetUserId)}
+                                    />
+                                  )}
+                                </div>
                                 <TaskMapStatusDropdown
                                   selectedStatuses={task.taskMap.statuses || []}
                                   options={getUnifiedTaskMapOptions(task)}
@@ -3092,14 +3133,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     task.listId || task.list?.id,
                     task.list?.statuses
                   );
-                  const isCustomLiveWorkingBorder = isLiveWorking && !(isUpwork && isLiveWorking) && !isMissingTime;
-                  // Only highlight tasks that are actively live working (with a counting timer)
-                  const cardBorderClass = isUpwork && isLiveWorking
-                    ? 'border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.22)] animate-[pulse_3s_ease-in-out_infinite] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.22)]'
+                  const isUpworkLiveWorking = Boolean(isUpwork && isLiveWorking);
+                  const isCustomLiveWorkingBorder = isLiveWorking && !isUpworkLiveWorking && !isMissingTime;
+                  // Only highlight tasks that are actively live working (with a counting timer);
+                  // the breathing animation is rendered on a border-only overlay so card contents stay at full opacity.
+                  const cardBorderClass = isUpworkLiveWorking
+                    ? 'border-indigo-500/35 dark:border-white/35 shadow-sm'
                     : isMissingTime
                       ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
                       : isLiveWorking
-                        ? 'animate-[pulse_3s_ease-in-out_infinite]'
+                        ? 'shadow-sm'
                         : isSubtask && hasParentInColumn
                           ? 'border-indigo-500/35 hover:border-indigo-400/60 shadow-sm'
                           : isSeparatedSubtask
@@ -3133,9 +3176,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     });
                   };
 
-                  const toRedirectTaskParam = (id?: string | null) =>
-                    id ? (id.startsWith('subtask:') ? id.slice('subtask:'.length) : id) : null;
-
                   const openResolvedSubtaskOrTaskModal = async (targetId: string, fallbackListId?: string | null) => {
                     if (targetId.startsWith('subtask:')) {
                       const subId = targetId.slice('subtask:'.length);
@@ -3157,6 +3197,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     onOpenDetail({
                       ...task,
                       id: targetId,
+                      isAssumptionBlock: false,
                       ...(fallbackListId ? { listId: fallbackListId } : {}),
                     });
                     return true;
@@ -3170,10 +3211,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     if (realTaskId) {
                       const opened = await openResolvedSubtaskOrTaskModal(realTaskId, realListId);
                       if (opened) return;
-                    }
-                    if (realListId && !realTaskId) {
-                      router.push(`/lists/${realListId}`);
-                      return;
                     }
                     try {
                       const resolved = await taskMapApi.getTaskDescription({
@@ -3196,19 +3233,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           );
                           if (opened) return;
                         }
-                        if (resolved.listId) {
-                          const redirectId = toRedirectTaskParam(resolved.taskId || realTaskId);
-                          router.push(
-                            redirectId
-                              ? `/lists/${resolved.listId}?task=${encodeURIComponent(redirectId)}`
-                              : `/lists/${resolved.listId}`
-                          );
-                          return;
-                        }
                       }
-                      toast.info('No matching project found for this task.');
+                      toast.info('No matching task found for this session.');
                     } catch {
-                      toast.error('Failed to resolve project for this task.');
+                      toast.error('Failed to resolve task for this session.');
                     }
                   };
 
@@ -3226,16 +3254,31 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             if (e.defaultPrevented || activeDragTask) return;
                             void handleCardClick();
                           }}
-                          className={`p-3 bg-zinc-900 border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-colors group cursor-pointer ${cardBorderClass}`}
+                          className={`relative p-3 bg-zinc-900 hover:bg-zinc-800/80 hover:border-zinc-600/80 hover:shadow-md active:scale-[0.99] border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${cardBorderClass}`}
                           style={
                             isCustomLiveWorkingBorder
-                              ? {
-                                  borderColor: taskStatusHex,
-                                  boxShadow: `0 0 0 2px ${hexToRgba(taskStatusHex, 0.5)}, 0 0 20px ${hexToRgba(taskStatusHex, 0.35)}`,
-                                }
+                              ? { borderColor: hexToRgba(taskStatusHex, 0.35) }
                               : undefined
                           }
                         >
+                          {(isUpworkLiveWorking || isCustomLiveWorkingBorder) && (
+                            <div
+                              aria-hidden="true"
+                              className={
+                                isUpworkLiveWorking
+                                  ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
+                                  : 'pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe'
+                              }
+                              style={
+                                isCustomLiveWorkingBorder
+                                  ? {
+                                      borderColor: taskStatusHex,
+                                      boxShadow: `0 0 0 2px ${hexToRgba(taskStatusHex, 0.5)}, 0 0 20px ${hexToRgba(taskStatusHex, 0.35)}`,
+                                    }
+                                  : undefined
+                              }
+                            />
+                          )}
                           {/* LEFT: Task Info (Title only in title line, circle dot beside bulletin below) */}
                           <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                             {/* Client Name + Subtask Marker */}
@@ -3245,66 +3288,54 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 ? rawClientName
                                 : (task.isAssumptionBlock ? 'No client inputted' : 'General');
                               return (
-                                <div className="flex items-center justify-between gap-1.5 mb-1 min-w-0">
-                                  <div className="text-[11px] font-medium truncate min-w-0 flex items-center gap-1.5">
-                                    {isSubtask && hasParentInColumn && (
-                                      <span
-                                        className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
-                                        title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
-                                      >
-                                        <CornerDownRight className="size-2.5 shrink-0" />
+                                <div className="text-[11px] font-medium truncate max-w-[170px] mb-1 flex items-center gap-1.5">
+                                  {isSubtask && hasParentInColumn && (
+                                    <span
+                                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                                      title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
+                                    >
+                                      <CornerDownRight className="size-2.5 shrink-0" />
+                                    </span>
+                                  )}
+                                  {isSeparatedSubtask && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
+                                      title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
+                                    >
+                                      --
+                                    </span>
+                                  )}
+                                  {isUpwork && isLiveWorking ? (
+                                    <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
+                                      <span className="size-2 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
+                                      {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
+                                    </span>
+                                  ) : isLiveWorking ? (
+                                    <span
+                                      className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate"
+                                      style={{ color: taskStatusHex }}
+                                    >
+                                      <span className="relative flex size-2 shrink-0">
+                                        <span
+                                          className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                                          style={{ backgroundColor: taskStatusHex }}
+                                        />
+                                        <span
+                                          className="relative inline-flex rounded-full size-2"
+                                          style={{ backgroundColor: taskStatusHex }}
+                                        />
                                       </span>
-                                    )}
-                                    {isSeparatedSubtask && (
-                                      <span
-                                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0"
-                                        title={task.parentTaskTitle ? `Separated subtask of: ${task.parentTaskTitle}` : 'Separated subtask'}
-                                      >
-                                        --
-                                      </span>
-                                    )}
-                                    {isUpwork && isLiveWorking ? (
-                                      <span className="text-indigo-600 dark:text-white font-bold uppercase tracking-wider flex items-center gap-1.5 truncate">
-                                        <span className="size-2 rounded-full bg-indigo-500 dark:bg-white animate-pulse shrink-0" />
-                                        {isProjectBased ? `[PROJ] ${displayClientName}` : displayClientName}
-                                      </span>
-                                    ) : isLiveWorking ? (
-                                      <span
-                                        className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate"
-                                        style={{ color: taskStatusHex }}
-                                      >
-                                        <span className="relative flex size-2 shrink-0">
-                                          <span
-                                            className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                                            style={{ backgroundColor: taskStatusHex }}
-                                          />
-                                          <span
-                                            className="relative inline-flex rounded-full size-2"
-                                            style={{ backgroundColor: taskStatusHex }}
-                                          />
-                                        </span>
-                                        {displayClientName}
-                                      </span>
-                                    ) : isMissingTime ? (
-                                      <span className="text-red-400 font-semibold truncate flex items-center gap-1">
-                                        <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
-                                        {displayClientName}
-                                      </span>
-                                    ) : (
-                                      <span className="text-zinc-400 truncate">
-                                        {displayClientName}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Transfer to... (PM only; not rendered for MAs) */}
-                                  {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
-                                    <CardTransferDropdown
-                                      taskId={task.id}
-                                      currentAssigneeId={getEffectiveTaskMapHandlerId(task) || userId}
-                                      users={transferableUsers}
-                                      onTransfer={(targetUserId) => handleTransferTaskCard(task, targetUserId)}
-                                    />
+                                      {displayClientName}
+                                    </span>
+                                  ) : isMissingTime ? (
+                                    <span className="text-red-400 font-semibold truncate flex items-center gap-1">
+                                      <span className="size-1.5 rounded-full bg-red-500 shrink-0" />
+                                      {displayClientName}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-400 truncate">
+                                      {displayClientName}
+                                    </span>
                                   )}
                                 </div>
                               );
@@ -3312,7 +3343,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
                             {/* Title */}
                             <h4
-                              className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
+                              className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
                               title={isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
                             >
                               {isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
@@ -3321,6 +3352,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             {/* Controls row: circle dot left of bulletin, priority flag */}
                             <div
                               className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
                             >
                               {/* Circle Dot Status Indicator */}
@@ -3422,9 +3455,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               onMouseDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
-                                Sub-Status
-                              </span>
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">
+                                  Sub-Status
+                                </span>
+                                {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
+                                  <CardTransferDropdown
+                                    taskId={task.id}
+                                    currentAssigneeId={getEffectiveTaskMapHandlerId(task) || userId}
+                                    users={transferableUsers}
+                                    onTransfer={(targetUserId) => handleTransferTaskCard(task, targetUserId)}
+                                  />
+                                )}
+                              </div>
                               <TaskMapStatusDropdown
                                 selectedStatuses={task.taskMap.statuses || []}
                                 options={getUnifiedTaskMapOptions(task, user)}

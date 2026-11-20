@@ -35,7 +35,7 @@ import { taskMapRouter } from './routes/taskMap.routes';
 // Import workers to initialize them
 import './workers/task.worker';
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
-import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TASK_MAP_DAILY_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB, LAUNCH_REVIEW_SWEEP_JOB } from './workers/dailyRollover.worker';
+import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TASK_MAP_DAILY_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB, LAUNCH_REVIEW_SWEEP_JOB, CRM_FOLLOW_UP_SWEEP_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
@@ -97,6 +97,23 @@ const server = http.createServer(app);
   await dailyRolloverQueue.add(LAUNCH_REVIEW_SWEEP_JOB, {}, {
     repeat: { every: 30 * 60 * 1000 },
     jobId: 'launch-review-sweep-catch-up',
+    attempts: 1,
+    removeOnFail: 50,
+  });
+
+  // CRM Sent but Waiting follow-up alerts: 8:00 AM Manila sweep + 30-minute catch-up sweep
+  await dailyRolloverQueue.add(CRM_FOLLOW_UP_SWEEP_JOB, {}, {
+    repeat: {
+      pattern: '0 8 * * *',
+      tz: 'Asia/Manila',
+    },
+    jobId: 'crm-follow-up-sweep-8am',
+    removeOnFail: 50,
+  });
+
+  await dailyRolloverQueue.add(CRM_FOLLOW_UP_SWEEP_JOB, {}, {
+    repeat: { every: 30 * 60 * 1000 },
+    jobId: 'crm-follow-up-sweep-catch-up',
     attempts: 1,
     removeOnFail: 50,
   });

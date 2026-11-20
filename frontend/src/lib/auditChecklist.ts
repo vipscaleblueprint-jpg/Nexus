@@ -367,17 +367,66 @@ export interface AuditPermissionCheck {
 }
 
 /**
+ * Resolves the user ID(s) who completed an audit item matching `matcher` on the target task/subtask.
+ */
+export function getCompletedAuditActorIds(
+  matcher: (name: string) => boolean,
+  task: any,
+  subtaskId?: string
+): { actorIds: string[]; actorName?: string } {
+  if (!task) return { actorIds: [] };
+  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
+  const auditChecklists = (targetTask?.checklists || []).filter(
+    (c: any) => isNexusAuditChecklist(c) || (c.name || '').trim().toLowerCase() === 'audit'
+  );
+  const items = auditChecklists.flatMap((c: any) => c.items || []);
+  const actorIds = new Set<string>();
+  let actorName: string | undefined;
+
+  for (const item of items) {
+    if (!item?.completed || (item.text || '').startsWith('!')) continue;
+    if (!matcher(item.text || '')) continue;
+    if (item.checkedById) actorIds.add(item.checkedById);
+    if (item.checkedBy?.id) actorIds.add(item.checkedBy.id);
+    if (!actorName && item.checkedBy?.name) actorName = item.checkedBy.name;
+    if (!item.checkedById && !item.checkedBy?.id && Array.isArray(item.assigneeId) && item.assigneeId.length === 1) {
+      actorIds.add(item.assigneeId[0]);
+    }
+  }
+
+  return { actorIds: Array.from(actorIds), actorName };
+}
+
+/**
  * Validates whether an audit can be completed based on the hierarchy:
  * - Level 1 (UI UX & Design): Always allowed (same hierarchy).
  * - Level 2 (Instruction): Blocked if task requires Level 1 audits and any are not yet done.
  * - Level 3 (Funnel): Blocked if Level 1 audits or Instruction Audit are not yet done.
+ * - Mutual Exclusion: UI UX Auditor and Funnel Auditor on the same task must be different auditors.
  */
-export function canPerformAudit(auditName: string, task: any, subtaskId?: string): AuditPermissionCheck {
+export function canPerformAudit(
+  auditName: string,
+  task: any,
+  subtaskId?: string,
+  actorUserId?: string | null
+): AuditPermissionCheck {
   if (!task) return { allowed: true, missingPrerequisites: [] };
 
   const norm = normalizeAuditName(auditName);
 
-  // Level 1 audits have no prerequisites
+  // Mutual exclusion: UI UX Audit and Funnel Audit must be performed by different auditors
+  if (actorUserId && isUiUxAudit(norm)) {
+    const funnelActors = getCompletedAuditActorIds(isFunnelAudit, task, subtaskId);
+    if (funnelActors.actorIds.includes(actorUserId)) {
+      return {
+        allowed: false,
+        reason: 'UI/UX Auditor and Funnel Auditor for the same task must be different auditors. Another UI/UX Auditor must perform this audit.',
+        missingPrerequisites: ['Different UI/UX Auditor'],
+      };
+    }
+  }
+
+  // Level 1 audits have no hierarchy prerequisites
   if (isUiUxAudit(norm) || isDesignAudit(norm)) {
     return { allowed: true, missingPrerequisites: [] };
   }
@@ -419,6 +468,17 @@ export function canPerformAudit(auditName: string, task: any, subtaskId?: string
         reason: 'Cannot do Funnel Audit: Instruction Audit must be completed first.',
         missingPrerequisites: missingInstruction,
       };
+    }
+
+    if (actorUserId) {
+      const uiUxActors = getCompletedAuditActorIds(isUiUxAudit, task, subtaskId);
+      if (uiUxActors.actorIds.includes(actorUserId)) {
+        return {
+          allowed: false,
+          reason: 'UI/UX Auditor and Funnel Auditor for the same task must be different auditors. Another Funnel Auditor must perform the Funnel Audit.',
+          missingPrerequisites: ['Different Funnel Auditor'],
+        };
+      }
     }
 
     return { allowed: true, missingPrerequisites: [] };

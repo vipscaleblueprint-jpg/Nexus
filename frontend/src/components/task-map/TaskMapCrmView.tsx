@@ -13,6 +13,7 @@ import {
   subscribeTaskMapSaving,
   isTaskSavingToDb,
   isTaskUnderAdmin,
+  getTaskCrmWaitingInfo,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -28,6 +29,7 @@ import {
   Lock,
   ArrowLeft,
   Loader2,
+  Clock,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isCrmUser, hasCrmAccess, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
@@ -41,9 +43,17 @@ import {
   matchesPriorityFilter,
   matchesSearchFilter,
   sortTasksUrgentFirst,
+  hexToRgba,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
+import {
+  ColumnFollowUpDropdown,
+  CrmFollowUpFilter,
+  CrmFollowUpSort,
+  matchesCrmFollowUpFilter,
+  sortCrmSentTasks,
+} from './ColumnFollowUpDropdown';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
   DndContext,
@@ -195,9 +205,13 @@ export const TaskMapCrmView: React.FC<Props> = ({
     }
   }, [cleanSearch]);
 
-  // Column controls: Priority filter, Sub-status filter, Client filter, Admin toggle, search, pin, collapse
+  // Column controls: Priority filter, Sub-status filter, Follow-up filter/sort, Client filter, Admin toggle, search, pin, collapse
   const [columnPriorityFilters, setColumnPriorityFilters] = useState<Record<string, string>>({});
   const [columnSubStatusFilters, setColumnSubStatusFilters] = useState<Record<string, string>>({});
+  const [columnFollowUpFilters, setColumnFollowUpFilters] = useState<Record<string, CrmFollowUpFilter>>({});
+  const [columnFollowUpSorts, setColumnFollowUpSorts] = useState<Record<string, CrmFollowUpSort>>({
+    'col-crm-sent': 'MOST_OVERDUE',
+  });
   const [columnClientFilters, setColumnClientFilters] = useState<Record<string, string[] | 'ALL'>>({});
   const [columnShowAdmin, setColumnShowAdmin] = useState<Record<string, boolean>>({});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
@@ -316,10 +330,21 @@ export const TaskMapCrmView: React.FC<Props> = ({
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
       x.toUpperCase().replace(/[\s_-]+/g, '')
     );
+    if (
+      s === 'REVISION' ||
+      s === 'REVISIONS' ||
+      mapStatuses.includes('REVISION') ||
+      mapStatuses.includes('REVISIONS')
+    ) {
+      return false;
+    }
     const hasCrmMarker =
       mapStatuses.includes('CRM') ||
       mapStatuses.includes('TOSEND') ||
+      mapStatuses.includes('READYTOSEND') ||
+      mapStatuses.includes('ASKCLIENT') ||
       mapStatuses.includes('SENT') ||
+      mapStatuses.includes('SENTBUTWAITING') ||
       mapStatuses.includes('OUTREACHSENT') ||
       mapStatuses.includes('CLIENTSENT') ||
       mapStatuses.includes('FOLLOWUP');
@@ -328,6 +353,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       s === 'CRM' ||
       s === 'WAITING' ||
       s === 'SENT' ||
+      (!(s === 'CLOSED' || s === 'DONE') && mapStatuses.includes('ASKCLIENT')) ||
       ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker)
     );
   };
@@ -354,12 +380,15 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return s === 'WAITING' || s === 'SENT';
   };
 
-  // Check if task is assigned to a specific CRM member (strictly status CRM, latest assignee only)
+  // Check if task is assigned to a specific CRM member (strictly status CRM or Ask Client, latest assignee only)
   const isTaskAssignedToCrmMember = (task: TaskMapItem, crmMember: any) => {
     if (isCrmCompleted(task) || isCrmSent(task) || isTaskHandedOver(task)) return false;
-    // Task must be in CRM status
     const s = (task.status || '').toUpperCase().trim();
-    if (s !== 'CRM') return false;
+    const mapStatusesNorm = (task.taskMap?.statuses || []).map((st) =>
+      st.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    const hasAskClient = mapStatusesNorm.includes('ASKCLIENT');
+    if (s !== 'CRM' && !hasAskClient) return false;
 
     const effectiveHandlerId = getEffectiveTaskMapHandlerId(task);
     if (effectiveHandlerId) {
@@ -377,11 +406,15 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return false;
   };
 
-  // General CRM Pool: tasks needing client outreach / CRM that are not yet assigned to a specific CRM member (across shifts)
+  // General CRM Pool: tasks needing client outreach / CRM / Ask Client that are not yet assigned to a specific CRM member
   const isGeneralCrmPool = (t: TaskMapItem) => {
     if (isCrmCompleted(t) || isCrmSent(t)) return false;
     const s = (t.status || '').toUpperCase().trim();
-    if (s !== 'CRM') return false;
+    const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
+      st.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    const hasAskClient = mapStatusesNorm.includes('ASKCLIENT');
+    if (s !== 'CRM' && !hasAskClient) return false;
     if (
       crmUsers.some((u) => isTaskAssignedToCrmMember(t, u)) ||
       (allUsers || []).some((u) => isCrmUser(u) && isTaskAssignedToCrmMember(t, u))
@@ -437,7 +470,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
     if (targetColumnId === 'col-crm-pool') {
       updatedStatuses = updatedStatuses.filter(
-        (s) => !['SENT', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
+        (s) => !['SENT', 'SENT BUT WAITING', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
       );
       if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
       toast.info('Task moved to General CRM Pool');
@@ -525,10 +558,21 @@ export const TaskMapCrmView: React.FC<Props> = ({
       }
 
       updatedStatuses = updatedStatuses.filter(
-        (s) => s.toUpperCase() !== 'CRM' && s.toUpperCase() !== 'TO SEND'
+        (s) => {
+          const up = s.toUpperCase().trim();
+          return (
+            up !== 'CRM' &&
+            up !== 'TO SEND' &&
+            up !== 'READY TO SEND' &&
+            up !== 'ASK CLIENT' &&
+            up !== 'SENT' &&
+            up !== 'SENT BUT WAITING' &&
+            up !== 'WAITING'
+          );
+        }
       );
-      if (!updatedStatuses.includes('Sent')) updatedStatuses.push('Sent');
-      toast.success('Task marked Sent — status updated to WAITING');
+      updatedStatuses.push('Sent but Waiting');
+      toast.success('Task marked Sent but Waiting — status updated to WAITING');
       onStatusChange(taskId, updatedStatuses);
       if (onTaskUpdate) {
         await onTaskUpdate(taskId, { status: 'WAITING' });
@@ -583,31 +627,51 @@ export const TaskMapCrmView: React.FC<Props> = ({
       const memberId = targetColumnId.replace('col-crm-member-', '');
       const member = crmUsers.find((u) => u.id === memberId);
       if (member) {
-        // Only assign to member, never mark as Sent
+        const isAskClientTask =
+          (task.status || '').toUpperCase().trim() !== 'CRM' &&
+          (task.taskMap?.statuses || []).some(
+            (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'ASKCLIENT'
+          );
+        // Only assign to member, never mark as Sent but Waiting
         updatedStatuses = updatedStatuses.filter(
-          (s) => !['SENT', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
+          (s) => !['SENT', 'SENT BUT WAITING', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
         );
-        if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
-        toast.success(`Task assigned to ${member.name} for CRM outreach`);
-        onStatusChange(taskId, updatedStatuses);
-
-        if (onTaskUpdate) {
-          await onTaskUpdate(taskId, { assigneeId: member.id, status: 'CRM' });
+        if (isAskClientTask) {
+          if (!updatedStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'ASKCLIENT')) {
+            updatedStatuses.push('Ask Client');
+          }
+          toast.success(`Task assigned to ${member.name} (Ask Client)`);
+          onStatusChange(taskId, updatedStatuses);
+          if (onTaskUpdate) {
+            await onTaskUpdate(taskId, { assigneeId: member.id });
+          } else {
+            await tasksApi
+              .updateTask(taskId, { assigneeId: member.id } as any)
+              .catch(console.error);
+          }
         } else {
-          await tasksApi
-            .updateTask(taskId, { assigneeId: member.id, status: 'CRM' } as any)
-            .catch(console.error);
+          if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
+          toast.success(`Task assigned to ${member.name} for CRM outreach`);
+          onStatusChange(taskId, updatedStatuses);
+
+          if (onTaskUpdate) {
+            await onTaskUpdate(taskId, { assigneeId: member.id, status: 'CRM' });
+          } else {
+            await tasksApi
+              .updateTask(taskId, { assigneeId: member.id, status: 'CRM' } as any)
+              .catch(console.error);
+          }
         }
       }
     }
   };
 
-  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent', 'Follow up', 'Hand-over', 'Closed')
+  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
   const getCrmOptions = (_task: TaskMapItem): TaskMapOption[] => [
     { id: 'opt-crm-tosend', label: 'To send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 0 },
-    { id: 'opt-crm-sent', label: 'Sent', color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff', order: 1 },
+    { id: 'opt-crm-sent', label: 'Sent but Waiting', color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff', order: 1 },
     { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
-    { id: 'opt-crm-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 3 },
+    { id: 'opt-crm-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 3 },
     { id: 'opt-crm-closed', label: 'Closed', color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff', order: 4 },
   ];
 
@@ -719,8 +783,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
   const orderedColumns: CrmColumnDef[] = [
     ...(poolCol ? [poolCol] : []),
-    ...sortedMemberCols,
     ...(sentCol ? [sentCol] : []),
+    ...sortedMemberCols,
     ...(closedCol ? [closedCol] : []),
   ];
 
@@ -774,15 +838,18 @@ export const TaskMapCrmView: React.FC<Props> = ({
             const isCollapsed = !!collapsedColumns[col.id];
             const activePriority = columnPriorityFilters[col.id] || 'ALL';
             const activeSubStatus = columnSubStatusFilters[col.id] || 'ALL';
+            const activeFollowUpFilter = columnFollowUpFilters[col.id] || 'ALL';
+            const activeFollowUpSort = columnFollowUpSorts[col.id] || 'MOST_OVERDUE';
             const colClientFilter = columnClientFilters[col.id] || 'ALL';
             const colShowAdmin = columnShowAdmin[col.id] ?? showAdminTasks;
             const searchQuery = columnSearches[col.id] || '';
             const isSearchOpen = !!columnSearchOpen[col.id];
 
-            // Apply priority, sub-status, search, admin, and client filter inside column
+            // Apply priority, sub-status, follow-up tier, search, admin, and client filter inside column
             const visibleTasks = col.tasks.filter((t) => {
               if (!matchesPriorityFilter(t, activePriority)) return false;
               if (!matchesSubStatusFilter(t, activeSubStatus)) return false;
+              if (col.id === 'col-crm-sent' && !matchesCrmFollowUpFilter(t, activeFollowUpFilter)) return false;
               if (!matchesSearchFilter(t, searchQuery)) return false;
 
               // Admin task check
@@ -1001,7 +1068,22 @@ export const TaskMapCrmView: React.FC<Props> = ({
                     }
                   />
 
-                  {(searchQuery || activePriority !== 'ALL' || activeSubStatus !== 'ALL' || colClientFilter !== 'ALL') && (
+                  {col.id === 'col-crm-sent' && (
+                    <ColumnFollowUpDropdown
+                      columnId={col.id}
+                      tasks={col.tasks}
+                      activeFilter={activeFollowUpFilter}
+                      activeSort={activeFollowUpSort}
+                      onSelectFilter={(cId, filter) =>
+                        setColumnFollowUpFilters((prev) => ({ ...prev, [cId]: filter }))
+                      }
+                      onSelectSort={(cId, sort) =>
+                        setColumnFollowUpSorts((prev) => ({ ...prev, [cId]: sort }))
+                      }
+                    />
+                  )}
+
+                  {(searchQuery || activePriority !== 'ALL' || activeSubStatus !== 'ALL' || (col.id === 'col-crm-sent' && activeFollowUpFilter !== 'ALL') || colClientFilter !== 'ALL') && (
                     <span className="text-[10px] text-zinc-400 italic">
                       ({visibleTasks.length} of {col.tasks.length})
                     </span>
@@ -1030,7 +1112,24 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       </span>
                     </div>
                   ) : (
-                    sortTasksUrgentFirst(visibleTasks).map((task) => {
+                    (col.id === 'col-crm-sent'
+                      ? sortCrmSentTasks(visibleTasks, activeFollowUpSort, sortTasksUrgentFirst)
+                      : sortTasksUrgentFirst(visibleTasks)
+                    ).map((task) => {
+                      const isSentWaitingCard = isCrmSent(task);
+                      const waitingInfo = isSentWaitingCard ? getTaskCrmWaitingInfo(task) : null;
+                      const showFollowUpBreathe = Boolean(waitingInfo?.rule.breathe);
+                      const followUpHex = waitingInfo?.rule.hex || '#71717a';
+                      const rawSubStatuses = task.taskMap?.statuses || [];
+                      const displaySubStatuses = isSentWaitingCard
+                        ? rawSubStatuses.length === 0 ||
+                          rawSubStatuses.some((st) => {
+                            const up = st.toUpperCase().trim();
+                            return up === 'SENT' || up === 'WAITING';
+                          })
+                          ? ['Sent but Waiting']
+                          : rawSubStatuses
+                        : rawSubStatuses;
                       return (
                         <DraggableTaskCard key={task.id} task={task} disabled={false}>
                           <div
@@ -1038,8 +1137,27 @@ export const TaskMapCrmView: React.FC<Props> = ({
                               if (e.defaultPrevented) return;
                               onOpenDetail(task);
                             }}
-                            className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer"
+                            className={`relative p-3 bg-zinc-900 hover:bg-zinc-800/80 hover:shadow-md active:scale-[0.99] border rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${
+                              showFollowUpBreathe
+                                ? 'border-transparent'
+                                : 'border-border hover:border-zinc-600/80'
+                            }`}
+                            style={
+                              showFollowUpBreathe
+                                ? { borderColor: hexToRgba(followUpHex, 0.4) }
+                                : undefined
+                            }
                           >
+                            {showFollowUpBreathe && (
+                              <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe"
+                                style={{
+                                  borderColor: followUpHex,
+                                  boxShadow: `0 0 0 2px ${hexToRgba(followUpHex, 0.42)}, 0 0 18px ${hexToRgba(followUpHex, 0.28)}`,
+                                }}
+                              />
+                            )}
                             {/* Left: Task Info */}
                             <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                               {/* Client / List Name */}
@@ -1049,7 +1167,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
                               {/* Title */}
                               <h4
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
                                 title={task.title}
                               >
                                 {task.title}
@@ -1058,6 +1176,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
                               {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
                               <div
                                 className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {/* Circle Dot Status Indicator */}
@@ -1131,12 +1251,33 @@ export const TaskMapCrmView: React.FC<Props> = ({
                             {/* Separator */}
                             <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
 
-                            {/* Right: Section where Sub-Status is (with Posted date in top right corner) */}
+                            {/* Right: Section where Sub-Status is (with Posted date + Days Passed in top right corner) */}
                             <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
-                              <div className="flex justify-end items-center">
-                                <span className="text-[10px] font-medium text-zinc-500">
-                                  Posted {format(new Date(task.createdAt), 'MMM d')}
-                                </span>
+                              <div className="flex justify-end items-center gap-1.5 flex-wrap">
+                                {waitingInfo ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap"
+                                    style={{
+                                      backgroundColor: hexToRgba(followUpHex, 0.16),
+                                      borderColor: hexToRgba(followUpHex, 0.45),
+                                      color: waitingInfo.daysPassed === 0 ? '#a1a1aa' : followUpHex,
+                                    }}
+                                    title={`Sent but Waiting · ${waitingInfo.daysPassed} day(s) passed (${waitingInfo.rule.label}) since ${format(new Date(waitingInfo.waitingSince), 'MMM d, yyyy')}`}
+                                  >
+                                    <Clock className="size-2.5 shrink-0" />
+                                    <span>
+                                      {waitingInfo.daysPassed === 0
+                                        ? 'Today'
+                                        : waitingInfo.daysPassed === 1
+                                          ? '1 day'
+                                          : `${waitingInfo.daysPassed} days`}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-medium text-zinc-500">
+                                    Posted {format(new Date(task.createdAt), 'MMM d')}
+                                  </span>
+                                )}
                               </div>
 
                               <div
@@ -1149,7 +1290,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                   Sub-Status
                                 </span>
                                 <TaskMapStatusDropdown
-                                  selectedStatuses={task.taskMap?.statuses || []}
+                                  selectedStatuses={displaySubStatuses}
                                   options={getCrmOptions(task)}
                                   onToggleStatus={async (label, nextStatuses) => {
                                     const isSelecting = (nextStatuses || []).includes(label);
@@ -1216,7 +1357,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         }
                                         toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
                                       }
-                                    } else if (label === 'Sent') {
+                                    } else if (label === 'Sent but Waiting' || label === 'Sent') {
                                       if (isSelecting) {
                                         const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
                                         const transitionCheck = canTransitionTaskStatus(currentTask, 'WAITING');
@@ -1244,24 +1385,24 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                           return;
                                         }
 
-                                        onStatusChange(task.id, cleanNext);
+                                        onStatusChange(task.id, ['Sent but Waiting']);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'WAITING' });
                                         } else {
                                           await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.success('Task marked Sent — status updated to WAITING');
+                                        toast.success('Task marked Sent but Waiting — status updated to WAITING');
                                       } else {
-                                        // Toggled off Sent -> revert back to CRM
-                                        onStatusChange(task.id, ['CRM']);
+                                        // Toggled off Sent but Waiting -> revert back to CRM
+                                        onStatusChange(task.id, ['To send']);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
                                         } else {
                                           await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.info("Reverted 'Sent' — returned to CRM");
+                                        toast.info("Reverted 'Sent but Waiting' — returned to CRM");
                                       }
                                     } else if (label === 'Closed') {
                                       if (isSelecting) {
@@ -1301,7 +1442,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         toast.success('Task marked CLOSED');
                                       } else {
                                         // Toggled off Closed -> revert back to WAITING
-                                        onStatusChange(task.id, ['Sent']);
+                                        onStatusChange(task.id, ['Sent but Waiting']);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'WAITING' });
                                         } else {
@@ -1313,17 +1454,25 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                     } else if (label === 'Follow up' && isSelecting) {
                                       onStatusChange(task.id, cleanNext);
                                       toast.warning('Task marked for Follow up');
-                                    } else if (label.toLowerCase().includes('hand-over') || label.toLowerCase() === 'handover') {
-                                      onStatusChange(task.id, cleanNext);
+                                    } else if (label === 'Revision' || label === 'Revisions') {
                                       if (isSelecting) {
-                                        const preservedCrmStatus = toCanonicalTaskStatus(task.status || 'CRM') || 'CRM';
+                                        onStatusChange(task.id, ['Revision']);
                                         if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { assigneeId: null, status: preservedCrmStatus });
+                                          await onTaskUpdate(task.id, { status: 'REVISION' });
                                         } else {
-                                          await tasksApi.updateTask(task.id, { assigneeId: null } as any).catch(console.error);
+                                          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.info('Task handed over — returned to General CRM Pool');
+                                        toast.info('Task set to Revision — returned to original MA on Task Map');
+                                      } else {
+                                        onStatusChange(task.id, ['To send']);
+                                        if (onTaskUpdate) {
+                                          await onTaskUpdate(task.id, { status: 'CRM' });
+                                        } else {
+                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                                          onDataRefresh();
+                                        }
+                                        toast.info("Reverted 'Revision' — returned to CRM");
                                       }
                                     } else {
                                       onStatusChange(task.id, cleanNext);

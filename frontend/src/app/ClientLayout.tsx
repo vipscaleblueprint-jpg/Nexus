@@ -14,6 +14,7 @@ import { taskMapApi } from '@/api/taskMap';
 import { ToastContainer } from '@/components/ui/ToastContainer';
 import { MentionConfetti } from '@/components/ui/MentionConfetti';
 import { DraftBeggingReminder } from '@/components/ui/DraftBeggingReminder';
+import { CrmFollowUpModal } from '@/components/task-map/CrmFollowUpModal';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
@@ -212,6 +213,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
           notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
             setUnreadNotifications(res.unreadCount ?? res.notifications.filter((n) => !n.isRead).length);
+            if (typeof res.taskMapUnreadCount === 'number') {
+              useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
+            }
           }).catch(() => { });
         })
         .catch(() => {
@@ -318,6 +322,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('connect', () => {
       s.emit('join_user', currentUser.id);
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.taskMapUnreadCount === 'number') {
+          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
+        }
         if (typeof res.unreadCount === 'number') {
           const lastViewed =
             typeof window !== 'undefined'
@@ -383,6 +390,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       const prevUnread = useAppStore.getState().unreadNotifications;
       window.dispatchEvent(new CustomEvent('notification_received', { detail: data }));
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.taskMapUnreadCount === 'number') {
+          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
+        }
         if (typeof res.unreadCount !== 'number') return;
         setUnreadNotifications(res.unreadCount);
         const now = Date.now();
@@ -396,11 +406,17 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('notification_read', (data: { id: string }) => {
       useAppStore.getState().decrementUnreadNotifications();
+      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.taskMapUnreadCount === 'number') {
+          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
+        }
+      }).catch(() => { });
       window.dispatchEvent(new CustomEvent('notification_read', { detail: data }));
     });
 
     s.on('notifications_all_read', () => {
       setUnreadNotifications(0);
+      useAppStore.getState().setTaskMapUnreadCount(0);
       window.dispatchEvent(new CustomEvent('notifications_all_read'));
     });
 
@@ -410,6 +426,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('notifications_all_cleared', () => {
       setUnreadNotifications(0);
+      useAppStore.getState().setTaskMapUnreadCount(0);
       window.dispatchEvent(new CustomEvent('notifications_all_cleared'));
     });
 
@@ -434,6 +451,9 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     s.on('task:comment_deleted', (payload: any) => {
       window.dispatchEvent(new CustomEvent('task:comment_deleted', { detail: payload }));
       notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+        if (typeof res.taskMapUnreadCount === 'number') {
+          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
+        }
         if (typeof res.unreadCount === 'number') {
           const lastViewed =
             typeof window !== 'undefined'
@@ -614,6 +634,14 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task_map:updated', { detail: data }));
     });
 
+    s.on('crm:follow_up_alert', (data) => {
+      window.dispatchEvent(new CustomEvent('crm:follow_up_alert', { detail: data }));
+    });
+
+    s.on('crm:follow_up_responded', (data) => {
+      window.dispatchEvent(new CustomEvent('crm:follow_up_responded', { detail: data }));
+    });
+
     s.on('task_map:shifts_updated', (data) => {
       window.dispatchEvent(new CustomEvent('task_map:shifts_updated', { detail: data }));
     });
@@ -722,6 +750,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       <ToastContainer />
       <MentionConfetti />
       <DraftBeggingReminder />
+      <CrmFollowUpModal />
     </div>
   );
 }

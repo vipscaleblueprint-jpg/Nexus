@@ -682,8 +682,8 @@ export function TaskDetailModalContent({
       removeTask(task.id);
       toast.success('Task deleted');
       onClose();
-      if (mode === 'full') {
-        const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/tasks/')) {
+        const fromPath = new URLSearchParams(window.location.search).get('from');
         if (fromPath) {
           router.push(fromPath);
         } else {
@@ -5986,8 +5986,8 @@ export function SubtaskDetailView({
         onUpdateTask({ ...parentTask, subtasks: updatedSubtasks });
       }
       toast.success('Subtask deleted');
-      if (mode === 'full') {
-        const fromPath = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null;
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/tasks/')) {
+        const fromPath = new URLSearchParams(window.location.search).get('from');
         if (fromPath) {
           router.push(fromPath);
         } else {
@@ -8092,7 +8092,9 @@ export function SubtaskDetailView({
               <span className="text-zinc-700">/</span>
               <button
                 onClick={() => {
-                  if (mode === 'modal' && setActiveSubtask) {
+                  const isStandaloneTaskPage =
+                    typeof window !== 'undefined' && window.location.pathname.startsWith('/tasks/');
+                  if (!isStandaloneTaskPage && setActiveSubtask) {
                     setActiveSubtask(null);
                   } else {
                     // Carry the original origin along so closing the parent still returns there

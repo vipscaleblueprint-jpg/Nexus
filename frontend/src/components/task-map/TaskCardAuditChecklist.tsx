@@ -124,7 +124,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     const nextCompleted = !itemDef.completed;
 
     if (nextCompleted) {
-      const permCheck = canPerformAudit(itemDef.name, task);
+      const permCheck = canPerformAudit(itemDef.name, task, undefined, currentUser?.id);
       if (!permCheck.allowed) {
         toast.error(permCheck.reason || 'Prerequisites not completed.');
         return;
@@ -132,6 +132,8 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     }
 
     setIsUpdating(true);
+    const prevChecklists = localChecklists;
+    const prevStatus = task.status;
 
     // 1. Optimistic local update
     let updatedCls = [...localChecklists];
@@ -179,43 +181,23 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       onChecklistsUpdated(finalCls);
     }
 
-    // Auto-transition: In Review -> Checking when Level 1 audits complete; or Checking -> In Review if unchecked
-    const taskStatusUpper = (task.status || '').toUpperCase().trim();
-    if (nextCompleted && (taskStatusUpper === 'IN REVIEW' || taskStatusUpper === 'INREVIEW')) {
-      const isLevel1 = isUiUxAudit(itemDef.name) || isDesignAudit(itemDef.name);
-      if (isLevel1) {
-        const dummyTask = { ...task, checklists: finalCls };
-        if (areLevel1AuditsComplete(dummyTask)) {
-          task.status = 'CHECKING';
-          tasksApi.updateTask(task.id, { status: 'CHECKING' } as any).catch(console.error);
-          toast.success('✓ UI/UX and Design audits completed — task moved to CHECKING');
-        }
-      }
-    } else if (!nextCompleted && (taskStatusUpper === 'CHECKING' || taskStatusUpper === 'IN CHECKING')) {
-      const isLevel1 = isUiUxAudit(itemDef.name) || isDesignAudit(itemDef.name);
-      if (isLevel1 && hasUiUxOrDesignAudit(task)) {
-        task.status = 'IN REVIEW';
-        tasksApi.updateTask(task.id, { status: 'IN REVIEW' } as any).catch(console.error);
-        toast.info('UI/UX or Design audit unchecked — task returned to IN REVIEW');
-      }
-    }
-
-    // 2. Persist to server
+    // 2. Persist to server (server-side automation enforces partial vs all-checked transitions)
     try {
+      let apiRes: any = null;
       if (itemDef.item && itemDef.item.id && !itemDef.item.id.startsWith('temp-')) {
-        await tasksApi.updateChecklistItem(task.id, targetCl.id, itemDef.item.id, {
+        apiRes = await tasksApi.updateChecklistItem(task.id, targetCl.id, itemDef.item.id, {
           completed: nextCompleted,
         });
       } else {
-        const res = await tasksApi.createChecklistItem(task.id, targetCl.id, {
+        apiRes = await tasksApi.createChecklistItem(task.id, targetCl.id, {
           text: itemDef.name,
           completed: nextCompleted,
           checklistName: 'Audit',
         });
-        if (res?.item) {
+        if (apiRes?.item) {
           // Reconcile id
           const reconciledItems = nextItems.map((i: any) =>
-            normalizeAuditName(i.text) === itemDef.norm ? { ...i, id: res.item.id } : i
+            normalizeAuditName(i.text) === itemDef.norm ? { ...i, id: apiRes.item.id } : i
           );
           const reconciledCls = finalCls.map((c) =>
             c.id === targetCl!.id ? { ...c, items: reconciledItems } : c
@@ -224,14 +206,39 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
           task.checklists = reconciledCls;
         }
       }
-      toast.success(
-        nextCompleted
-          ? `✓ Checked "${itemDef.name}"`
-          : `Unchecked "${itemDef.name}"`
-      );
+
+      const automation = apiRes?.automation;
+      if (automation?.outcome === 'ALL_CHECKED') {
+        task.status = automation.nextStatus || 'CRM';
+        task.assigneeId = null;
+        if (task.taskMap) {
+          task.taskMap.statuses = automation.nextSubStatuses || ['Ready to Send'];
+        }
+        toast.success('All audits complete — set to Ready to Send and moved to CRM Map');
+      } else if (automation?.outcome === 'PARTIAL_CHECKED') {
+        task.status = automation.nextStatus || task.status;
+        task.assigneeId = null;
+        if (task.taskMap) {
+          task.taskMap.statuses = automation.nextSubStatuses || [];
+        }
+        const nextLabel = automation.nextAuditStep || automation.nextSubStatuses?.[0] || 'To Review';
+        toast.info(`"${itemDef.name}" checked — returned to Audit Pool (${nextLabel})`);
+      } else {
+        toast.success(
+          nextCompleted
+            ? `✓ Checked "${itemDef.name}"`
+            : `Unchecked "${itemDef.name}"`
+        );
+      }
     } catch (err: any) {
       console.error('Failed to toggle audit item:', err);
-      toast.error('Failed to update audit item');
+      setLocalChecklists(prevChecklists);
+      task.checklists = prevChecklists;
+      task.status = prevStatus;
+      if (onChecklistsUpdated) {
+        onChecklistsUpdated(prevChecklists);
+      }
+      toast.error(err?.message || 'Failed to update audit item');
     } finally {
       setIsUpdating(false);
     }
@@ -280,7 +287,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       <div className="space-y-1">
         {auditItems.map((itemDef) => {
           const permCheck: AuditPermissionCheck = !itemDef.completed
-            ? canPerformAudit(itemDef.name, task)
+            ? canPerformAudit(itemDef.name, task, undefined, currentUser?.id)
             : { allowed: true, missingPrerequisites: [] };
           const isLockedByHierarchy = !itemDef.completed && !permCheck.allowed;
 

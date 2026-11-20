@@ -1596,6 +1596,32 @@ export async function syncTaskMapOnDirectAssign(
     }
 
     if (subtaskId) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: assigneeId },
+        select: { id: true, name: true, roles: true },
+      });
+      const parentTask = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { status: true },
+      });
+      const parentStatusNorm = (parentTask?.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const isReviewOrCrm = ['TOREVIEW', 'INREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING', 'CRM', 'WAITING', 'SENT', 'CLOSED', 'DONE'].includes(parentStatusNorm);
+      const userRoles = (targetUser?.roles || []).map((r) => r.toLowerCase());
+      const isPureReviewer =
+        userRoles.some((r) => r.includes('audit') || r.includes('crm') || r.includes('funnel')) &&
+        !userRoles.some((r) => r === 'ma' || r.includes('marketing associate') || r.includes('dev') || r.includes('pm'));
+
+      if (targetUser && !isReviewOrCrm && !isPureReviewer) {
+        reviews = reviews.filter((r: any) => !(r?.type === 'ORIGINAL_MA' && r?.subtaskId === subtaskId));
+        reviews.push({
+          type: 'ORIGINAL_MA',
+          subtaskId,
+          userId: targetUser.id,
+          userName: targetUser.name,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
       const idx = reviews.findIndex((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtaskId);
       const existing = idx !== -1 && Array.isArray(reviews[idx].statuses) ? reviews[idx].statuses : [];
       const nextEntry = {
@@ -1610,10 +1636,39 @@ export async function syncTaskMapOnDirectAssign(
 
       await updateTaskMapRecord(taskId, { pmReviews: reviews });
     } else {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: assigneeId },
+        select: { id: true, name: true, roles: true },
+      });
+      const taskInfo = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { status: true },
+      });
+      const statusNorm = (taskInfo?.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const isReviewOrCrm = ['TOREVIEW', 'INREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING', 'CRM', 'WAITING', 'SENT', 'CLOSED', 'DONE'].includes(statusNorm);
+      const userRoles = (targetUser?.roles || []).map((r) => r.toLowerCase());
+      const isPureReviewer =
+        userRoles.some((r) => r.includes('audit') || r.includes('crm') || r.includes('funnel')) &&
+        !userRoles.some((r) => r === 'ma' || r.includes('marketing associate') || r.includes('dev') || r.includes('pm'));
+
+      let updatedReviews = reviews;
+      let shouldUpdateReviews = false;
+      if (targetUser && !isReviewOrCrm && !isPureReviewer) {
+        updatedReviews = reviews.filter((r: any) => !(r?.type === 'ORIGINAL_MA' && !r?.subtaskId));
+        updatedReviews.push({
+          type: 'ORIGINAL_MA',
+          userId: targetUser.id,
+          userName: targetUser.name,
+          updatedAt: new Date().toISOString(),
+        });
+        shouldUpdateReviews = true;
+      }
+
       const nextStatuses = cleanStatuses(rec.statuses || []);
       await updateTaskMapRecord(taskId, {
         statuses: nextStatuses,
         handedOver: false,
+        ...(shouldUpdateReviews ? { pmReviews: updatedReviews } : {}),
       });
     }
 

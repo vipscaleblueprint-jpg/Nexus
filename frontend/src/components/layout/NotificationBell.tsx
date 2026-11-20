@@ -541,10 +541,16 @@ export function NotificationBell() {
               router.push(`/activity/launch-map?task=${n.task.id}`);
               return;
             }
+            const isTaskMapNotif = /\bon\s+(?:Task Map|Auditor Map|CRM Map)\b/i.test(n.title || "");
             const isCommentNotif =
               n.type === "MENTION" || n.type === "COMMENT" || n.type === "REACTION" || n.type === "REPLY" || (n.title || "").includes("comment") || (n.title || "").includes("replied");
             const cId = (n as any).commentId || (n as any).details?.commentId;
             const sId = (n as any).subtaskId || (n as any).details?.subtaskId;
+            if (isTaskMapNotif && !isCommentNotif) {
+              const subParam = sId ? `&subtask=${encodeURIComponent(sId)}` : "";
+              router.push(`/activity/task-map?task=${n.task.id}${subParam}`);
+              return;
+            }
             let commentQuery = "";
             // Any subtask notification (not just comments) should open the subtask itself
             if (sId) commentQuery += `&subtask=${encodeURIComponent(sId)}`;

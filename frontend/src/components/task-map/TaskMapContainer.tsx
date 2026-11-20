@@ -11,6 +11,7 @@ import {
   AuditorRoleOption,
   isDeveloperUser,
   getEffectiveTaskMapHandlerId,
+  isTaskHandedOver,
   isSessionProjectBased,
   getDefaultTaskMapSubStatuses,
   isTaskMapItemOnHold,
@@ -53,6 +54,7 @@ import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { hasCrmAccess, canTransitionTaskStatus } from '@/lib/permissions';
+import { isOtherBoardWorkflowStatus } from '@/lib/taskMapPermissions';
 
 const getTodayDateStr = () => {
   try {
@@ -159,6 +161,19 @@ export const TaskMapContainer: React.FC = () => {
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
+  const [maSortMode, setMaSortMode] = useState<'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC'>(() => {
+    if (typeof window === 'undefined') return 'DEFAULT';
+    const saved = localStorage.getItem('nexus_taskmap_ma_sort');
+    return saved === 'QUEUE_DESC' || saved === 'QUEUE_ASC' ? saved : 'DEFAULT';
+  });
+  const handleMaSortModeChange = useCallback((mode: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC') => {
+    setMaSortMode(mode);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('nexus_taskmap_ma_sort', mode);
+      } catch {}
+    }
+  }, []);
 
   // Daily Rollover & Historical Archive State
   const [isHistoryView, setIsHistoryView] = useState<boolean>(false);
@@ -879,7 +894,16 @@ export const TaskMapContainer: React.FC = () => {
     }
 
     const upStatuses = finalStatuses.map((st) => st.toUpperCase().replace(/[\s_-]+/g, ''));
-    const isHandoverSelected = upStatuses.includes('HANDOVER') || upStatuses.includes('AVAILABLETASK');
+    const isRevisionTransfer = upStatuses.includes('REVISION') || upStatuses.includes('REVISIONS');
+    const isCrmTransfer =
+      upStatuses.includes('ASKCLIENT') ||
+      upStatuses.includes('READYTOSEND') ||
+      upStatuses.includes('TOSEND');
+    const isHandoverSelected =
+      upStatuses.includes('HANDOVER') ||
+      upStatuses.includes('AVAILABLETASK') ||
+      isCrmTransfer;
+    const isSentWaitingSelected = upStatuses.includes('SENTBUTWAITING') || upStatuses.includes('SENT');
     const isParentOnHoldSubStatus =
       !taskId.startsWith('subtask:') &&
       !existingTask?.isSubtask &&
@@ -907,6 +931,22 @@ export const TaskMapContainer: React.FC = () => {
             ...(isHandoverSelected ? { assigneeId: null, assignee: null } : {}),
             upworkStartedAt: optimisticStartedAt,
             upworkSession: optimisticSession,
+            ...(isSentWaitingSelected && !t.crmWaitingMeta
+              ? {
+                  crmWaitingMeta: {
+                    waitingSince: new Date().toISOString(),
+                    daysPassed: 0,
+                    rule: {
+                      tier: 'TODAY' as const,
+                      label: 'Today',
+                      colorName: 'neutral' as const,
+                      hex: '#71717a',
+                      breathe: false,
+                      requiresModal: false,
+                    },
+                  },
+                }
+              : {}),
             taskMap: {
               ...t.taskMap,
               ...(isHandoverSelected ? { handedOver: true } : {}),
@@ -941,7 +981,7 @@ export const TaskMapContainer: React.FC = () => {
       !!(existingTask as any)?.recurringConfig ||
       upStatuses.some(
         (st) =>
-          ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
+          ['WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
           st.includes('WAITING') ||
           st.includes('CRM') ||
           st.includes('DAILY') ||
@@ -978,9 +1018,14 @@ export const TaskMapContainer: React.FC = () => {
         return [
           {
             ...existingTask,
+            ...(isHandoverSelected ? { assigneeId: null, assignee: null, assignees: [] } : {}),
             upworkStartedAt: optimisticStartedAt,
             upworkSession: optimisticSession,
-            taskMap: { ...existingTask.taskMap, statuses: finalStatuses },
+            taskMap: {
+              ...existingTask.taskMap,
+              ...(isHandoverSelected ? { handedOver: true } : {}),
+              statuses: finalStatuses,
+            },
           },
           ...cascadedPrev,
         ];
@@ -1006,7 +1051,7 @@ export const TaskMapContainer: React.FC = () => {
 
     const timer = setTimeout(async () => {
       try {
-        const res = await taskMapApi.updateTaskStatuses(taskId, finalStatuses);
+        const res: any = await taskMapApi.updateTaskStatuses(taskId, finalStatuses);
         if (res.activeUpworkSessions) {
           setActiveUpworkSessions(res.activeUpworkSessions);
         }
@@ -1025,6 +1070,23 @@ export const TaskMapContainer: React.FC = () => {
                 : t
             )
           );
+        }
+        if (res.originalMaId !== undefined || res.assigneeId !== undefined || res.taskMap) {
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === taskId
+                ? {
+                    ...t,
+                    ...(res.assigneeId !== undefined ? { assigneeId: res.assigneeId } : {}),
+                    ...(res.assignee !== undefined ? { assignee: res.assignee, assignees: res.assignee ? [res.assignee] : [] } : {}),
+                    ...(res.taskMap ? { taskMap: { ...t.taskMap, ...res.taskMap } } : {}),
+                  }
+                : t
+            )
+          );
+          if (isRevisionTransfer || isHandoverSelected || isCrmTransfer) {
+            void loadData(true);
+          }
         }
         const cur = pendingUpdatesRef.current.get(taskId);
         if (cur) {
@@ -1523,15 +1585,35 @@ export const TaskMapContainer: React.FC = () => {
     return availablePool.filter((t) => isTaskVisible(t, true));
   }, [availablePool, isTaskVisible]);
 
-  // Compute count of tasks waiting for review / auditing
+  // Compute count of active Task Map tasks assigned/queued to the current user only
+  const taskMapQueueCount = React.useMemo(() => {
+    const userId = currentUser?.id;
+    if (!userId) return 0;
+    const seenIds = new Set<string>();
+    let count = 0;
+    for (const t of [...displayedTasks, ...displayedPool]) {
+      if (seenIds.has(t.id)) continue;
+      seenIds.add(t.id);
+      if (t.isClosed || isTaskMapItemOnHold(t) || isOtherBoardWorkflowStatus(t)) continue;
+      if (getEffectiveTaskMapHandlerId(t) === userId) {
+        count++;
+      }
+    }
+    return count;
+  }, [displayedTasks, displayedPool, currentUser?.id]);
+
+  // Compute count of review/auditing tasks assigned to the current user only
   const auditingCount = React.useMemo(() => {
+    const userId = currentUser?.id;
+    if (!userId) return 0;
     const allPoolAndTasks = [...tasks, ...availablePool];
     const seenIds = new Set<string>();
     let count = 0;
     for (const t of allPoolAndTasks) {
       if (seenIds.has(t.id)) continue;
       seenIds.add(t.id);
-      if (t.isClosed || isTaskMapItemOnHold(t)) continue;
+      if (t.isSubtask || t.isClosed || isTaskMapItemOnHold(t) || isTaskHandedOver(t)) continue;
+      if (getEffectiveTaskMapHandlerId(t) !== userId) continue;
       const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
       const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
         x.toUpperCase().replace(/[\s_-]+/g, '')
@@ -1539,17 +1621,45 @@ export const TaskMapContainer: React.FC = () => {
       if (
         s === 'TOREVIEW' ||
         s === 'INREVIEW' ||
+        s === 'REVIEW' ||
+        s === 'CHECKING' ||
+        s === 'INCHECKING' ||
         mapStatuses.includes('TOREVIEW') ||
         mapStatuses.includes('INREVIEW') ||
-        mapStatuses.includes('CHE') ||
-        mapStatuses.includes('PAU') ||
-        mapStatuses.includes('HAN')
+        mapStatuses.includes('REVIEW') ||
+        mapStatuses.includes('CHECKING') ||
+        mapStatuses.includes('INCHECKING')
       ) {
         count++;
       }
     }
     return count;
-  }, [tasks, availablePool]);
+  }, [tasks, availablePool, currentUser?.id]);
+
+  // Compute count of active CRM tasks assigned to the current user only (excluding Sent/Waiting, Closed, On-hold)
+  const crmCount = React.useMemo(() => {
+    const userId = currentUser?.id;
+    if (!userId) return 0;
+    const allPoolAndTasks = [...tasks, ...availablePool];
+    const seenIds = new Set<string>();
+    let count = 0;
+    for (const t of allPoolAndTasks) {
+      if (seenIds.has(t.id)) continue;
+      seenIds.add(t.id);
+      if (t.isSubtask || t.isClosed || isTaskMapItemOnHold(t) || isTaskHandedOver(t)) continue;
+      if (getEffectiveTaskMapHandlerId(t) !== userId) continue;
+      const s = (t.status || '').toUpperCase().trim();
+      const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
+        st.toUpperCase().replace(/[\s_-]+/g, '')
+      );
+      const hasAskClient = mapStatusesNorm.includes('ASKCLIENT');
+      const isSentOrWaiting = s === 'WAITING' || mapStatusesNorm.includes('SENTBUTWAITING') || mapStatusesNorm.includes('SENT');
+      if (!isSentOrWaiting && (s === 'CRM' || hasAskClient)) {
+        count++;
+      }
+    }
+    return count;
+  }, [tasks, availablePool, currentUser?.id]);
 
   // Compute available MAs for custom shift selection
   const availableMAs = React.useMemo(() => {
@@ -1690,7 +1800,11 @@ export const TaskMapContainer: React.FC = () => {
           onToggleAdmin={() => setShowAdminTasks((prev) => !prev)}
           selectedClients={selectedClients}
           onSelectClients={setSelectedClients}
+          taskMapQueueCount={taskMapQueueCount}
           auditingCount={auditingCount}
+          crmCount={crmCount}
+          maSortMode={maSortMode}
+          onMaSortModeChange={handleMaSortModeChange}
           availableMAs={availableMAs}
           selectedMAs={selectedCustomMAs}
           onSelectedMAsChange={setSelectedCustomMAs}
@@ -1729,6 +1843,7 @@ export const TaskMapContainer: React.FC = () => {
               onTransferTask={handleTransferTask}
               search={search}
               trackFilter={trackFilter}
+              maSortMode={maSortMode}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView

@@ -1405,7 +1405,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
                   }
 
                   const displayLabel = text === 'UI UX Audit' ? 'UI/UX Audit' : text;
-                  const hierarchyCheck: AuditPermissionCheck = !isCompleted ? canPerformAudit(text, targetForAudit, subtaskId) : { allowed: true, missingPrerequisites: [] };
+                  const hierarchyCheck: AuditPermissionCheck = !isCompleted ? canPerformAudit(text, targetForAudit, subtaskId, currentUser?.id) : { allowed: true, missingPrerequisites: [] };
                   const isLockedByHierarchy = !isCompleted && !hierarchyCheck.allowed;
 
                   return (
@@ -1448,7 +1448,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
                               return;
                             }
                             if (!isCompleted) {
-                              const permCheck = canPerformAudit(text, targetForAudit, subtaskId);
+                              const permCheck = canPerformAudit(text, targetForAudit, subtaskId, currentUser?.id);
                               if (!permCheck.allowed) {
                                 setShakingAuditItem(text);
                                 setIsShaking(true);

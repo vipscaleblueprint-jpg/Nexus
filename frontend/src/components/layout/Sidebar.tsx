@@ -947,7 +947,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const searchParams = useSearchParams();
   const filterParam = searchParams?.get('filter');
 
-  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, isMobileSidebarOpen, setMobileSidebarOpen, unreadNotifications, activeDashboardTab } = useAppStore();
+  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, isMobileSidebarOpen, setMobileSidebarOpen, unreadNotifications, taskMapUnreadCount, activeDashboardTab } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
   // ── Resizable & Collapsible Nexus sub-sidebar (persisted per user) ──
@@ -1654,17 +1654,20 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                 </Link>
                 <Link
                   href="/activity/task-map"
-                  title="Task Map"
+                  title={taskMapUnreadCount > 0 ? `Task Map (${taskMapUnreadCount > 99 ? '99+' : taskMapUnreadCount} new)` : 'Task Map'}
                   onClick={() => {
                     if (pathname?.startsWith('/activity/task-map') || pathname?.startsWith('/task-map')) {
                       window.dispatchEvent(new CustomEvent('task_map:reload'));
                     }
                   }}
-                  className={`flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground ${
+                  className={`relative flex items-center justify-center size-8 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground ${
                     pathname.startsWith('/activity/task-map') || pathname.startsWith('/task-map') ? 'bg-accent text-accent-foreground' : 'text-zinc-400'
                   }`}
                 >
                   <Map className="size-4 text-sky-400" />
+                  {taskMapUnreadCount > 0 && (
+                    <span className="absolute top-1 right-1 size-2 rounded-full bg-sky-500" />
+                  )}
                 </Link>
                 <Link
                   href="/activity/launch-map"
@@ -1741,6 +1744,11 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               >
                 <Map className="size-4 shrink-0 text-sky-400" />
                 <span className="truncate">Task Map</span>
+                {taskMapUnreadCount > 0 && (
+                  <span className="ml-auto inline-flex items-center justify-center whitespace-nowrap shrink-0 leading-none text-[10px] font-bold bg-sky-500 text-white px-1.5 py-0.5 rounded-full">
+                    {taskMapUnreadCount > 99 ? '99+' : taskMapUnreadCount}
+                  </span>
+                )}
               </Link>
               <Link
                 href="/activity/launch-map"

@@ -24,6 +24,8 @@ import {
   updateUpworkClientsHandler,
   getActiveUpworkSessionsHandler,
   getTaskMapTaskDescription,
+  getPendingCrmFollowUpsHandler,
+  respondCrmFollowUpHandler,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -59,3 +61,5 @@ taskMapRouter.patch('/tasks/:id/meta', updateTaskMeta);
 taskMapRouter.patch('/tasks/:id/launch', updateTaskLaunchMeta);
 taskMapRouter.get('/tasks/:id/timeline', getTaskTimeline);
 taskMapRouter.get('/task-description', getTaskMapTaskDescription);
+taskMapRouter.get('/crm/follow-ups', getPendingCrmFollowUpsHandler);
+taskMapRouter.post('/crm/follow-ups/:id/respond', respondCrmFollowUpHandler);

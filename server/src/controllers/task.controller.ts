@@ -35,7 +35,24 @@ import {
   resolveClickUpListId,
 } from '../services/clickupService';
 import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupCommentConverter';
-import { isNexusAuditChecklist, isAiAuditChecklist, getAiPickedAudits, requiresClosedSubtasks, requiresLevel1Audits, requiresCompletedAudits, normalizeAuditName, isReviewStatus, isCheckingStatus } from '../utils/auditChecklist';
+import {
+  isNexusAuditChecklist,
+  isAiAuditChecklist,
+  getAiPickedAudits,
+  requiresClosedSubtasks,
+  requiresLevel1Audits,
+  requiresCompletedAudits,
+  normalizeAuditName,
+  isReviewStatus,
+  isCheckingStatus,
+  HIDE_DESIGN_AUDIT,
+  getRequiredAudits,
+} from '../utils/auditChecklist';
+import {
+  applyAuditChecklistAutomation,
+  applyRevisionReturnToOriginalMa,
+  recordOriginalAssignedMa,
+} from '../services/auditWorkflowAutomation';
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage, canUserDeleteTask } from '../utils/assignPermission';
@@ -52,6 +69,7 @@ import {
 import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
 import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
 import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
+import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmFollowUpService';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -59,45 +77,62 @@ const cuChecklistItemIdMap = new Map<string, { cuChecklistId: string; cuItemId: 
 const cuSubtaskIdMap = new Map<string, string>(); // nexusSubtaskId -> cuSubtaskId
 
 
-// TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
-const HIDE_DESIGN_AUDIT = true;
+// Design Audit toggle is centralized in utils/auditChecklist.ts
 
-export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]) => {
-  const t = taskTitle.toLowerCase();
-  const audits = new Set<string>();
+async function findCounterpartAuditConflict(params: {
+  taskId: string;
+  subtaskId?: string | null;
+  auditText: string;
+  actorUserId: string;
+}): Promise<string | null> {
+  const norm = normalizeAuditName(params.auditText);
+  const counterpartNorm =
+    norm === 'funnel audit'
+      ? 'ui ux audit'
+      : norm === 'ui ux audit'
+        ? 'funnel audit'
+        : null;
+  if (!counterpartNorm) return null;
 
-  // Every task must pass an Instructions Audit globally
-  audits.add('Instructions Audit');
-
-  // Whatever auditor role was actually assigned determines the required audit item directly,
-  // regardless of what the task title says.
-  (auditorRoles || []).forEach((role) => {
-    const r = role.toLowerCase();
-    if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
-    if (!HIDE_DESIGN_AUDIT && r.includes('design')) audits.add('Design Audit');
-    if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
+  const auditChecklists = await prisma.checklist.findMany({
+    where: {
+      taskId: params.taskId,
+      subtaskId: params.subtaskId || null,
+      name: { equals: 'Audit', mode: 'insensitive' },
+    },
+    include: {
+      items: {
+        select: { text: true, completed: true, checkedById: true, assigneeId: true },
+      },
+    },
   });
 
-  // 1. Graphics, Reels, Video, Samples -> ONLY Design
-  if (!HIDE_DESIGN_AUDIT && t.match(/graphic|reel|video|sample/)) {
-    audits.add('Design Audit');
-  }
+  const matchingCompleted = auditChecklists
+    .filter(isNexusAuditChecklist)
+    .flatMap((c) => c.items || [])
+    .filter(
+      (i) =>
+        i.completed &&
+        !(i.text || '').startsWith('!') &&
+        normalizeAuditName(i.text) === counterpartNorm
+    );
 
-  // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
-  if (t.match(/email|newsletter|social media/)) {
-    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
-    audits.add('Funnel Audit');
-  }
+  const sameAuditorCompleted = matchingCompleted.some((i) => {
+    if (i.checkedById === params.actorUserId) return true;
+    if (!i.checkedById && Array.isArray(i.assigneeId) && i.assigneeId.length === 1) {
+      return i.assigneeId[0] === params.actorUserId;
+    }
+    return false;
+  });
 
-  // 3. Websites, Links, Landing Pages -> ALL THREE
-  if (t.match(/website|page|funnel|link/)) {
-    audits.add('UI UX Audit');
-    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
-    audits.add('Funnel Audit');
-  }
+  if (!sameAuditorCompleted) return null;
 
-  return Array.from(audits);
-};
+  return norm === 'funnel audit'
+    ? 'UI/UX Auditor and Funnel Auditor for the same task must be different auditors. Another Funnel Auditor must perform the Funnel Audit.'
+    : 'UI/UX Auditor and Funnel Auditor for the same task must be different auditors. Another UI/UX Auditor must perform the UI/UX Audit.';
+}
+
+export { getRequiredAudits };
 
 export const taskInclude = {
   subtasks: {
@@ -965,6 +1000,26 @@ export async function updateTask(req: Request, res: Response) {
       }
     }
 
+    let computedAssigneeIds = assigneeIds;
+    if (assigneeRoleRestrictions !== undefined && assigneeIds === undefined && assigneeId === undefined) {
+      computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
+    }
+
+    const isRevisionReturn =
+      status === 'REVISION' &&
+      computedAssigneeIds === undefined &&
+      (assigneeId === undefined || assigneeId === null);
+
+    // Preserve Original Assigned MA before clearing or moving task into Review/Audit/CRM queues
+    if (
+      status &&
+      !areStatusesEqual(status, currentTask.status) &&
+      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM') &&
+      currentTask.assigneeId
+    ) {
+      await recordOriginalAssignedMa({ taskId, userId: currentTask.assigneeId });
+    }
+
     const updateData: any = {
       ...(title !== undefined ? { title } : {}),
       ...(description !== undefined ? { description } : {}),
@@ -980,11 +1035,6 @@ export async function updateTask(req: Request, res: Response) {
       // Ensure undefined fields are stripped out completely
     };
 
-    let computedAssigneeIds = assigneeIds;
-    if (assigneeRoleRestrictions !== undefined && assigneeIds === undefined && assigneeId === undefined) {
-      computedAssigneeIds = await resolveUsersFromRoles(assigneeRoleRestrictions);
-    }
-
     if (computedAssigneeIds !== undefined) {
       const previousIds = (currentTask.assignees || []).map((a: any) => a.id);
       const nextPrimaryId = resolveLatestAssigneeId({
@@ -995,7 +1045,7 @@ export async function updateTask(req: Request, res: Response) {
       });
       updateData.assignees = { set: computedAssigneeIds.map((id: string) => ({ id })) };
       updateData.assigneeId = nextPrimaryId;
-    } else if (assigneeId !== undefined) {
+    } else if (assigneeId !== undefined && !isRevisionReturn) {
       updateData.assigneeId = assigneeId || null;
       updateData.assignees = assigneeId ? { set: [{ id: assigneeId }] } : { set: [] };
     }
@@ -1006,12 +1056,45 @@ export async function updateTask(req: Request, res: Response) {
       data: updateData,
     });
 
+    if (isRevisionReturn) {
+      const revResult = await applyRevisionReturnToOriginalMa({
+        targetId: taskId,
+        actorUser: effectiveUser,
+        io,
+      });
+      const revPayload: any = {
+        ...updated,
+        status: 'REVISION',
+        assigneeId: revResult.originalMaId,
+        assignee: revResult.assignee,
+        assignees: revResult.assignee ? [revResult.assignee] : [],
+        assigneeIds: revResult.originalMaId ? [revResult.originalMaId] : [],
+        taskMap: {
+          statuses: revResult.statuses,
+          handedOver: revResult.handedOver,
+          pmReviews: revResult.pmReviews,
+        },
+      };
+      return res.json({ task: revPayload, queued: true });
+    }
+
     if (status && isOnHoldStatus(status)) {
       await cascadeParentOnHoldToSubtasks({
         parentTaskId: taskId,
         listId: listId || currentListId || currentTask.listId,
         actorId: effectiveUser?.id || null,
       }).catch(() => {});
+    }
+
+    if (status && !areStatusesEqual(status, currentTask.status)) {
+      const enteringWaiting = isWaitingMainStatus(status) && !isWaitingMainStatus(currentTask.status);
+      const leavingWaiting = !isWaitingMainStatus(status) && isWaitingMainStatus(currentTask.status);
+      if (enteringWaiting || leavingWaiting) {
+        await syncCrmWaitingMetaForTask(taskId, {
+          isEnteringWaiting: enteringWaiting,
+          isLeavingWaiting: leavingWaiting,
+        }).catch(() => {});
+      }
     }
 
     // Manually construct the payload for frontend to merge efficiently
@@ -1470,6 +1553,7 @@ export async function moveTask(req: Request, res: Response) {
         status: true,
         listId: true,
         creatorId: true,
+        assigneeId: true,
         teamId: true,
         externalId: true,
         assignees: { select: { id: true } },
@@ -1573,6 +1657,15 @@ export async function moveTask(req: Request, res: Response) {
 
     const oldStatus = currentTask.status;
 
+    if (
+      status &&
+      !areStatusesEqual(oldStatus, status) &&
+      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM') &&
+      currentTask.assigneeId
+    ) {
+      await recordOriginalAssignedMa({ taskId: id, userId: currentTask.assigneeId });
+    }
+
     // Immediately persist to DB (scalar fields only for max speed)
     if (status && status.toLowerCase() === 'revision') {
       // Reset only Nexus's Audit checklist, not a ClickUp checklist also named "Audit".
@@ -1602,6 +1695,28 @@ export async function moveTask(req: Request, res: Response) {
       data: updateData,
     });
 
+    let updatedWithRevision: any = updated;
+    if (status && statusUpper === 'REVISION') {
+      const revResult = await applyRevisionReturnToOriginalMa({
+        targetId: id,
+        actorUser: effectiveUser,
+        io,
+      });
+      updatedWithRevision = {
+        ...updated,
+        status: 'REVISION',
+        assigneeId: revResult.originalMaId,
+        assignee: revResult.assignee,
+        assignees: revResult.assignee ? [revResult.assignee] : [],
+        assigneeIds: revResult.originalMaId ? [revResult.originalMaId] : [],
+        taskMap: {
+          statuses: revResult.statuses,
+          handedOver: revResult.handedOver,
+          pmReviews: revResult.pmReviews,
+        },
+      };
+    }
+
     if (status && isOnHoldStatus(status)) {
       await cascadeParentOnHoldToSubtasks({
         parentTaskId: id,
@@ -1610,10 +1725,21 @@ export async function moveTask(req: Request, res: Response) {
       }).catch(() => {});
     }
 
+    if (status && !areStatusesEqual(status, oldStatus)) {
+      const enteringWaiting = isWaitingMainStatus(status) && !isWaitingMainStatus(oldStatus);
+      const leavingWaiting = !isWaitingMainStatus(status) && isWaitingMainStatus(oldStatus);
+      if (enteringWaiting || leavingWaiting) {
+        await syncCrmWaitingMetaForTask(id, {
+          isEnteringWaiting: enteringWaiting,
+          isLeavingWaiting: leavingWaiting,
+        }).catch(() => {});
+      }
+    }
+
     // Broadcast IMMEDIATELY after update
     const roomListId = currentListId || currentTask.listId;
     const freshMoverInfo = await getTaskMoverAndUpdaters(id);
-    const enrichedUpdated = { ...updated, ...freshMoverInfo };
+    const enrichedUpdated = { ...updatedWithRevision, ...freshMoverInfo };
     io.emit('task:updated', enrichedUpdated);
 
     // Invalidate activity cache in background (status change writes an AuditLog)
@@ -1697,7 +1823,7 @@ export async function moveTask(req: Request, res: Response) {
       }
     }
 
-    return res.json({ task: updated, queued: true, message: 'Status updated successfully' });
+    return res.json({ task: updatedWithRevision, queued: true, message: 'Status updated successfully' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -3665,6 +3791,15 @@ export async function createChecklistItem(req: Request, res: Response) {
               error: 'You cannot audit this task because you inputted into the daily tracker for this task iteration. Please have another team member with the required audit role perform this audit.',
             });
           }
+          const counterpartConflict = await findCounterpartAuditConflict({
+            taskId,
+            subtaskId: checklist?.subtaskId || subtaskId || null,
+            auditText: text || '',
+            actorUserId: userId,
+          });
+          if (counterpartConflict) {
+            return res.status(403).json({ error: counterpartConflict });
+          }
           data.assigneeId = [userId];
         }
         data.checkedById = userId;
@@ -3967,7 +4102,20 @@ export async function createChecklistItem(req: Request, res: Response) {
       }
     })();
 
-    return res.json({ item, checklistId });
+    let automation = null;
+    if (completed && targetTaskId && isAuditChecklistName(checklist?.name)) {
+      automation = await applyAuditChecklistAutomation({
+        taskId: targetTaskId,
+        actorUserId: userId,
+        io,
+      });
+    }
+
+    return res.json({
+      item,
+      checklistId,
+      ...(automation && automation.outcome !== 'NONE' ? { automation } : {}),
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -4004,7 +4152,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
       if (completed && userId) {
         const checkItem = await prisma.checklistItem.findUnique({
           where: { id: itemId },
-          select: { checklist: { select: { name: true, taskId: true, subtaskId: true } } },
+          select: { text: true, checklist: { select: { name: true, taskId: true, subtaskId: true } } },
         });
         const targetTaskId = checkItem?.checklist?.taskId || req.params.id;
         const currentSubtaskId = checkItem?.checklist?.subtaskId || undefined;
@@ -4031,6 +4179,15 @@ export async function updateChecklistItem(req: Request, res: Response) {
               error: 'You cannot audit this task because you inputted into the daily tracker for this task iteration. Please have another team member with the required audit role perform this audit.',
             });
           }
+          const counterpartConflict = await findCounterpartAuditConflict({
+            taskId: targetTaskId,
+            subtaskId: currentSubtaskId || null,
+            auditText: text || checkItem?.text || '',
+            actorUserId: userId,
+          });
+          if (counterpartConflict) {
+            return res.status(403).json({ error: counterpartConflict });
+          }
           data.assigneeId = [userId];
         }
         data.checkedById = userId;
@@ -4047,7 +4204,7 @@ export async function updateChecklistItem(req: Request, res: Response) {
       data,
       include: {
         checkedBy: { select: { id: true, name: true, avatarUrl: true } },
-        checklist: { select: { taskId: true, subtaskId: true } },
+        checklist: { select: { taskId: true, subtaskId: true, name: true, externalId: true } },
       },
     });
 
@@ -4061,6 +4218,15 @@ export async function updateChecklistItem(req: Request, res: Response) {
     if (subtaskId) {
       invalidateCache(`task:${subtaskId}`).catch(console.error);
       invalidateCache(`task:activities:${subtaskId}`).catch(console.error);
+    }
+
+    let automation = null;
+    if (completed === true && taskId && isNexusAuditChecklist({ name: item.checklist?.name || '', externalId: item.checklist?.externalId })) {
+      automation = await applyAuditChecklistAutomation({
+        taskId,
+        actorUserId: userId,
+        io,
+      });
     }
 
     // --- Background Operations: AuditLog & Notifications (Immediate), ClickUp Sync (Isolated) ---
@@ -4265,7 +4431,10 @@ export async function updateChecklistItem(req: Request, res: Response) {
       }
     })();
 
-    return res.json({ item });
+    return res.json({
+      item,
+      ...(automation && automation.outcome !== 'NONE' ? { automation } : {}),
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

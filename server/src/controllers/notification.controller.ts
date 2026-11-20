@@ -34,6 +34,7 @@ export async function getNotifications(req: Request, res: Response) {
       { title: { contains: 'unassigned you', mode: 'insensitive' } },
       { type: { equals: 'CHECKLIST_ITEM_ASSIGNED', mode: 'insensitive' } },
       { type: { equals: 'LAUNCH_REVIEW_ALERT', mode: 'insensitive' } },
+      { type: { equals: 'CRM_FOLLOW_UP_ALERT', mode: 'insensitive' } },
       { title: { contains: 'You were assigned', mode: 'insensitive' } },
       { title: { contains: 'replied to your comment', mode: 'insensitive' } },
       { title: { contains: 'reacted', mode: 'insensitive' } },
@@ -75,7 +76,7 @@ export async function getNotifications(req: Request, res: Response) {
       whereClause.OR = forMeCondition;
     }
 
-    const [notifications, total, unreadCount] = await Promise.all([
+    const [notifications, total, unreadCount, taskMapUnreadCount] = await Promise.all([
       prisma.taskNotification.findMany({
         where: whereClause,
         include: {
@@ -94,6 +95,23 @@ export async function getNotifications(req: Request, res: Response) {
           isCleared: false,
           isRead: false,
           OR: forMeCondition,
+        },
+      }),
+      prisma.taskNotification.count({
+        where: {
+          userId: authReq.user.id,
+          isCleared: false,
+          isRead: false,
+          AND: [
+            { OR: forMeCondition },
+            {
+              OR: [
+                { title: { contains: 'on Task Map', mode: 'insensitive' } },
+                { title: { contains: 'on Auditor Map', mode: 'insensitive' } },
+                { title: { contains: 'on CRM Map', mode: 'insensitive' } },
+              ],
+            },
+          ],
         },
       }),
     ]);
@@ -203,6 +221,7 @@ export async function getNotifications(req: Request, res: Response) {
       notifications: activeNotifications,
       total: activeTotal,
       unreadCount: activeUnreadCount,
+      taskMapUnreadCount,
       hasMore,
       page: pageNum,
       limit: take,

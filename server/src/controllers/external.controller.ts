@@ -26,6 +26,7 @@ import { getAggregatedRoleMap } from '../services/roleMapService';
 import { findUserByName } from './sheets.controller';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 import { syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus } from '../services/taskMapService';
+import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmFollowUpService';
 import { getTaskMoverAndUpdaters } from './task.controller';
 
 
@@ -1018,6 +1019,17 @@ export async function updateTask(req: Request, res: Response) {
         listId: task.listId,
         actorId: apiKey.user?.id || null,
       }).catch(() => {});
+    }
+
+    if (finalStatus !== undefined && existingTask?.status) {
+      const enteringWaiting = isWaitingMainStatus(finalStatus) && !isWaitingMainStatus(existingTask.status);
+      const leavingWaiting = !isWaitingMainStatus(finalStatus) && isWaitingMainStatus(existingTask.status);
+      if (enteringWaiting || leavingWaiting) {
+        await syncCrmWaitingMetaForTask(task.id, {
+          isEnteringWaiting: enteringWaiting,
+          isLeavingWaiting: leavingWaiting,
+        }).catch(() => {});
+      }
     }
 
     // Re-fetch populated task with updated subtasks for broadcast

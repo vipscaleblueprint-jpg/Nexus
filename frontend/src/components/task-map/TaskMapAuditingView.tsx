@@ -7,6 +7,10 @@ import {
   taskMapApi,
   hasUiUxOrDesignAudit,
   canPerformAudit,
+  getCompletedAuditActorIds,
+  getTaskAuditStatus,
+  isUiUxAudit,
+  isFunnelAudit,
   getEffectiveTaskMapHandlerId,
   isTaskHandedOver,
   countNonOnHoldTasks,
@@ -511,12 +515,23 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // All combined review candidates (admin & client filtering applied per column)
   const filteredReviewTasks = combinedTasks;
 
-  // Check if a task has review or checking status
+  // Check if a task has review or checking status (exclude tasks transferred to CRM via Ask Client)
   const isReviewStatus = (t: TaskMapItem) => {
     const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
       x.toUpperCase().replace(/[\s_-]+/g, '')
     );
+    if (
+      s === 'REVISION' ||
+      s === 'REVISIONS' ||
+      mapStatuses.includes('REVISION') ||
+      mapStatuses.includes('REVISIONS') ||
+      mapStatuses.includes('ASKCLIENT') ||
+      mapStatuses.includes('READYTOSEND') ||
+      mapStatuses.includes('TOSEND')
+    ) {
+      return false;
+    }
     return (
       s === 'TOREVIEW' ||
       s === 'INREVIEW' ||
@@ -534,6 +549,19 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // Check if a task is assigned to a specific auditor (latest assignee only; never duplicate across assignees[])
   const isTaskAssignedToAuditor = (task: TaskMapItem, auditor: any) => {
     if (isTaskHandedOver(task)) return false;
+
+    const statusNorm = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+    const normMapStatuses = (task.taskMap?.statuses || []).map((x) =>
+      x.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    if (
+      statusNorm === 'REVISION' ||
+      statusNorm === 'REVISIONS' ||
+      normMapStatuses.includes('REVISION') ||
+      normMapStatuses.includes('REVISIONS')
+    ) {
+      return false;
+    }
 
     const effectiveHandlerId = getEffectiveTaskMapHandlerId(task);
     if (effectiveHandlerId) {
@@ -569,6 +597,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
       x.toUpperCase().replace(/[\s_-]+/g, '')
     );
+    if (
+      s === 'REVISION' ||
+      s === 'REVISIONS' ||
+      mapStatuses.includes('REVISION') ||
+      mapStatuses.includes('REVISIONS') ||
+      mapStatuses.includes('ASKCLIENT') ||
+      mapStatuses.includes('READYTOSEND') ||
+      mapStatuses.includes('TOSEND')
+    ) {
+      return false;
+    }
 
     return (
       s === 'TOREVIEW' ||
@@ -646,13 +685,57 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       const auditorId = targetColumnId.replace('col-auditor-', '');
       const auditor = auditorUsers.find((a) => a.id === auditorId);
       if (auditor) {
-        const auditType = getDesignatedAuditType(auditor);
+        const auditorRolesLower = [
+          ...(auditor.roles || []),
+          auditor.role || '',
+          auditor.title || '',
+        ].map((r: string) => (r || '').toLowerCase());
+        const hasUiUxRole = auditorRolesLower.some((r) => r.includes('ui') || r.includes('ux'));
+        const hasDesignRole = auditorRolesLower.some((r) => r.includes('design') || r.includes('graphic'));
+        const hasInstrRole = auditorRolesLower.some((r) => r.includes('instruction') || r.includes('copy'));
+        const hasFunnelRole = auditorRolesLower.some((r) => r.includes('funnel'));
 
-        // Enforce hierarchy before assigning to auditor!
-        const permCheck = canPerformAudit(auditType, task);
+        const auditStatus = getTaskAuditStatus(task);
+        const unchecked = auditStatus.uncheckedAudits || [];
+        const needsUiUx = unchecked.some((a) => isUiUxAudit(a));
+        const needsDesign = unchecked.some((a) => a.toLowerCase().includes('design'));
+        const needsInstr = unchecked.some((a) => a.toLowerCase().includes('instruction'));
+        const needsFunnel = unchecked.some((a) => isFunnelAudit(a));
+
+        let auditType = getDesignatedAuditType(auditor);
+        if (hasUiUxRole && needsUiUx) {
+          auditType = 'UI UX Audit';
+        } else if (hasDesignRole && needsDesign) {
+          auditType = 'Design Audit';
+        } else if (hasInstrRole && needsInstr) {
+          auditType = 'Instruction Audit';
+        } else if (hasFunnelRole && needsFunnel) {
+          auditType = 'Funnel Audit';
+        }
+
+        // Enforce audit hierarchy AND UI/UX vs Funnel different-auditor separation
+        const permCheck = canPerformAudit(auditType, task, undefined, auditor.id);
         if (!permCheck.allowed) {
           toast.error(permCheck.reason || 'Cannot assign: prerequisites not completed.');
           return;
+        }
+        if (isFunnelAudit(auditType)) {
+          const uiUxActors = getCompletedAuditActorIds(isUiUxAudit, task);
+          if (uiUxActors.actorIds.includes(auditor.id)) {
+            toast.error(
+              `${auditor.name} already completed the UI/UX Audit for this task — Funnel Audit must be assigned to a different Funnel Auditor.`
+            );
+            return;
+          }
+        }
+        if (isUiUxAudit(auditType)) {
+          const funnelActors = getCompletedAuditActorIds(isFunnelAudit, task);
+          if (funnelActors.actorIds.includes(auditor.id)) {
+            toast.error(
+              `${auditor.name} already completed the Funnel Audit for this task — UI/UX Audit must be assigned to a different UI/UX Auditor.`
+            );
+            return;
+          }
         }
 
         updatedStatuses = [auditType];
@@ -680,10 +763,9 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     { id: 'opt-audit-instruction', label: 'Instruction Audit', color: '#10b981', textColor: '#ffffff', order: 3 },
     { id: 'opt-audit-funnel', label: 'Funnel Audit', color: '#f59e0b', textColor: '#ffffff', order: 4 },
     { id: 'opt-audit-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 5 },
-    { id: 'opt-audit-waiting', label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#ffffff', order: 6 },
-    { id: 'opt-audit-tosend', label: 'To Send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 7 },
-    { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 8 },
-    { id: 'opt-audit-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 9 },
+    { id: 'opt-audit-readytosend', label: 'Ready to Send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 6 },
+    { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 7 },
+    { id: 'opt-audit-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 8 },
   ];
 
   // Assemble full columns array
@@ -1067,7 +1149,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                               if (e.defaultPrevented) return;
                               onOpenDetail(task);
                             }}
-                            className="p-3 bg-zinc-900 border border-border hover:border-zinc-700 rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer"
+                            className="p-3 bg-zinc-900 hover:bg-zinc-800/80 border border-border hover:border-zinc-600/80 hover:shadow-md active:scale-[0.99] rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer"
                           >
                             <div className="flex items-stretch gap-3">
                               {/* Left: Task Info */}
@@ -1079,7 +1161,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
                               {/* Title */}
                               <h4
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug group-hover:underline my-0.5 h-[36px]"
+                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
                                 title={task.title}
                               >
                                 {task.title}
@@ -1088,6 +1170,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                               {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
                               <div
                                 className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {/* Circle Dot Status Indicator */}
@@ -1184,7 +1268,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                     const cleanNext = isSelecting ? [label] : [];
                                     const norm = label.toLowerCase().trim();
                                     
-                                    if (norm === 'to send') {
+                                    if (norm === 'ready to send' || norm === 'readytosend' || norm === 'to send') {
                                       if (isSelecting) {
                                         const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
                                         let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
@@ -1226,16 +1310,16 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                           return;
                                         }
 
-                                        onStatusChange(task.id, cleanNext);
+                                        onStatusChange(task.id, ['Ready to Send']);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
                                         } else {
                                           await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.success('Task marked To Send — transferred to CRM Map pool');
+                                        toast.success('Task marked Ready to Send — transferred to CRM Map');
                                       } else {
-                                        // User pressed 'To Send' AGAIN in Auditing -> revert back to last status
+                                        // User pressed 'Ready to Send' AGAIN in Auditing -> revert back to last status
                                         const defaultRev = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
                                         const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
                                         onStatusChange(task.id, []);
@@ -1245,56 +1329,26 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                           await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.info(`Reverted 'To Send' — returned to ${revertStatus}`);
-                                      }
-                                    } else if (norm === 'waiting') {
-                                      if (isSelecting) {
-                                        onStatusChange(task.id, cleanNext);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'WAITING' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.success('Task moved to WAITING — transferred to CRM Map');
-                                      } else {
-                                        const defaultRev = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
-                                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
-                                        onStatusChange(task.id, []);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: revertStatus });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info(`Reverted 'Waiting' — returned to ${revertStatus}`);
+                                        toast.info(`Reverted 'Ready to Send' — returned to ${revertStatus}`);
                                       }
                                     } else if (norm === 'ask client' || norm === 'askclient') {
                                       if (isSelecting) {
-                                        onStatusChange(task.id, cleanNext);
-                                        const targetRev = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
-                                        if (toCanonicalTaskStatus(task.status) !== targetRev) {
-                                          if (onTaskUpdate) {
-                                            await onTaskUpdate(task.id, { status: targetRev });
-                                          } else {
-                                            await tasksApi.updateTask(task.id, { status: targetRev } as any).catch(console.error);
-                                          }
-                                        }
-                                        toast.info(`Task marked 'Ask Client' — transferred to CRM Map pool (stays ${targetRev})`);
+                                        onStatusChange(task.id, ['Ask Client']);
+                                        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
                                       } else {
                                         onStatusChange(task.id, []);
                                         toast.info("Removed 'Ask Client'");
                                       }
-                                    } else if (norm === 'revision') {
+                                    } else if (norm === 'revision' || norm === 'revisions') {
                                       if (isSelecting) {
-                                        onStatusChange(task.id, cleanNext);
+                                        onStatusChange(task.id, ['Revision']);
                                         if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'REVISION', assigneeId: null } as any);
+                                          await onTaskUpdate(task.id, { status: 'REVISION' } as any);
                                         } else {
-                                          await tasksApi.updateTask(task.id, { status: 'REVISION', assigneeId: null } as any).catch(console.error);
+                                          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.warning('Task marked for REVISION — returned to Task Map available tasks');
+                                        toast.warning('Task marked for Revision — returned to original MA on Task Map');
                                       } else {
                                         const defaultRev = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
                                         const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);

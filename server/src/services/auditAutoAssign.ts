@@ -264,7 +264,7 @@ export async function autoAssignAudits(
           externalId: true,
           subtaskId: true,
           items: {
-            select: { id: true, text: true, completed: true, assigneeId: true },
+            select: { id: true, text: true, completed: true, assigneeId: true, checkedById: true },
           },
         },
       },
@@ -346,14 +346,32 @@ export async function autoAssignAudits(
     // Never modify or reassign already completed audits
     if (existing?.completed) continue;
 
+    // Mutual exclusion: UI/UX Auditor and Funnel Auditor must be different people
+    const counterpartNorm =
+      norm === 'funnel audit' ? 'ui ux audit' : norm === 'ui ux audit' ? 'funnel audit' : null;
+    const excludedCounterpartId = (() => {
+      if (!counterpartNorm) return null;
+      const counterpart = allItems.find(
+        (i) => i.completed && normalizeAuditName(i.text) === counterpartNorm
+      );
+      if (!counterpart) return null;
+      if (counterpart.checkedById) return counterpart.checkedById;
+      if (Array.isArray(counterpart.assigneeId) && counterpart.assigneeId.length === 1) {
+        return counterpart.assigneeId[0];
+      }
+      return null;
+    })();
+
     // Filter to shift auditors who hold the matching audit role and are NOT blocked
     const eligibleAuditors = shiftAuditors.filter((u) =>
+      u.id !== excludedCounterpartId &&
       !isUserBlocked(u) &&
       u.roles.some((r) => r.toLowerCase().includes('audit') && AUDIT_ROLE_MATCHERS[norm](r.toLowerCase()))
     );
 
     const eligibleAuditorIds = eligibleAuditors.map((u) => u.id);
     const existingAssigneeIds = (existing?.assigneeId || []).filter((id) => {
+      if (id === excludedCounterpartId) return false;
       if (blockedUserIds.has(id)) return false;
       const user = allUsers.find((u) => u.id === id);
       return user ? !isUserBlocked(user) : true;

@@ -3,11 +3,51 @@
  * checklist that happens to be named "Audit". They share a name, so the items decide:
  * Nexus's only ever holds the four audit items. Mirrors frontend/src/lib/auditChecklist.ts.
  */
+// TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
+export const HIDE_DESIGN_AUDIT = true;
+
 export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
   const replaced = clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
   if (replaced === 'instruction audit') return 'instructions audit';
   return replaced;
+};
+
+export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): string[] => {
+  const t = (taskTitle || '').toLowerCase();
+  const audits = new Set<string>();
+
+  // Every task must pass an Instructions Audit globally
+  audits.add('Instructions Audit');
+
+  // Whatever auditor role was actually assigned determines the required audit item directly,
+  // regardless of what the task title says.
+  (auditorRoles || []).forEach((role) => {
+    const r = (role || '').toLowerCase();
+    if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
+    if (!HIDE_DESIGN_AUDIT && r.includes('design')) audits.add('Design Audit');
+    if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
+  });
+
+  // 1. Graphics, Reels, Video, Samples -> ONLY Design
+  if (!HIDE_DESIGN_AUDIT && t.match(/graphic|reel|video|sample/)) {
+    audits.add('Design Audit');
+  }
+
+  // 2. Newsletters, Emails, Social Media Packages -> Design + Funnel
+  if (t.match(/email|newsletter|social media/)) {
+    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
+    audits.add('Funnel Audit');
+  }
+
+  // 3. Websites, Links, Landing Pages -> ALL THREE
+  if (t.match(/website|page|funnel|link/)) {
+    audits.add('UI UX Audit');
+    if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
+    audits.add('Funnel Audit');
+  }
+
+  return Array.from(audits);
 };
 
 const NEXUS_AUDIT_ITEMS = new Set([

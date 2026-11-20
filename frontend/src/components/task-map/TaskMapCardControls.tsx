@@ -10,6 +10,7 @@ import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatu
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
+import { HoverHint } from './HoverHint';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
 
 const getHexColor = (color: string) => {
@@ -761,6 +762,7 @@ export const CardStatusDropdown: React.FC<{
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
+      <HoverHint label="Status" value={clean} hint="Click to change" accent={triggerDotColor}>
       <button
         ref={triggerRef}
         type="button"
@@ -771,7 +773,6 @@ export const CardStatusDropdown: React.FC<{
           }
         }}
         className="flex items-center p-1 -m-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer select-none"
-        title={`Status: ${clean} (click to change)`}
       >
         {isClosed ? (
           <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" style={{ color: triggerDotColor }} />
@@ -784,6 +785,7 @@ export const CardStatusDropdown: React.FC<{
           />
         )}
       </button>
+      </HoverHint>
 
       {isOpen &&
         coords &&
@@ -911,16 +913,17 @@ export const CardPriorityDropdown: React.FC<{
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
+      <HoverHint label="Priority" value={priorityConfig.label} hint="Click to change">
       <button
         ref={triggerRef}
         type="button"
         onClick={handleToggle}
         className="flex items-center gap-1 font-medium text-[11px] px-1.5 py-0.5 rounded hover:bg-zinc-800/80 transition-colors cursor-pointer select-none"
-        title={`Priority: ${priorityConfig.label} (click to change)`}
       >
         <Flag className={`size-3 ${priorityConfig.iconColor}`} />
         <span className={priorityConfig.color}>{priorityConfig.label}</span>
       </button>
+      </HoverHint>
 
       {isOpen &&
         coords &&

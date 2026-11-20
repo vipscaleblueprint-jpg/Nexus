@@ -2675,6 +2675,17 @@ export async function getTaskActivities(req: Request, res: Response) {
           user: log.user,
         };
       }
+      if (log.action === 'CRM_FOLLOW_UP_READ' || log.action === 'CRM_FOLLOW_UP_REPORT_READ') {
+        return {
+          id: log.id,
+          type: 'crm_follow_up_read',
+          author: log.user?.name || 'Someone',
+          daysPassed: details.daysPassed,
+          details,
+          date: log.createdAt,
+          user: log.user,
+        };
+      }
       return {
         id: log.id,
         type: log.action.toLowerCase(),

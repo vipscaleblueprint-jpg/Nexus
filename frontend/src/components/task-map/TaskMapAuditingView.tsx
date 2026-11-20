@@ -1153,7 +1153,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                               if (e.defaultPrevented) return;
                               onOpenDetail(task);
                             }}
-                            className="p-3 bg-zinc-900 hover:bg-zinc-800/80 border border-border hover:border-zinc-600/80 hover:shadow-md active:scale-[0.99] rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer"
+                            className="p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 border border-border not-has-[[data-card-control]:hover]:hover:border-zinc-600/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer"
                           >
                             <div className="flex items-stretch gap-3">
                               {/* Left: Task Info */}

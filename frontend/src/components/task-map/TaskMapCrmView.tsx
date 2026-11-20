@@ -13,6 +13,8 @@ import {
   subscribeTaskMapSaving,
   isTaskSavingToDb,
   isTaskUnderAdmin,
+  isTaskInClientDashboard,
+  isDormantClientTask,
   getTaskCrmWaitingInfo,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
@@ -352,8 +354,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
     return (
       s === 'CRM' ||
-      s === 'WAITING' ||
-      s === 'SENT' ||
+      ((s === 'WAITING' || s === 'SENT') && isTaskInClientDashboard(t, clients)) ||
       (!(s === 'CLOSED' || s === 'DONE') && mapStatuses.includes('ASKCLIENT')) ||
       ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker)
     );
@@ -366,7 +367,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       if (!isCrmStatus(t)) return false;
       return true;
     });
-  }, [combinedTasks]);
+  }, [combinedTasks, clients]);
 
   // Check if task is CRM completed / closed
   const isCrmCompleted = (t: TaskMapItem) => {
@@ -374,11 +375,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return s === 'DONE' || s === 'CLOSED';
   };
 
-  // Check if task is Sent (waiting for client response)
+  // Check if task is Sent (waiting for client response) - restricted strictly to active Client Dashboard clients
   const isCrmSent = (t: TaskMapItem) => {
     if (isCrmCompleted(t)) return false;
     const s = (t.status || '').toUpperCase().trim();
-    return s === 'WAITING' || s === 'SENT';
+    if (s !== 'WAITING' && s !== 'SENT') return false;
+    return isTaskInClientDashboard(t, clients);
   };
 
   // Check if task is assigned to a specific CRM member (strictly status CRM or Ask Client, latest assignee only)
@@ -524,6 +526,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
         onDataRefresh();
       }
     } else if (targetColumnId === 'col-crm-sent') {
+      // 0. Restriction: CRM Sent is strictly for tasks within Client Dashboard (dormant clients excluded)
+      if (!isTaskInClientDashboard(task, clients)) {
+        toast.error('Cannot mark as Sent: only tasks within Client Dashboard can be placed in Sent (this client is dormant or not in Client Dashboard).');
+        return;
+      }
+
       // 1. Task edit permission
       const editCheck = canUserEditTask(task as any, currentUser);
       if (!editCheck.allowed) {
@@ -670,13 +678,19 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
   const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => {
     const ls = task.list?.statuses;
-    return [
-    { id: 'opt-crm-tosend', label: 'To send', color: resolveSubStatusColor('To send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
-    { id: 'opt-crm-sent', label: 'Sent but Waiting', color: resolveSubStatusColor('Sent but Waiting', TASK_MAP_STATUS_COLORS.SENT, task.list?.id, ls), textColor: '#ffffff', order: 1 },
-    { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
-    { id: 'opt-crm-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 3 },
-    { id: 'opt-crm-closed', label: 'Closed', color: resolveSubStatusColor('Closed', TASK_MAP_STATUS_COLORS.CLOSED, task.list?.id, ls), textColor: '#ffffff', order: 4 },
+    const isInClientDashboard = isTaskInClientDashboard(task, clients);
+    const options: TaskMapOption[] = [
+      { id: 'opt-crm-tosend', label: 'To send', color: resolveSubStatusColor('To send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
     ];
+    if (isInClientDashboard) {
+      options.push({ id: 'opt-crm-sent', label: 'Sent but Waiting', color: resolveSubStatusColor('Sent but Waiting', TASK_MAP_STATUS_COLORS.SENT, task.list?.id, ls), textColor: '#ffffff', order: 1 });
+    }
+    options.push(
+      { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
+      { id: 'opt-crm-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 3 },
+      { id: 'opt-crm-closed', label: 'Closed', color: resolveSubStatusColor('Closed', TASK_MAP_STATUS_COLORS.CLOSED, task.list?.id, ls), textColor: '#ffffff', order: 4 }
+    );
+    return options;
   };
 
   // Assemble full columns array
@@ -855,6 +869,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
               if (!matchesSubStatusFilter(t, activeSubStatus)) return false;
               if (col.id === 'col-crm-sent' && !matchesCrmFollowUpFilter(t, activeFollowUpFilter)) return false;
               if (!matchesSearchFilter(t, searchQuery)) return false;
+
+              // Restriction: CRM Sent strictly only displays tasks within Client Dashboard
+              if (col.id === 'col-crm-sent' && !isTaskInClientDashboard(t, clients)) return false;
 
               // Admin task check
               const isAdmin = isTaskUnderAdmin(t);
@@ -1141,10 +1158,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
                               if (e.defaultPrevented) return;
                               onOpenDetail(task);
                             }}
-                            className={`relative p-3 bg-zinc-900 hover:bg-zinc-800/80 hover:shadow-md active:scale-[0.99] border rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${
+                            className={`relative p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] border rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${
                               showFollowUpBreathe
                                 ? 'border-transparent'
-                                : 'border-border hover:border-zinc-600/80'
+                                : 'border-border not-has-[[data-card-control]:hover]:hover:border-zinc-600/80'
                             }`}
                             style={
                               showFollowUpBreathe
@@ -1363,6 +1380,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                       }
                                     } else if (label === 'Sent but Waiting' || label === 'Sent') {
                                       if (isSelecting) {
+                                        if (!isTaskInClientDashboard(task, clients)) {
+                                          toast.error('Cannot mark as Sent: only tasks within Client Dashboard can be placed in Sent (this client is dormant or not in Client Dashboard).');
+                                          return;
+                                        }
+
                                         const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
                                         const transitionCheck = canTransitionTaskStatus(currentTask, 'WAITING');
                                         if (!transitionCheck.allowed) {

@@ -4,6 +4,7 @@ import {
   getManilaDateStr,
   getOrCreateTaskMapRecord,
   updateTaskMapRecord,
+  isHiddenAdminOrInternalTask,
 } from './taskMapService';
 import { invalidateCache } from './redisService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
@@ -402,7 +403,17 @@ export async function triggerCrmFollowUpAlertIfNeeded(
         status: true,
         updatedAt: true,
         createdAt: true,
-        list: { select: { name: true } },
+        list: {
+          select: {
+            name: true,
+            folder: {
+              select: {
+                name: true,
+                parentFolder: { select: { name: true } },
+              },
+            },
+          },
+        },
         taskMapRecord: { select: { pmReviews: true, updatedAt: true, statuses: true } },
       },
     });
@@ -410,6 +421,16 @@ export async function triggerCrmFollowUpAlertIfNeeded(
     if (!task) return { sent: false, reason: 'task_not_found' };
     if (isClosedStatus(task.status) || !isWaitingMainStatus(task.status)) {
       return { sent: false, reason: 'not_waiting' };
+    }
+
+    // Exclude Dormant Clients and Admin / internal lists — CRM follow-ups are strictly for active clients
+    const isDormantOrAdmin =
+      isHiddenAdminOrInternalTask(task.list) ||
+      (task.list?.folder?.name || '').toLowerCase().includes('dormant') ||
+      (task.list?.folder?.parentFolder?.name || '').toLowerCase().includes('dormant') ||
+      (task.list?.name || '').toLowerCase().includes('dormant');
+    if (isDormantOrAdmin) {
+      return { sent: false, reason: 'dormant_or_admin' };
     }
 
     const metaMap = await resolveWaitingSinceMap([
@@ -593,7 +614,19 @@ export async function listPendingCrmFollowUps(): Promise<PendingCrmFollowUpItem[
       listId: true,
       updatedAt: true,
       createdAt: true,
-      list: { select: { id: true, name: true } },
+      list: {
+        select: {
+          id: true,
+          name: true,
+          folder: {
+            select: {
+              id: true,
+              name: true,
+              parentFolder: { select: { id: true, name: true } },
+            },
+          },
+        },
+      },
       taskMapRecord: { select: { pmReviews: true, statuses: true, updatedAt: true } },
     },
     orderBy: { updatedAt: 'asc' },
@@ -617,12 +650,21 @@ export async function listPendingCrmFollowUps(): Promise<PendingCrmFollowUpItem[
 
   for (const t of candidates) {
     if (isClosedStatus(t.status)) continue;
+
+    // Filter out Dormant Clients & Admin / internal lists — only active clients appear
+    const isDormantOrAdmin =
+      isHiddenAdminOrInternalTask(t.list) ||
+      (t.list?.folder?.name || '').toLowerCase().includes('dormant') ||
+      (t.list?.folder?.parentFolder?.name || '').toLowerCase().includes('dormant') ||
+      (t.list?.name || '').toLowerCase().includes('dormant');
+    if (isDormantOrAdmin) continue;
+
     const meta = metaMap.get(t.id);
     if (!meta?.waitingSince) continue;
     const daysPassed = getManilaCalendarDaysPassed(meta.waitingSince);
     if (daysPassed < 4) continue;
 
-    // If a CRM user already logged a response today (Manila date), clear it for today
+    // If a CRM user already logged a response or read report today (Manila date), clear it for today
     if (meta.lastResponseAt && getManilaDateStr(meta.lastResponseAt) === todayManila) {
       continue;
     }
@@ -633,7 +675,7 @@ export async function listPendingCrmFollowUps(): Promise<PendingCrmFollowUpItem[
       status: t.status,
       priority: t.priority,
       listId: t.listId,
-      list: t.list,
+      list: t.list ? { id: t.list.id, name: t.list.name } : null,
       waitingSince: meta.waitingSince,
       daysPassed,
       rule: getCrmFollowUpRule(daysPassed),
@@ -647,6 +689,147 @@ export async function listPendingCrmFollowUps(): Promise<PendingCrmFollowUpItem[
   }
 
   return items.sort((a, b) => b.daysPassed - a.daysPassed);
+}
+
+/**
+ * Acknowledges that the user reviewed the CRM follow-up report for active client tasks.
+ * Creates an AuditLog entry for each task so it is recorded in the task's activity stream
+ * (displayed in TaskDetailModal), sets lastResponseAt to today so it won't prompt again today,
+ * invalidates caches, and emits real-time task_activity events.
+ */
+export async function acknowledgeCrmFollowUps(params: {
+  taskIds: string[];
+  userId: string;
+}): Promise<{
+  success: boolean;
+  count: number;
+  error?: string;
+  statusCode?: number;
+}> {
+  const { taskIds, userId } = params;
+  if (!Array.isArray(taskIds) || taskIds.length === 0) {
+    return { success: false, statusCode: 400, count: 0, error: 'No task IDs provided' };
+  }
+
+  const actor = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true },
+  });
+  if (!actor) {
+    return { success: false, statusCode: 401, count: 0, error: 'Authentication required' };
+  }
+
+  const tasks = await prisma.task.findMany({
+    where: { id: { in: taskIds } },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      updatedAt: true,
+      createdAt: true,
+      taskMapRecord: { select: { pmReviews: true, updatedAt: true, statuses: true } },
+    },
+  });
+
+  if (tasks.length === 0) {
+    return { success: true, count: 0 };
+  }
+
+  const metaMap = await resolveWaitingSinceMap(
+    tasks.map((t) => ({
+      id: t.id,
+      status: t.status,
+      updatedAt: t.updatedAt,
+      createdAt: t.createdAt,
+      pmReviews: t.taskMapRecord?.pmReviews,
+      recordUpdatedAt: t.taskMapRecord?.updatedAt,
+    }))
+  );
+
+  const nowIso = new Date().toISOString();
+  const todayManila = getManilaDateStr();
+  const io = getIo();
+  let count = 0;
+
+  for (const t of tasks) {
+    const meta = metaMap.get(t.id);
+    const waitingSince = meta?.waitingSince || nowIso;
+    const daysPassed = getManilaCalendarDaysPassed(waitingSince);
+
+    // 1. Create AuditLog row for the read event (visible in TaskDetailModal activity feed)
+    const auditLog = await prisma.auditLog.create({
+      data: {
+        action: 'CRM_FOLLOW_UP_READ',
+        entity: 'TASK',
+        entityId: t.id,
+        userId: actor.id,
+        details: {
+          type: 'crm_follow_up_read',
+          actorName: actor.name,
+          daysPassed,
+          manilaDate: todayManila,
+          source: 'crm_follow_up_report',
+        },
+      },
+    });
+
+    // 2. Update taskMapRecord with read metadata so it won't prompt again today
+    const record = await getOrCreateTaskMapRecord(t.id);
+    let reviewsList = parseReviewsListSafe(record.pmReviews);
+    const waitingMeta: CrmWaitingMeta = {
+      type: 'CRM_WAITING_META',
+      waitingSince,
+      lastResponseAt: nowIso,
+      lastResponseById: actor.id,
+      lastResponseByName: actor.name,
+      lastResponseNote: 'Read follow-up report',
+      lastResponseAction: 'REPORT_READ',
+      updatedAt: nowIso,
+    };
+    reviewsList = [
+      ...reviewsList.filter((r: any) => !(r && r.type === 'CRM_WAITING_META')),
+      waitingMeta,
+    ];
+    await updateTaskMapRecord(t.id, {
+      pmReviews: reviewsList,
+    });
+
+    // 3. Invalidate Redis caches
+    await invalidateCache(
+      `task:${t.id}`,
+      `task:activities:${t.id}`,
+      'tasks:all',
+      'task_map:*',
+      'task_map:all'
+    ).catch(() => {});
+
+    // 4. Emit real-time Socket.io events
+    if (io) {
+      io.emit('task_activity', {
+        taskId: t.id,
+        activity: {
+          id: auditLog.id,
+          type: 'crm_follow_up_read',
+          author: actor.name,
+          daysPassed,
+          date: auditLog.createdAt,
+          user: actor,
+          details: {
+            daysPassed,
+            manilaDate: todayManila,
+          },
+        },
+      });
+      io.emit('crm:follow_up_responded', {
+        taskId: t.id,
+        action: 'REPORT_READ',
+      });
+    }
+
+    count++;
+  }
+
+  return { success: true, count };
 }
 
 export type CrmFollowUpResponseAction =

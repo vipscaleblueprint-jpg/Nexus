@@ -1004,6 +1004,19 @@ export const taskMapApi = {
     return apiClient(`/api/task-map/crm/follow-ups?_t=${Date.now()}`);
   },
 
+  acknowledgeCrmFollowUps: async (
+    taskIds: string[]
+  ): Promise<{
+    success: boolean;
+    count?: number;
+    error?: string;
+  }> => {
+    return apiClient('/api/task-map/crm/follow-ups/acknowledge', {
+      method: 'POST',
+      body: JSON.stringify({ taskIds }),
+    });
+  },
+
   respondCrmFollowUp: async (
     taskId: string,
     payload: { note: string; action: CrmFollowUpResponseAction }
@@ -1284,6 +1297,68 @@ export function isTaskUnderAdmin(task?: Pick<TaskMapItem, 'isAdminTask' | 'list'
     listName === 'admin' ||
     ADMIN_LIST_NAMES.has(listName)
   );
+}
+
+/**
+ * Returns true if a task belongs to a dormant client (folder name contains "dormant"
+ * or list name matches dormant patterns).
+ */
+export function isDormantClientTask(task?: Pick<TaskMapItem, 'list'> | null): boolean {
+  if (!task) return false;
+  const folderName = (task.list?.folder?.name || '').trim().toLowerCase();
+  if (folderName.includes('dormant')) return true;
+  const listName = (task.list?.name || '').trim().toLowerCase();
+  if (listName.includes('dormant')) return true;
+  return false;
+}
+
+/**
+ * Returns true if a task belongs to an active client within the "Client Dashboard"
+ * folder/space (and is strictly not dormant, admin, startups, or human resource).
+ */
+export function isTaskInClientDashboard(
+  task?: Pick<TaskMapItem, 'isAdminTask' | 'list'> | null,
+  clientDashboardLists?: Array<{ id: string; name: string }>
+): boolean {
+  if (!task) return false;
+  if (task.isAdminTask) return false;
+
+  const folderName = (task.list?.folder?.name || '').trim().toLowerCase();
+  const listName = (task.list?.name || '').trim().toLowerCase();
+
+  // 1. Explicit exclusion: dormant clients
+  if (folderName.includes('dormant') || listName.includes('dormant')) {
+    return false;
+  }
+
+  // 2. Explicit exclusion: admin lists or other internal folders (startups, HR, admin)
+  if (
+    folderName === 'admin' ||
+    folderName.includes('admin') ||
+    folderName.includes('startup') ||
+    folderName.includes('human resource') ||
+    listName === 'admin' ||
+    ADMIN_LIST_NAMES.has(listName)
+  ) {
+    return false;
+  }
+
+  // 3. Positive check: folder is directly "Client Dashboard"
+  if (folderName.includes('client dashboard')) {
+    return true;
+  }
+
+  // 4. Verification against known Client Dashboard lists (from database/tree)
+  if (clientDashboardLists && clientDashboardLists.length > 0) {
+    const listId = task.list?.id;
+    return clientDashboardLists.some(
+      (c) =>
+        (listId && c.id === listId) ||
+        (listName && c.name.trim().toLowerCase() === listName)
+    );
+  }
+
+  return false;
 }
 
 /**

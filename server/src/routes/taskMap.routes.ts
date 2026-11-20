@@ -26,6 +26,7 @@ import {
   getTaskMapTaskDescription,
   getPendingCrmFollowUpsHandler,
   respondCrmFollowUpHandler,
+  acknowledgeCrmFollowUpsHandler,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -62,4 +63,6 @@ taskMapRouter.patch('/tasks/:id/launch', updateTaskLaunchMeta);
 taskMapRouter.get('/tasks/:id/timeline', getTaskTimeline);
 taskMapRouter.get('/task-description', getTaskMapTaskDescription);
 taskMapRouter.get('/crm/follow-ups', getPendingCrmFollowUpsHandler);
+taskMapRouter.post('/crm/follow-ups/acknowledge', acknowledgeCrmFollowUpsHandler);
+taskMapRouter.post('/crm/follow-ups/:id/acknowledge', acknowledgeCrmFollowUpsHandler);
 taskMapRouter.post('/crm/follow-ups/:id/respond', respondCrmFollowUpHandler);

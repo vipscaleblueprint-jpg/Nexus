@@ -14,7 +14,6 @@ import { taskMapApi } from '@/api/taskMap';
 import { ToastContainer } from '@/components/ui/ToastContainer';
 import { MentionConfetti } from '@/components/ui/MentionConfetti';
 import { DraftBeggingReminder } from '@/components/ui/DraftBeggingReminder';
-import { CrmFollowUpModal } from '@/components/task-map/CrmFollowUpModal';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
@@ -750,7 +749,6 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       <ToastContainer />
       <MentionConfetti />
       <DraftBeggingReminder />
-      <CrmFollowUpModal />
     </div>
   );
 }

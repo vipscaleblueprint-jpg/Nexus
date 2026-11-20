@@ -20,6 +20,7 @@ import { canUserMoveTask, canTransitionTaskStatus } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
+import { taskMapApi } from '@/api/taskMap';
 
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
@@ -286,6 +287,7 @@ const isActivityVisible = (act: any): boolean => {
   if (t === 'due_date_change') return true;
   if (t === 'audit_item_checked' || t === 'checklist_item_checked' || t === 'audit_item_unchecked' || t === 'checklist_item_unchecked') return true;
   if (t === 'audit_item_deleted' || t === 'checklist_item_deleted') return true;
+  if (t === 'crm_follow_up_read' || t === 'crm_follow_up_report_read') return true;
   return false;
 };
 
@@ -2517,6 +2519,8 @@ export function TaskDetailModalContent({
   };
 
   const [isLocalEditing, setIsLocalEditing] = useState(false);
+  const [isFollowUpAcknowledged, setIsFollowUpAcknowledged] = useState(false);
+  const [isAcknowledgingNotice, setIsAcknowledgingNotice] = useState(false);
 
   // Start editing: lock the description for this user
   const handleStartEditing = useCallback(() => {
@@ -4375,7 +4379,72 @@ export function TaskDetailModalContent({
 
               </div>
 
-
+              {/* Informative CRM Follow-Up Notice Banner (Active Clients, 4+ days) */}
+              {Boolean(
+                ((localStatus || '').toUpperCase().trim() === 'WAITING' ||
+                  (localStatus || '').toUpperCase().trim() === 'SENT') &&
+                !(((task as any)?.list?.folder?.name || '').toLowerCase().includes('dormant') ||
+                  ((task as any)?.list?.name || '').toLowerCase().includes('dormant')) &&
+                Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24)) >= 4 &&
+                !isFollowUpAcknowledged &&
+                !activities.some((a) => (a.type === 'crm_follow_up_read' || a.type === 'crm_follow_up_report_read') && new Date(a.date).toDateString() === new Date().toDateString())
+              ) && (
+                <div className="mt-6 p-3.5 rounded-xl border border-cyan-500/40 bg-cyan-950/20 text-zinc-200 flex items-center justify-between gap-3 shadow-md">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="size-8 rounded-lg flex items-center justify-center shrink-0 bg-cyan-500/15 border border-cyan-500/30 text-cyan-400">
+                      <Clock className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5 flex-wrap">
+                        <span>CRM Follow-Up Notice</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-cyan-900/50 text-cyan-300 border border-cyan-700/50">
+                          {Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24))}d waiting
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">
+                        Awaiting client response or feedback on outreach for {Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24))} days.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsAcknowledgingNotice(true);
+                      const days = Math.floor((Date.now() - new Date(task?.updatedAt || task?.createdAt || Date.now()).getTime()) / (1000 * 60 * 60 * 24));
+                      try {
+                        await taskMapApi.acknowledgeCrmFollowUps([task.id]);
+                        setIsFollowUpAcknowledged(true);
+                        toast.success('Follow-up notice reviewed');
+                        setActivities((prev) => [
+                          ...prev,
+                          {
+                            id: `opt-read-${Date.now()}`,
+                            type: 'crm_follow_up_read',
+                            author: currentUser?.name || 'You',
+                            daysPassed: days,
+                            date: new Date().toISOString(),
+                            user: currentUser,
+                          },
+                        ]);
+                        window.dispatchEvent(new CustomEvent('task_map:reload'));
+                      } catch {
+                        toast.error('Failed to acknowledge follow-up notice');
+                      } finally {
+                        setIsAcknowledgingNotice(false);
+                      }
+                    }}
+                    disabled={isAcknowledgingNotice}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#22A3AE] hover:bg-[#1d8e98] text-white text-xs font-bold transition-all cursor-pointer shadow-sm shrink-0"
+                  >
+                    {isAcknowledgingNotice ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="size-3.5" />
+                    )}
+                    <span>Okay</span>
+                  </button>
+                </div>
+              )}
 
               <div className="mt-8 relative group mb-8">
                 <div className="flex items-center justify-between mb-4 shrink-0">
@@ -5251,6 +5320,22 @@ export function TaskDetailModalContent({
                                   </div>
                                 );
                               }
+                              if (act.type === 'crm_follow_up_read' || act.type === 'crm_follow_up_report_read') {
+                                const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                                const days = act.daysPassed ?? act.details?.daysPassed;
+                                return (
+                                  <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
+                                    <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 shadow-[0_0_8px_rgba(34,163,174,0.5)]" />
+                                    <div className="flex-1 leading-relaxed">
+                                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                      read the CRM follow-up report{days != null ? ` (${days}d waiting)` : ''}
+                                    </div>
+                                    <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                      {timeStr}
+                                    </span>
+                                  </div>
+                                );
+                              }
                               return null;
                             } else {
                               return renderComment(item);
@@ -6059,6 +6144,8 @@ export function SubtaskDetailView({
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [localDesc, setLocalDesc] = useState(subtask.description || '');
   const [isLocalEditing, setIsLocalEditing] = useState(false);
+  const [isFollowUpAcknowledged, setIsFollowUpAcknowledged] = useState(false);
+  const [isAcknowledgingNotice, setIsAcknowledgingNotice] = useState(false);
   const [localStatus, setLocalStatus] = useState<string>(subtask.status || 'Pending');
   const [localCompleted, setLocalCompleted] = useState<boolean>(!!subtask.completed);
   const lastStatusUpdateTimestampRef = useRef<number>(0);
@@ -9633,6 +9720,22 @@ export function SubtaskDetailView({
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
                                     deleted {isAudit ? 'audit' : 'checklist item'} <span className="text-zinc-200 font-medium px-1">"{itemName}"</span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (act.type === 'crm_follow_up_read' || act.type === 'crm_follow_up_report_read') {
+                              const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
+                              const days = act.daysPassed ?? act.details?.daysPassed;
+                              return (
+                                <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
+                                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 shadow-[0_0_8px_rgba(34,163,174,0.5)]" />
+                                  <div className="flex-1 leading-relaxed">
+                                    <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{actorName}</span>
+                                    read the CRM follow-up report{days != null ? ` (${days}d waiting)` : ''}
                                   </div>
                                   <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
                                     {timeStr}

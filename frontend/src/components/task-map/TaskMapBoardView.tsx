@@ -2627,9 +2627,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         : isLive
                           ? ''
                           : isSubtask && hasParentInColumn
-                            ? 'border-indigo-500/35 hover:border-indigo-400/60 shadow-md'
+                            ? 'border-indigo-500/35 not-has-[[data-card-control]:hover]:hover:border-indigo-400/60 shadow-md'
                             : isSeparatedSubtask
-                              ? 'border-amber-500/30 hover:border-amber-400/55 shadow-md'
+                              ? 'border-amber-500/30 not-has-[[data-card-control]:hover]:hover:border-amber-400/55 shadow-md'
                               : 'border-border hover:border-zinc-700 shadow-md';
 
                     return (
@@ -2650,7 +2650,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               if (e.defaultPrevented || activeDragTask) return;
                               onOpenDetail(task);
                             }}
-                            className={`p-3 bg-zinc-900 hover:bg-zinc-800/80 hover:border-zinc-600/80 hover:shadow-md active:scale-[0.99] border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${cardBorderClass}`}
+                            className={`p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:border-zinc-600/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${cardBorderClass}`}
                             style={
                               isCustomLiveBorder
                                 ? {
@@ -3145,9 +3145,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       : isLiveWorking
                         ? 'shadow-sm'
                         : isSubtask && hasParentInColumn
-                          ? 'border-indigo-500/35 hover:border-indigo-400/60 shadow-sm'
+                          ? 'border-indigo-500/35 not-has-[[data-card-control]:hover]:hover:border-indigo-400/60 shadow-sm'
                           : isSeparatedSubtask
-                            ? 'border-amber-500/30 hover:border-amber-400/55 shadow-sm'
+                            ? 'border-amber-500/30 not-has-[[data-card-control]:hover]:hover:border-amber-400/55 shadow-sm'
                             : 'border-border dark:border-zinc-800/90 hover:border-zinc-700 shadow-sm';
 
                   const canDragThisCard = canDragTaskMapCard({
@@ -3255,7 +3255,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             if (e.defaultPrevented || activeDragTask) return;
                             void handleCardClick();
                           }}
-                          className={`relative p-3 bg-zinc-900 hover:bg-zinc-800/80 hover:border-zinc-600/80 hover:shadow-md active:scale-[0.99] border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${cardBorderClass}`}
+                          className={`relative p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:border-zinc-600/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] border rounded-xl min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${cardBorderClass}`}
                           style={
                             isCustomLiveWorkingBorder
                               ? { borderColor: hexToRgba(taskStatusHex, 0.35) }

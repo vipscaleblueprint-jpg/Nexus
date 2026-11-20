@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AlignLeft, X, FileText, Loader2 } from 'lucide-react';
 import { sanitizeHtml } from '@/components/docs/docTransfer';
 import { taskMapApi } from '@/api/taskMap';
+import { HoverHint } from './HoverHint';
 
 interface ResolvedTaskMeta {
   taskId?: string | null;
@@ -220,7 +221,6 @@ export const TaskDescriptionButton: React.FC<Props> = ({
             ? 'text-zinc-300 hover:text-white'
             : 'text-zinc-500 hover:text-zinc-400'
         }`}
-        title={isPendingLazyFetch ? 'Click to load task description' : hasDesc ? 'View task description' : 'No description'}
       >
         <AlignLeft className="size-3.5" />
       </button>

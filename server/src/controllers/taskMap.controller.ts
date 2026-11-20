@@ -26,6 +26,7 @@ import {
   getCrmFollowUpRule,
   listPendingCrmFollowUps,
   respondToCrmFollowUp,
+  acknowledgeCrmFollowUps,
   parseReviewsListSafe,
 } from '../services/crmFollowUpService';
 import {
@@ -4412,6 +4413,46 @@ export const respondCrmFollowUpHandler = async (req: Request, res: Response) => 
   } catch (error: any) {
     logger.error({ error }, 'Error responding to CRM follow-up');
     return res.status(500).json({ error: 'Failed to submit follow-up response' });
+  }
+};
+
+/**
+ * POST /api/task-map/crm/follow-ups/acknowledge
+ * Acknowledges that the user reviewed the CRM follow-up report for active clients,
+ * creating an AuditLog row on each task (viewable inside TaskDetailModal).
+ */
+export const acknowledgeCrmFollowUpsHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    if (!user?.id) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const { taskIds } = req.body || {};
+    const ids: string[] = Array.isArray(taskIds)
+      ? taskIds
+      : req.params.id
+      ? [req.params.id]
+      : [];
+
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'No task IDs provided' });
+    }
+
+    const result = await acknowledgeCrmFollowUps({
+      taskIds: ids,
+      userId: user.id,
+    });
+
+    if (!result.success) {
+      return res.status(result.statusCode || 400).json({
+        error: result.error || 'Failed to acknowledge follow-up report',
+      });
+    }
+
+    return res.json({ success: true, count: result.count });
+  } catch (error: any) {
+    logger.error({ error }, 'Error acknowledging CRM follow-up report');
+    return res.status(500).json({ error: 'Failed to acknowledge follow-up report' });
   }
 };
 

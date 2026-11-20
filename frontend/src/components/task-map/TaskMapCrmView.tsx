@@ -44,6 +44,7 @@ import {
   matchesSearchFilter,
   sortTasksUrgentFirst,
   hexToRgba,
+  resolveSubStatusColor,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -667,13 +668,16 @@ export const TaskMapCrmView: React.FC<Props> = ({
   };
 
   // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
-  const getCrmOptions = (_task: TaskMapItem): TaskMapOption[] => [
-    { id: 'opt-crm-tosend', label: 'To send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 0 },
-    { id: 'opt-crm-sent', label: 'Sent but Waiting', color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff', order: 1 },
+  const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => {
+    const ls = task.list?.statuses;
+    return [
+    { id: 'opt-crm-tosend', label: 'To send', color: resolveSubStatusColor('To send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
+    { id: 'opt-crm-sent', label: 'Sent but Waiting', color: resolveSubStatusColor('Sent but Waiting', TASK_MAP_STATUS_COLORS.SENT, task.list?.id, ls), textColor: '#ffffff', order: 1 },
     { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
-    { id: 'opt-crm-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 3 },
-    { id: 'opt-crm-closed', label: 'Closed', color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff', order: 4 },
-  ];
+    { id: 'opt-crm-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 3 },
+    { id: 'opt-crm-closed', label: 'Closed', color: resolveSubStatusColor('Closed', TASK_MAP_STATUS_COLORS.CLOSED, task.list?.id, ls), textColor: '#ffffff', order: 4 },
+    ];
+  };
 
   // Assemble full columns array
   interface CrmColumnDef {

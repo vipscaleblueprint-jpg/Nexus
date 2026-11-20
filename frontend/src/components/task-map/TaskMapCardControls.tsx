@@ -6,7 +6,7 @@ import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
@@ -124,6 +124,31 @@ export const resolveTaskStatusColor = (
   return tokenHex || getDotColor(clean);
 };
 
+/**
+ * Sub-status dropdown color sourced from the DB list statuses (task.list.statuses, list cache, or store),
+ * so CRM / Audit / Task Map dropdown options match the Prisma status colors. Falls back to `fallback`.
+ */
+export const resolveSubStatusColor = (
+  label: string,
+  fallback: string,
+  listId?: string | null,
+  listStatuses?: Array<ListStatusLike | string> | null
+): string => {
+  let candidates: Array<ListStatusLike | string> | undefined =
+    listStatuses && listStatuses.length > 0 ? listStatuses : undefined;
+  if (!candidates && listId && listId !== 'general') {
+    const cached = getCachedListStatuses(listId) as Array<ListStatusLike | string> | null;
+    if (cached && cached.length > 0) {
+      candidates = cached;
+    } else {
+      const storeLists = (useAppStore.getState().allLists || []) as StoreListEntryLike[];
+      const matched = storeLists.find((entry) => entry?.list?.id === listId)?.list?.statuses;
+      if (Array.isArray(matched) && matched.length > 0) candidates = matched;
+    }
+  }
+  const hex = resolveDbStatusColor(label, '', candidates as any);
+  return hex ? getHexColor(hex) : fallback;
+};
 export const isTaskInProgress = (task: TaskMapItem) => {
   const s = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
   if (s === 'INPROGRESS') return true;

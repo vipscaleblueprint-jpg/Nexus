@@ -1640,6 +1640,39 @@ export const TASK_MAP_STATUS_COLORS = {
   CLOSED: '#2FA37A',         // -> CLOSED (Green)
 } as const;
 
+/** Maps task-map sub-status labels to the main (Prisma ListStatus) status they transition to. */
+const SUB_STATUS_DB_ALIAS: Record<string, string> = {
+  REVISION: 'REVISION',
+  REVISIONS: 'REVISION',
+  WAITING: 'WAITING',
+  SENT: 'WAITING',
+  SENTBUTWAITING: 'WAITING',
+  ONHOLD: 'ON-HOLD',
+  TOREVIEW: 'IN REVIEW',
+  TOSEND: 'CRM',
+  READYTOSEND: 'CRM',
+  CLOSED: 'CLOSED',
+};
+
+/**
+ * Resolve a sub-status dropdown color from the DB list statuses (Prisma ListStatus.color)
+ * so CRM / Audit / Task Map dropdowns match the main status color. Falls back to the given hex.
+ */
+export function resolveDbStatusColor(
+  label: string,
+  fallback: string,
+  listStatuses?: Array<ListStatusToken | { name?: string; color?: string | null }> | null
+): string {
+  const norm = (label || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const target = SUB_STATUS_DB_ALIAS[norm];
+  if (!target || !Array.isArray(listStatuses)) return fallback;
+  const targetNorm = target.replace(/[\s_-]+/g, '');
+  const hit = listStatuses.find(
+    (s: any) => ((s?.name || '') as string).trim().toUpperCase().replace(/[\s_-]+/g, '') === targetNorm
+  );
+  const color = hit?.color?.trim();
+  return color && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color) ? color : fallback;
+}
 const CANONICAL_STATUS_MAP: Record<string, string> = {
   KYC: 'KYC',
   PINBOARD: 'PIN BOARD',

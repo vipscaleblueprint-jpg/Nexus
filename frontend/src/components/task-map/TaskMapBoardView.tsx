@@ -40,6 +40,7 @@ import {
   groupTasksWithSubtasks,
   resolveTaskStatusColor,
   hexToRgba,
+  resolveSubStatusColor,
 } from './TaskMapCardControls';
 import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
@@ -2118,10 +2119,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
       { id: 'opt-status-handover', label: 'Hand Over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 1 },
       { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12', order: 2 },
       { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75', order: 3 },
-      { id: 'opt-status-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 4 },
-      { id: 'opt-status-waiting', label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#fef2f2', order: 5 },
-      { id: 'opt-status-onhold', label: 'On-hold', color: TASK_MAP_STATUS_COLORS.ON_HOLD, textColor: '#ffffff', order: 6 },
-      { id: 'opt-status-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 7 },
+      { id: 'opt-status-toreview', label: 'To Review', color: resolveSubStatusColor('To Review', TASK_MAP_STATUS_COLORS.TO_REVIEW, task.list?.id, task.list?.statuses), textColor: '#ffffff', order: 4 },
+      { id: 'opt-status-waiting', label: 'Waiting', color: resolveSubStatusColor('Waiting', TASK_MAP_STATUS_COLORS.WAITING, task.list?.id, task.list?.statuses), textColor: '#fef2f2', order: 5 },
+      { id: 'opt-status-onhold', label: 'On-hold', color: resolveSubStatusColor('On-hold', TASK_MAP_STATUS_COLORS.ON_HOLD, task.list?.id, task.list?.statuses), textColor: '#ffffff', order: 6 },
+      { id: 'opt-status-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, task.list?.statuses), textColor: '#ffffff', order: 7 },
     ];
 
     const EXCLUDED_FROM_TASK_MAP = new Set([

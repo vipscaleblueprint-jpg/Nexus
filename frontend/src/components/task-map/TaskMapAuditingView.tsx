@@ -50,6 +50,7 @@ import {
   matchesPriorityFilter,
   matchesSearchFilter,
   sortTasksUrgentFirst,
+  resolveSubStatusColor,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -757,16 +758,19 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   };
 
   // Helper options for sub-status dropdown in Auditing
-  const getAuditingOptions = (_task: TaskMapItem): TaskMapOption[] => [
+  const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => {
+    const ls = task.list?.statuses;
+    return [
     { id: 'opt-audit-design', label: 'Design Audit', color: '#ec4899', textColor: '#ffffff', order: 1 },
     { id: 'opt-audit-uiux', label: 'UI UX Audit', color: '#06b6d4', textColor: '#ffffff', order: 2 },
     { id: 'opt-audit-instruction', label: 'Instruction Audit', color: '#10b981', textColor: '#ffffff', order: 3 },
     { id: 'opt-audit-funnel', label: 'Funnel Audit', color: '#f59e0b', textColor: '#ffffff', order: 4 },
     { id: 'opt-audit-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 5 },
-    { id: 'opt-audit-readytosend', label: 'Ready to Send', color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff', order: 6 },
+    { id: 'opt-audit-readytosend', label: 'Ready to Send', color: resolveSubStatusColor('Ready to Send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 6 },
     { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 7 },
-    { id: 'opt-audit-revision', label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff', order: 8 },
-  ];
+    { id: 'opt-audit-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 8 },
+    ];
+  };
 
   // Assemble full columns array
   interface AuditingColumnDef {

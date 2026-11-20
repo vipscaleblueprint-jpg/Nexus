@@ -1541,9 +1541,19 @@ export function TaskDetailModalContent({
   // page refresh). Keyed by task/parent-task ID. Entries expire after 60 s so
   // a long-open modal still eventually picks up new comments.
   // ---------------------------------------------------------------------------
+  const activitiesAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      activitiesAbortRef.current?.abort();
+    };
+  }, []);
+
   const loadActivities = useCallback(async (silent = false) => {
     if (!task?.id) return;
     const currentTaskId = task.id;
+    activitiesAbortRef.current?.abort();
+    const abortController = new AbortController();
+    activitiesAbortRef.current = abortController;
     try {
       const isSubtask = !!(task as any).parentTaskId;
       const targetId = isSubtask ? (task as any).parentTaskId : task.id;
@@ -1572,12 +1582,25 @@ export function TaskDetailModalContent({
 
       setLoadError(null);
 
-      // ── 2. BACKGROUND REFRESH: always fetch fresh data ──
-      const [actRes, commentRes] = await Promise.all([
-        tasksApi.getActivities(targetId),
-        tasksApi.getComments(targetId, subtaskId),
+      // ── 2. BACKGROUND REFRESH: fetch activities & comments independently ──
+      const [actSettled, commentSettled] = await Promise.allSettled([
+        tasksApi.getActivities(targetId, { signal: abortController.signal }),
+        tasksApi.getComments(targetId, subtaskId, { signal: abortController.signal }),
       ]);
-      if (!isMountedRef.current || taskRef.current?.id !== currentTaskId) return;
+      if (abortController.signal.aborted || !isMountedRef.current || taskRef.current?.id !== currentTaskId) return;
+
+      const actRes = actSettled.status === 'fulfilled' ? actSettled.value : null;
+      const commentRes = commentSettled.status === 'fulfilled' ? commentSettled.value : null;
+
+      if (actSettled.status === 'rejected' || commentSettled.status === 'rejected') {
+        const firstErr = actSettled.status === 'rejected' ? actSettled.reason : (commentSettled as PromiseRejectedResult).reason;
+        if (firstErr?.name === 'AbortError') return;
+        console.error('Failed to load task data:', firstErr);
+        setLoadError(firstErr?.message || String(firstErr));
+        if (actSettled.status === 'rejected' && commentSettled.status === 'rejected') {
+          commentsBootstrappedRef.current = null;
+        }
+      }
 
       const currentTitle = taskRef.current?.title || task.title || '';
       const fetchedActivities = actRes?.activities
@@ -4795,9 +4818,18 @@ export function TaskDetailModalContent({
 
                 {/* Sort activities and comments oldest to newest */}
                 {loadError && (
-                  <div className="text-red-400 text-sm p-4 mb-4 border border-red-500/20 bg-red-500/10 rounded-lg">
-                    <p className="font-semibold mb-1">Failed to load activity logs</p>
-                    <p className="opacity-80">{loadError}</p>
+                  <div className="text-red-400 text-sm p-4 mb-4 border border-red-500/20 bg-red-500/10 rounded-lg flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold mb-1">Failed to load activity logs</p>
+                      <p className="opacity-80">{loadError}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadActivities()}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/30 shrink-0 cursor-pointer"
+                    >
+                      Retry
+                    </button>
                   </div>
                 )}
                 {loadingActivities ? <CommentSkeleton /> : (() => {
@@ -7611,9 +7643,19 @@ export function SubtaskDetailView({
     }
   }, [subtask?.id]);
 
+  const activitiesAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      activitiesAbortRef.current?.abort();
+    };
+  }, []);
+
   const loadActivities = useCallback(async (silent = false) => {
     if (!subtask?.id || !parentTask?.id) return;
     const currentSubtaskId = subtask.id;
+    activitiesAbortRef.current?.abort();
+    const abortController = new AbortController();
+    activitiesAbortRef.current = abortController;
     try {
       const cacheKey = `subtask:${subtask.id}`;
       const cached = activityCache.get(cacheKey);
@@ -7634,13 +7676,26 @@ export function SubtaskDetailView({
 
       setLoadError(null);
 
-      // Background refresh: always fetch fresh data
-      const [actRes, commentRes] = await Promise.all([
-        tasksApi.getActivities(parentTask.id),
-        tasksApi.getComments(parentTask.id, subtask.id)
+      // Background refresh: fetch activities & comments independently
+      const [actSettled, commentSettled] = await Promise.allSettled([
+        tasksApi.getActivities(parentTask.id, { signal: abortController.signal }),
+        tasksApi.getComments(parentTask.id, subtask.id, { signal: abortController.signal }),
       ]);
 
-      if (!isMountedRef.current || subtaskRef.current?.id !== currentSubtaskId) return;
+      if (abortController.signal.aborted || !isMountedRef.current || subtaskRef.current?.id !== currentSubtaskId) return;
+
+      const actRes = actSettled.status === 'fulfilled' ? actSettled.value : null;
+      const commentRes = commentSettled.status === 'fulfilled' ? commentSettled.value : null;
+
+      if (actSettled.status === 'rejected' || commentSettled.status === 'rejected') {
+        const firstErr = actSettled.status === 'rejected' ? actSettled.reason : (commentSettled as PromiseRejectedResult).reason;
+        if (firstErr?.name === 'AbortError') return;
+        console.error('Failed to load comments/activities:', firstErr);
+        setLoadError(firstErr?.message || String(firstErr));
+        if (actSettled.status === 'rejected' && commentSettled.status === 'rejected') {
+          commentsBootstrappedRef.current = null;
+        }
+      }
 
       const currentTitle = subtaskRef.current?.title || subtask.title;
       let fetchedActivities: any[] = [];
@@ -7652,12 +7707,14 @@ export function SubtaskDetailView({
 
       const fetchedComments = commentRes?.comments || [];
 
-      // Save to cache
-      activityCache.set(cacheKey, {
-        activities: fetchedActivities,
-        comments: fetchedComments,
-        timestamp: Date.now(),
-      });
+      // Save to cache only when both succeeded
+      if (actRes?.activities && commentRes?.comments) {
+        activityCache.set(cacheKey, {
+          activities: fetchedActivities,
+          comments: fetchedComments,
+          timestamp: Date.now(),
+        });
+      }
 
       // Merge activities preserving optimistic entries
       setActivities(prev => {
@@ -9250,9 +9307,18 @@ export function SubtaskDetailView({
 
               {/* Sort activities and comments oldest to newest */}
               {loadError && (
-                <div className="text-red-400 text-sm p-4 mb-4 border border-red-500/20 bg-red-500/10 rounded-lg">
-                  <p className="font-semibold mb-1">Failed to load activity logs</p>
-                  <p className="opacity-80">{loadError}</p>
+                <div className="text-red-400 text-sm p-4 mb-4 border border-red-500/20 bg-red-500/10 rounded-lg flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold mb-1">Failed to load activity logs</p>
+                    <p className="opacity-80">{loadError}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => loadActivities()}
+                    className="px-2.5 py-1 rounded-md text-xs font-medium bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/30 shrink-0 cursor-pointer"
+                  >
+                    Retry
+                  </button>
                 </div>
               )}
               {loadingActivities ? <CommentSkeleton /> : (() => {

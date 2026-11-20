@@ -105,10 +105,11 @@ export const tasksApi = {
     });
   },
 
-  async getComments(id: string, subtaskId?: string): Promise<{ comments: any[] }> {
+  async getComments(id: string, subtaskId?: string, options?: { signal?: AbortSignal }): Promise<{ comments: any[] }> {
     const url = subtaskId ? `/api/tasks/${id}/comments?subtaskId=${subtaskId}` : `/api/tasks/${id}/comments`;
     return apiClient<{ comments: any[] }>(url, {
       method: 'GET',
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
   },
 
@@ -140,9 +141,10 @@ export const tasksApi = {
     });
   },
 
-  async getActivities(id: string): Promise<{ activities: any[]; taskCreatedAt?: string; creator?: any }> {
+  async getActivities(id: string, options?: { signal?: AbortSignal }): Promise<{ activities: any[]; taskCreatedAt?: string; creator?: any }> {
     return apiClient<{ activities: any[]; taskCreatedAt?: string; creator?: any }>(`/api/tasks/${id}/activities`, {
       method: 'GET',
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
   },
 

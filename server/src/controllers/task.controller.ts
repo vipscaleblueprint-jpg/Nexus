@@ -4,8 +4,7 @@ import { randomUUID } from 'crypto';
 import { prisma } from '../config/prisma';
 import { logger } from '../config/logger';
 import { getR2PresignedUrl } from '../services/r2Service';
-import { getCache, setCache, invalidateCache, getCacheGeneration } from '../services/redisService';
-import { redis } from '../config/redis';
+import { getCache, setCache, invalidateCache, getCacheGeneration, redis, isRedisReady } from '../services/redisService';
 import { taskUpdatesQueue } from '../queues/task.queue';
 import { getPositionAfter } from '../services/taskOrderService';
 import { autoAssignAudits } from '../services/auditAutoAssign';
@@ -2446,13 +2445,19 @@ export async function getTaskComments(req: Request, res: Response) {
     // Stored oldest-first via rpush, so lrange 0 -1 is always in chronological order.
     const redisKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
 
-    const cachedItems = await redis.lrange(redisKey, 0, -1);
-    if (cachedItems.length > 0) {
-      if (cachedItems.length === 1 && cachedItems[0] === '__EMPTY__') {
-        return res.json({ comments: [], cached: true });
+    if (isRedisReady()) {
+      try {
+        const cachedItems = await redis.lrange(redisKey, 0, -1);
+        if (cachedItems.length > 0) {
+          if (cachedItems.length === 1 && cachedItems[0] === '__EMPTY__') {
+            return res.json({ comments: [], cached: true });
+          }
+          const comments = cachedItems.filter((c: string) => c !== '__EMPTY__').map((c: string) => JSON.parse(c));
+          return res.json({ comments, cached: true });
+        }
+      } catch {
+        // Fall back to DB if Redis fails
       }
-      const comments = cachedItems.filter((c: string) => c !== '__EMPTY__').map((c: string) => JSON.parse(c));
-      return res.json({ comments, cached: true });
     }
 
     const whereClause: any = { taskId, parentCommentId: null };
@@ -2462,12 +2467,14 @@ export async function getTaskComments(req: Request, res: Response) {
       whereClause.subtaskId = null;
     }
 
-    const comments = await prisma.taskComment.findMany({
+    const enriched = await prisma.taskComment.findMany({
       where: whereClause,
       include: {
+        user: { select: { id: true, name: true, avatarUrl: true } },
         reactions: { include: { user: { select: { id: true, name: true } } } },
         replies: {
           include: {
+            user: { select: { id: true, name: true, avatarUrl: true } },
             reactions: { include: { user: { select: { id: true, name: true } } } },
           },
           orderBy: { createdAt: 'asc' },
@@ -2477,38 +2484,20 @@ export async function getTaskComments(req: Request, res: Response) {
       orderBy: { createdAt: 'asc' },
     });
 
-    // Fetch user info for each comment
-    const userIds = [...new Set([
-      ...comments.map((c: any) => c.userId),
-      ...comments.flatMap((c: any) => c.replies.map((r: any) => r.userId)),
-    ])];
-    const users = await prisma.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, name: true, avatarUrl: true },
-    });
-    const userMap = Object.fromEntries(users.map((u: any) => [u.id, u]));
-
-    const enriched = comments.map((c: any) => ({
-      ...c,
-      user: userMap[c.userId],
-      replies: c.replies.map((r: any) => ({ ...r, user: userMap[r.userId] })),
-    }));
-
-    // Populate Redis List — store oldest-first (rpush), so lrange 0 -1 is chronological
-    // and lpush for new comments keeps newest at index 0 for efficient appends.
-    // If no comments exist, store '__EMPTY__' sentinel so subsequent queries return in 2ms.
-    // TTL: 1 hour — reset on every access so active tasks stay warm indefinitely.
-    const pipeline = redis.pipeline();
-    pipeline.del(redisKey);
-    if (enriched.length > 0) {
-      for (const c of enriched) {
-        pipeline.rpush(redisKey, JSON.stringify(c));
+    // Populate Redis List in background — store oldest-first (rpush), so lrange 0 -1 is chronological.
+    if (isRedisReady()) {
+      const pipeline = redis.pipeline();
+      pipeline.del(redisKey);
+      if (enriched.length > 0) {
+        for (const c of enriched) {
+          pipeline.rpush(redisKey, JSON.stringify(c));
+        }
+      } else {
+        pipeline.rpush(redisKey, '__EMPTY__');
       }
-    } else {
-      pipeline.rpush(redisKey, '__EMPTY__');
+      pipeline.expire(redisKey, 3600);
+      pipeline.exec().catch(() => {});
     }
-    pipeline.expire(redisKey, 3600);
-    await pipeline.exec();
 
     return res.json({ comments: enriched });
   } catch (err: any) {
@@ -2530,29 +2519,31 @@ export async function getTaskActivities(req: Request, res: Response) {
       return res.json({ ...cached, cached: true });
     }
 
-    const task = await prisma.task.findUnique({
-      where: { id: taskId },
-      select: {
-        id: true,
-        createdAt: true,
-        creator: { select: { id: true, name: true, avatarUrl: true } },
-      },
-    });
+    const [task, logs] = await Promise.all([
+      prisma.task.findUnique({
+        where: { id: taskId },
+        select: {
+          id: true,
+          createdAt: true,
+          creator: { select: { id: true, name: true, avatarUrl: true } },
+        },
+      }),
+      prisma.auditLog.findMany({
+        where: {
+          entity: 'TASK',
+          entityId: taskId,
+          action: { not: 'COMMENT' },
+        },
+        include: {
+          user: { select: { id: true, name: true, avatarUrl: true, email: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
 
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
-
-    const logs = await prisma.auditLog.findMany({
-      where: {
-        entity: 'TASK',
-        entityId: taskId,
-      },
-      include: {
-        user: { select: { id: true, name: true, avatarUrl: true, email: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
 
     const activities = logs.map((log: any) => {
       const details = (log.details as any) || {};

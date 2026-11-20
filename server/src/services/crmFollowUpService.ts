@@ -392,8 +392,14 @@ async function resolveSystemActorId(): Promise<string | null> {
  */
 export async function triggerCrmFollowUpAlertIfNeeded(
   taskId: string,
-  options: { force?: boolean } = {}
-): Promise<{ sent: boolean; reason?: string; recipientsCount?: number }> {
+  options: { force?: boolean; deferSocketEmit?: boolean } = {}
+): Promise<{
+  sent: boolean;
+  reason?: string;
+  recipientsCount?: number;
+  recipientIds?: string[];
+  socketPayload?: any;
+}> {
   try {
     const task = await prisma.task.findUnique({
       where: { id: taskId },
@@ -498,25 +504,23 @@ export async function triggerCrmFollowUpAlertIfNeeded(
       })),
     });
 
-    const io = getIo();
-    if (io) {
-      recipients.forEach((uid) => {
-        io.to(`user:${uid}`).emit('notification_received', {
-          type: 'CRM_FOLLOW_UP_ALERT',
-          taskId: task.id,
-          taskTitle: task.title,
-          daysPassed,
-          tier: rule.tier,
-          requiresModal: rule.requiresModal,
+    const socketPayload = {
+      type: 'CRM_FOLLOW_UP_ALERT',
+      taskId: task.id,
+      taskTitle: task.title,
+      daysPassed,
+      tier: rule.tier,
+      requiresModal: rule.requiresModal,
+    };
+
+    if (!options.deferSocketEmit) {
+      const io = getIo();
+      if (io) {
+        recipients.forEach((uid) => {
+          io.to(`user:${uid}`).emit('notification_received', socketPayload);
+          io.to(`user:${uid}`).emit('crm:follow_up_alert', socketPayload);
         });
-        io.to(`user:${uid}`).emit('crm:follow_up_alert', {
-          taskId: task.id,
-          taskTitle: task.title,
-          daysPassed,
-          tier: rule.tier,
-          requiresModal: rule.requiresModal,
-        });
-      });
+      }
     }
 
     const actorId = await resolveSystemActorId();
@@ -539,7 +543,7 @@ export async function triggerCrmFollowUpAlertIfNeeded(
       });
     }
 
-    return { sent: true, recipientsCount: recipients.length };
+    return { sent: true, recipientsCount: recipients.length, recipientIds: recipients, socketPayload };
   } catch (err) {
     logger.warn({ err, taskId }, 'triggerCrmFollowUpAlertIfNeeded failed');
     return { sent: false, reason: 'error' };
@@ -563,10 +567,30 @@ export async function sweepCrmFollowUpAlerts(): Promise<{ checked: number; alert
 
     let checked = 0;
     let alerted = 0;
+    const latestPayloadByUser = new Map<string, any>();
     for (const c of candidates) {
       checked++;
-      const res = await triggerCrmFollowUpAlertIfNeeded(c.id);
-      if (res.sent) alerted++;
+      const res = await triggerCrmFollowUpAlertIfNeeded(c.id, { deferSocketEmit: true });
+      if (res.sent) {
+        alerted++;
+        if (res.recipientIds && res.socketPayload) {
+          for (const uid of res.recipientIds) {
+            latestPayloadByUser.set(uid, res.socketPayload);
+          }
+        }
+      }
+    }
+
+    // Emit at most one batched notification_received per recipient user after the sweep
+    // instead of N socket events in a tight loop (which triggers a storm of /api/notifications polls).
+    if (latestPayloadByUser.size > 0) {
+      const io = getIo();
+      if (io) {
+        for (const [uid, payload] of latestPayloadByUser.entries()) {
+          io.to(`user:${uid}`).emit('notification_received', payload);
+          io.to(`user:${uid}`).emit('crm:follow_up_alert', payload);
+        }
+      }
     }
 
     if (alerted > 0) {

@@ -384,32 +384,67 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     // The server emits notification_received for every TaskNotification row, but the cowbell only shows
     // "For Me" notifications (forMeCondition in notification.controller). Only chime when the filtered
     // unread count actually grows, so users never hear a sound for a notification they can't see.
+    // Debounce socket-triggered badge polls so burst sweeps (e.g. CRM follow-ups) collapse into one request.
     let lastSoundAt = 0;
+    let notifPollTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingSoundCheck = false;
+    let pendingNotifType: string | undefined;
+
+    const scheduleNotifBadgeRefresh = (options?: { checkSound?: boolean; notifType?: string; checkLastViewed?: boolean }) => {
+      if (options?.checkSound) {
+        pendingSoundCheck = true;
+        if (options.notifType) pendingNotifType = options.notifType;
+      }
+      if (notifPollTimer) clearTimeout(notifPollTimer);
+      notifPollTimer = setTimeout(() => {
+        notifPollTimer = null;
+        const shouldCheckSound = pendingSoundCheck;
+        const notifType = pendingNotifType;
+        pendingSoundCheck = false;
+        pendingNotifType = undefined;
+
+        const prevUnread = useAppStore.getState().unreadNotifications;
+        notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
+          if (typeof res.taskMapUnreadCount === 'number') {
+            useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
+          }
+          if (typeof res.unreadCount !== 'number') return;
+
+          if (options?.checkLastViewed) {
+            const lastViewed =
+              typeof window !== 'undefined'
+                ? parseInt(localStorage.getItem('nexus_notif_last_viewed') || '0', 10)
+                : 0;
+            const latestNotif = res.notifications?.[0];
+            const hasUnseen =
+              latestNotif &&
+              !latestNotif.isRead &&
+              new Date(latestNotif.createdAt).getTime() > lastViewed;
+            setUnreadNotifications(hasUnseen ? res.unreadCount : 0);
+          } else {
+            setUnreadNotifications(res.unreadCount);
+          }
+
+          if (shouldCheckSound) {
+            const now = Date.now();
+            if (res.unreadCount > prevUnread && now - lastSoundAt > 1500) {
+              lastSoundAt = now;
+              const resolvedType = res.notifications?.[0]?.type || notifType;
+              playNotificationSound(undefined, undefined, undefined, resolvedType);
+            }
+          }
+        }).catch(() => { });
+      }, 400);
+    };
+
     s.on('notification_received', (data?: { type?: string;[key: string]: any }) => {
-      const prevUnread = useAppStore.getState().unreadNotifications;
       window.dispatchEvent(new CustomEvent('notification_received', { detail: data }));
-      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
-        if (typeof res.taskMapUnreadCount === 'number') {
-          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
-        }
-        if (typeof res.unreadCount !== 'number') return;
-        setUnreadNotifications(res.unreadCount);
-        const now = Date.now();
-        if (res.unreadCount > prevUnread && now - lastSoundAt > 1500) {
-          lastSoundAt = now;
-          const notifType = res.notifications?.[0]?.type || data?.type;
-          playNotificationSound(undefined, undefined, undefined, notifType);
-        }
-      }).catch(() => { });
+      scheduleNotifBadgeRefresh({ checkSound: true, notifType: data?.type });
     });
 
     s.on('notification_read', (data: { id: string }) => {
       useAppStore.getState().decrementUnreadNotifications();
-      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
-        if (typeof res.taskMapUnreadCount === 'number') {
-          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
-        }
-      }).catch(() => { });
+      scheduleNotifBadgeRefresh();
       window.dispatchEvent(new CustomEvent('notification_read', { detail: data }));
     });
 
@@ -449,27 +484,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
 
     s.on('task:comment_deleted', (payload: any) => {
       window.dispatchEvent(new CustomEvent('task:comment_deleted', { detail: payload }));
-      notificationsApi.getNotifications({ tab: 'primary', limit: 1 }).then((res) => {
-        if (typeof res.taskMapUnreadCount === 'number') {
-          useAppStore.getState().setTaskMapUnreadCount(res.taskMapUnreadCount);
-        }
-        if (typeof res.unreadCount === 'number') {
-          const lastViewed =
-            typeof window !== 'undefined'
-              ? parseInt(localStorage.getItem('nexus_notif_last_viewed') || '0', 10)
-              : 0;
-          const latestNotif = res.notifications?.[0];
-          const hasUnseen =
-            latestNotif &&
-            !latestNotif.isRead &&
-            new Date(latestNotif.createdAt).getTime() > lastViewed;
-          if (hasUnseen) {
-            setUnreadNotifications(res.unreadCount);
-          } else {
-            setUnreadNotifications(0);
-          }
-        }
-      }).catch(() => { });
+      scheduleNotifBadgeRefresh({ checkLastViewed: true });
     });
 
     s.on('task:comment_reaction', (payload: any) => {
@@ -692,6 +707,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     window.addEventListener('draft:deleted', handleDraftEvent);
 
     return () => {
+      if (notifPollTimer) clearTimeout(notifPollTimer);
       window.removeEventListener('draft:updated', handleDraftEvent);
       window.removeEventListener('draft:deleted', handleDraftEvent);
       s.disconnect();

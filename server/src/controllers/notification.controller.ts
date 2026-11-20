@@ -76,6 +76,7 @@ export async function getNotifications(req: Request, res: Response) {
       whereClause.OR = forMeCondition;
     }
 
+    const isBadgeOnlyPoll = take === 1 && !filter;
     const [notifications, total, unreadCount, taskMapUnreadCount] = await Promise.all([
       prisma.taskNotification.findMany({
         where: whereClause,
@@ -86,9 +87,11 @@ export async function getNotifications(req: Request, res: Response) {
         orderBy: { createdAt: 'desc' },
         ...(take !== undefined ? { take, skip } : {}),
       }),
-      prisma.taskNotification.count({
-        where: whereClause,
-      }),
+      isBadgeOnlyPoll
+        ? Promise.resolve(0)
+        : prisma.taskNotification.count({
+            where: whereClause,
+          }),
       prisma.taskNotification.count({
         where: {
           userId: authReq.user.id,
@@ -116,7 +119,7 @@ export async function getNotifications(req: Request, res: Response) {
       }),
     ]);
 
-    const hasMore = take !== undefined ? (skip || 0) + notifications.length < total : false;
+    const hasMore = !isBadgeOnlyPoll && take !== undefined ? (skip || 0) + notifications.length < total : false;
 
     // Prune orphaned comment, reply, reaction, and mention notifications whose comment was deleted from TaskComment
     const commentNotifs = notifications.filter(

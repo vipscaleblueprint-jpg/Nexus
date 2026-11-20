@@ -4,7 +4,8 @@ import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { invalidateCache } from '../services/redisService';
 import { taskInclude } from '../controllers/task.controller';
-import { isNexusAuditChecklist } from '../utils/auditChecklist';
+import { aiAuditExternalId, isAiAuditChecklist, isNexusAuditChecklist } from '../utils/auditChecklist';
+import { queueAuditPick } from './aiAuditPicker';
 
 export interface RecurringConfig {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
@@ -197,6 +198,8 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
         name: cl.name,
         taskId: newTask.id,
         subtaskId: null,
+        // The AI's audit pick carries over to the copy.
+        ...(isAiAuditChecklist(cl) && { externalId: aiAuditExternalId(newTask.id) }),
       },
     });
 
@@ -299,6 +302,7 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
               name: cl.name,
               taskId: newTask.id,
               subtaskId: createdSubtask.id,
+              ...(isAiAuditChecklist(cl) && { externalId: aiAuditExternalId(createdSubtask.id) }),
             },
           });
 
@@ -317,7 +321,14 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
           }
         }
       }
+      // No pick to carry over (a subtask made before the AI picked audits): the AI picks now.
+      if (!(sub.checklists || []).some((cl) => isAiAuditChecklist(cl))) {
+        queueAuditPick({ taskId: newTask.id, subtaskId: createdSubtask.id });
+      }
     }
+  }
+  if (!sourceTask.checklists.some((cl) => isAiAuditChecklist(cl))) {
+    queueAuditPick({ taskId: newTask.id });
   }
 
   // 5. Update the source recurring task's lastRunAt only if it had a recurringConfig

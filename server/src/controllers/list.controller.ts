@@ -73,9 +73,10 @@ export async function getList(req: Request, res: Response) {
                   }
                 } 
               },
-              checklists: { 
-                where: { name: { equals: 'Audit', mode: 'insensitive' } },
-                include: { items: true } 
+              checklists: {
+                // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
+                where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
+                include: { items: true }
               },
               _count: {
                 select: {

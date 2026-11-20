@@ -969,16 +969,18 @@ export async function respondToCrmFollowUp(params: {
     const activeItems = allItems
       .filter((i: any) => !(i.text || '').startsWith('!'))
       .map((i: any) => i.text);
+    // Design stays hidden only on older tasks; a saved AI pick of it must be passed.
+    const aiPicked = getAiPickedAudits(task.checklists);
     const requiredTaskAudits = Array.from(
       new Set([
-        ...(getAiPickedAudits(task.checklists) ? [] : getRequiredAuditsForClose(task.title, auditorRoles)),
+        ...(aiPicked ? [] : getRequiredAuditsForClose(task.title, auditorRoles)),
         ...activeItems,
       ])
     ).filter(
       (r) =>
         !r.startsWith('!') &&
         !excludedAudits.has(normalizeAuditName(r)) &&
-        (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit')
+        (!HIDE_DESIGN_AUDIT || !!aiPicked || normalizeAuditName(r) !== 'design audit')
     );
     const completedTexts = new Set(
       allItems

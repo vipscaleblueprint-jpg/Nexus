@@ -17,6 +17,7 @@ import { prisma } from '../config/prisma';
 import { redis } from '../config/redis';
 import { invalidateCache } from './redisService';
 import { injectSubtaskIntoJournal } from './journalInjectionService';
+import { queueAuditPick } from './aiAuditPicker';
 import {
   getClickUpTask,
   getClickUpListTasks,
@@ -591,6 +592,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
     taskId = created.id;
     ctx.summary.tasksCreated++;
     recordActivity(ctx, 'added', 'task', cu.name);
+    queueAuditPick({ taskId });
   }
 
   const target: Target = { taskId, subtaskId: null };
@@ -663,6 +665,7 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
       select: { id: true },
     });
     subtaskId = created.id;
+    queueAuditPick({ taskId: nexusTaskId, subtaskId });
   }
   ctx.summary.subtasks++;
   recordActivity(ctx, existing ? 'updated' : 'added', 'subtask', cu.name);

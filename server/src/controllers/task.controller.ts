@@ -37,15 +37,14 @@ import { convertCommentHtmlToClickUp, fetchImageBuffer } from '../utils/clickupC
 import {
   isNexusAuditChecklist,
   isAiAuditChecklist,
-  getAiPickedAudits,
   requiresClosedSubtasks,
   requiresLevel1Audits,
   requiresCompletedAudits,
   normalizeAuditName,
   isReviewStatus,
   isCheckingStatus,
-  HIDE_DESIGN_AUDIT,
   getRequiredAudits,
+  resolveRequiredAudits,
 } from '../utils/auditChecklist';
 import {
   applyAuditChecklistAutomation,
@@ -69,6 +68,7 @@ import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/r
 import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
 import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
 import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmFollowUpService';
+import { queueAuditPick, repickAuditsAfterRename } from '../services/aiAuditPicker';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -600,6 +600,7 @@ export async function createTask(req: Request, res: Response) {
     // Global broadcast reaches list-room members too, so a separate room emit would deliver it twice
     io.emit('task:created', task);
     res.status(201).json({ task });
+    queueAuditPick({ taskId: task.id });
 
     // Notify the assignees a task was created for (the creator excluded) — after the broadcast/response
     (async () => {
@@ -935,18 +936,8 @@ export async function updateTask(req: Request, res: Response) {
         ];
         const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
         const allItems = auditChecklists.flatMap((c: any) => c.items || []);
-        const excludedAudits = new Set(
-          allItems
-            .filter((i: any) => (i.text || '').startsWith('!'))
-            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
-        );
-        const activeItems = allItems
-          .filter((i: any) => !(i.text || '').startsWith('!'))
-          .map((i: any) => i.text);
-        const requiredTaskAudits = Array.from(new Set([
-          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
-          ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+        // Saved AI picks, or the title/role rules on older tasks; saved items and exclusions apply.
+        const requiredTaskAudits = resolveRequiredAudits({ title: currentTask.title, auditorRoles, checklists: currentTask.checklists });
 
         const completedTexts = new Set(
           allItems
@@ -973,19 +964,8 @@ export async function updateTask(req: Request, res: Response) {
         ];
         const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
         const allItems = auditChecklists.flatMap((c: any) => c.items || []);
-        const excludedAudits = new Set(
-          allItems
-            .filter((i: any) => (i.text || '').startsWith('!'))
-            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
-        );
-        const activeItems = allItems
-          .filter((i: any) => !(i.text || '').startsWith('!'))
-          .map((i: any) => i.text);
-        // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
-        const requiredTaskAudits = Array.from(new Set([
-          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
-          ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+        // Saved AI picks, or the title/role rules on older tasks; saved items and exclusions apply.
+        const requiredTaskAudits = resolveRequiredAudits({ title: currentTask.title, auditorRoles, checklists: currentTask.checklists });
 
         const completedTexts = new Set(
           allItems
@@ -1054,6 +1034,10 @@ export async function updateTask(req: Request, res: Response) {
       where: { id: taskId },
       data: updateData,
     });
+
+    if (title !== undefined && title !== currentTask.title) {
+      repickAuditsAfterRename({ taskId }).catch((err) => console.error('Audit re-pick after rename failed:', err));
+    }
 
     if (isRevisionReturn) {
       const revResult = await applyRevisionReturnToOriginalMa({
@@ -1590,18 +1574,8 @@ export async function moveTask(req: Request, res: Response) {
         ];
         const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
         const allItems = auditChecklists.flatMap((c: any) => c.items || []);
-        const excludedAudits = new Set(
-          allItems
-            .filter((i: any) => (i.text || '').startsWith('!'))
-            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
-        );
-        const activeItems = allItems
-          .filter((i: any) => !(i.text || '').startsWith('!'))
-          .map((i: any) => i.text);
-        const requiredTaskAudits = Array.from(new Set([
-          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
-          ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+        // Saved AI picks, or the title/role rules on older tasks; saved items and exclusions apply.
+        const requiredTaskAudits = resolveRequiredAudits({ title: currentTask.title, auditorRoles, checklists: currentTask.checklists });
 
         const completedTexts = new Set(
           allItems
@@ -1628,19 +1602,8 @@ export async function moveTask(req: Request, res: Response) {
         ];
         const auditChecklists = (currentTask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
         const allItems = auditChecklists.flatMap((c: any) => c.items || []);
-        const excludedAudits = new Set(
-          allItems
-            .filter((i: any) => (i.text || '').startsWith('!'))
-            .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
-        );
-        const activeItems = allItems
-          .filter((i: any) => !(i.text || '').startsWith('!'))
-          .map((i: any) => i.text);
-        // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
-        const requiredTaskAudits = Array.from(new Set([
-          ...(getAiPickedAudits(currentTask.checklists) ? [] : getRequiredAudits(currentTask.title, auditorRoles)),
-          ...activeItems,
-        ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+        // Saved AI picks, or the title/role rules on older tasks; saved items and exclusions apply.
+        const requiredTaskAudits = resolveRequiredAudits({ title: currentTask.title, auditorRoles, checklists: currentTask.checklists });
 
         const completedTexts = new Set(
           allItems
@@ -2893,6 +2856,7 @@ export async function createSubtask(req: Request, res: Response) {
       } as any
     });
     await invalidateCache(`task:${taskId}`, `task:${subtask.id}`, 'task_map:all');
+    queueAuditPick({ taskId, subtaskId: subtask.id });
     if (parentIsOnHold && !isExplicitlyClosed && parentRec) {
       const revs = Array.isArray(parentRec.pmReviews) ? [...(parentRec.pmReviews as any[])] : [];
       revs.push({
@@ -3054,18 +3018,13 @@ export async function updateSubtask(req: Request, res: Response) {
         if (currentSubtask) {
           const auditChecklists = (currentSubtask.checklists || []).filter((c: any) => isNexusAuditChecklist(c));
           const allItems = auditChecklists.flatMap((c: any) => c.items || []);
-          const excludedAudits = new Set(
-            allItems
-              .filter((i: any) => (i.text || '').startsWith('!'))
-              .map((i: any) => normalizeAuditName((i.text || '').slice(1)))
-          );
-          const activeItems = allItems
-            .filter((i: any) => !(i.text || '').startsWith('!'))
-            .map((i: any) => i.text);
-          const requiredSubtaskAudits = Array.from(new Set([
-            ...getRequiredAudits(currentSubtask.title, (currentSubtask as any).assigneeRoleRestrictions),
-            ...activeItems,
-          ])).filter(r => !r.startsWith('!') && !excludedAudits.has(normalizeAuditName(r)) && (!HIDE_DESIGN_AUDIT || normalizeAuditName(r) !== 'design audit'));
+          // The subtask's saved AI picks, or the title/role rules on older subtasks.
+          const requiredSubtaskAudits = resolveRequiredAudits({
+            title: currentSubtask.title,
+            auditorRoles: currentSubtask.assigneeRoleRestrictions,
+            checklists: currentSubtask.checklists,
+            subtaskId: currentSubtask.id,
+          });
 
           const completedTexts = new Set(
             allItems
@@ -3164,6 +3123,10 @@ export async function updateSubtask(req: Request, res: Response) {
         team: { select: { id: true, name: true, color: true } }
       } as any
     });
+
+    if (title !== undefined && existingSubtask && title !== existingSubtask.title) {
+      repickAuditsAfterRename({ taskId, subtaskId }).catch((err) => console.error('Subtask audit re-pick after rename failed:', err));
+    }
 
     if (assigneesChanging) {
       if (subtask.assigneeId !== existingSubtask?.assigneeId) {
@@ -4694,6 +4657,7 @@ export async function listMyAudits(req: Request, res: Response) {
         checklist: {
           select: {
             id: true,
+            externalId: true,
             subtask: { select: { id: true, title: true, status: true, completed: true } },
             task: { select: { id: true, title: true, status: true, priority: true, list: { select: { id: true, name: true } } } },
             subtaskId: true,
@@ -4739,10 +4703,12 @@ export async function listMyAudits(req: Request, res: Response) {
 
     const normAudit = (txt: string) => (txt || '').trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
     const completedSet = new Set<string>();
+    // A subtask's checklist also carries its parent's taskId: key it by the subtask only, so a
+    // subtask's checked audit never hides the parent task's audit of the same name (or vice versa).
     for (const ci of completedAuditItems) {
       const norm = normAudit(ci.text);
-      if (ci.checklist.taskId) completedSet.add(`${ci.checklist.taskId}::${norm}`);
       if (ci.checklist.subtaskId) completedSet.add(`:${ci.checklist.subtaskId}:${norm}`);
+      else if (ci.checklist.taskId) completedSet.add(`${ci.checklist.taskId}::${norm}`);
     }
 
     const closed = ['closed', 'done', 'completed', 'resolved', 'cancelled'];
@@ -4760,14 +4726,15 @@ export async function listMyAudits(req: Request, res: Response) {
         if (!isReviewStatus(effectiveStatus)) return null;
 
         const norm = normAudit(i.text);
-        if (taskId && completedSet.has(`${taskId}::${norm}`)) return null;
-        if (subtaskId && completedSet.has(`:${subtaskId}:${norm}`)) return null;
+        if (subtaskId ? completedSet.has(`:${subtaskId}:${norm}`) : taskId && completedSet.has(`${taskId}::${norm}`)) return null;
 
         return {
           id: i.id,
           text: i.text,
           createdAt: i.createdAt,
           checklistId: i.checklistId || i.checklist.id,
+          // An AI pick shows its Design Audit (older tasks hide it).
+          aiPicked: isAiAuditChecklist(i.checklist),
           task,
           subtask: i.checklist.subtask || null,
         };

@@ -3,8 +3,12 @@
  * checklist that happens to be named "Audit". They share a name, so the items decide:
  * Nexus's only ever holds the four audit items. Mirrors frontend/src/lib/auditChecklist.ts.
  */
-// TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
+// Hides Design Audit on older tasks, whose audits still come from the title/role rules below.
+// Tasks with saved picks (see getAiPickedAudits) show the Design Audit the AI picked.
 export const HIDE_DESIGN_AUDIT = true;
+
+/** The order audit items are listed in. */
+export const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
 
 export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
@@ -75,21 +79,69 @@ export function isNexusAuditChecklist(c: {
 }
 
 /**
- * Audits the Galaxy AI picked for a task are saved as its Audit checklist, marked by this
- * externalId instead of a ClickUp id. Nexus-only: ClickUp sync skips it, and the ClickUp pull
- * never matches it (it matches ClickUp ids, and never merges an "Audit" checklist by name).
+ * The audits the AI picked for a task or subtask (services/aiAuditPicker.ts) are saved as its
+ * Audit checklist, marked by this externalId instead of a ClickUp id. Nexus-only: ClickUp sync
+ * skips it, and the ClickUp pull never matches it (it matches ClickUp ids, and never merges an
+ * "Audit" checklist by name).
  */
 const AI_AUDIT_PREFIX = 'ai-audit:';
-export const aiAuditExternalId = (taskId: string) => `${AI_AUDIT_PREFIX}${taskId}`;
+/** Pass the subtask's id for a subtask, else the task's. */
+export const aiAuditExternalId = (taskOrSubtaskId: string) => `${AI_AUDIT_PREFIX}${taskOrSubtaskId}`;
 export const isAiAuditChecklist = (c: { externalId?: string | null } | null | undefined) =>
   !!c?.externalId?.startsWith(AI_AUDIT_PREFIX);
 
-/** The audits the AI picked for this task, or null when it has none (title rules apply). */
+type AuditChecklistLike = {
+  name: string;
+  externalId?: string | null;
+  subtaskId?: string | null;
+  items?: { text: string }[] | null;
+};
+
+/**
+ * The audits the AI picked for this task (no subtaskId) or this subtask, or null when it has
+ * none: an older task, whose audits still come from the title/role rules.
+ */
 export function getAiPickedAudits(
-  checklists: { name: string; externalId?: string | null; subtaskId?: string | null; items?: { text: string }[] | null }[] | null | undefined
+  checklists: AuditChecklistLike[] | null | undefined,
+  subtaskId?: string | null,
 ): string[] | null {
-  const picked = (checklists ?? []).find((c) => !c.subtaskId && isAiAuditChecklist(c) && isNexusAuditChecklist(c));
+  const picked = (checklists ?? []).find(
+    (c) => (subtaskId ? c.subtaskId === subtaskId : !c.subtaskId) && isAiAuditChecklist(c) && isNexusAuditChecklist(c)
+  );
   return picked ? (picked.items ?? []).map((i) => i.text) : null;
+}
+
+/**
+ * Every audit a task (or, with subtaskId, a subtask) must pass: its saved AI picks, or on older
+ * tasks the title/role rules (Design hidden). Audit items saved on it are added, "!"-excluded
+ * ones removed. Mirrors frontend/src/lib/auditChecklist.ts.
+ */
+export function resolveRequiredAudits(opts: {
+  title: string;
+  auditorRoles?: string[];
+  checklists?: AuditChecklistLike[] | null;
+  subtaskId?: string | null;
+}): string[] {
+  const items = (opts.checklists ?? [])
+    .filter((c) => (opts.subtaskId ? c.subtaskId === opts.subtaskId : !c.subtaskId) && isNexusAuditChecklist(c))
+    .flatMap((c) => c.items ?? []);
+  const excluded = new Set(
+    items.filter((i) => (i.text || '').startsWith('!')).map((i) => normalizeAuditName(i.text.slice(1)))
+  );
+  const picked = getAiPickedAudits(opts.checklists, opts.subtaskId);
+  const hideDesign = HIDE_DESIGN_AUDIT && !picked;
+
+  const seen = new Set<string>();
+  return [
+    ...(picked ? [] : getRequiredAudits(opts.title, opts.auditorRoles)),
+    ...items.map((i) => i.text),
+  ].filter((text) => {
+    const n = normalizeAuditName(text);
+    if (!text || text.startsWith('!') || excluded.has(n) || seen.has(n)) return false;
+    if (hideDesign && n === 'design audit') return false;
+    seen.add(n);
+    return true;
+  });
 }
 
 /**

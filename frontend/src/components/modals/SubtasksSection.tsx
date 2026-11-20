@@ -12,10 +12,9 @@ import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
-import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, normalizeAuditName, resolveRequiredAudits } from '@/lib/auditChecklist';
 import { useAppStore } from '@/lib/store';
 import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
-import { getRequiredAudits } from './AuditSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -1681,23 +1680,21 @@ function SubtaskRow({
                   <div className="flex flex-col gap-1.5">
                     <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Audit Items</div>
                     {(() => {
-                      const auditChecklist = subtask.checklists?.find((c: any) => isNexusAuditChecklist(c));
-                      const excludedAudits = new Set(
-                        (auditChecklist?.items || [])
-                          .filter((i: any) => (i.text || '').startsWith('!'))
-                          .map((i: any) => (i.text || '').slice(1).trim().toLowerCase())
-                      );
-                      const activeItems = (auditChecklist?.items || [])
-                        .filter((i: any) => !(i.text || '').startsWith('!'))
-                        .map((i: any) => i.text);
+                      // The subtask's AI-picked audits, or the title/role rules on older subtasks.
+                      const requiredAudits = resolveRequiredAudits({
+                        title: subtask.title,
+                        auditorRoles: subtask.assigneeRoleRestrictions,
+                        checklists: (subtask.checklists || []).map((c: any) => ({ ...c, subtaskId: c.subtaskId ?? subtask.id })),
+                        subtaskId: subtask.id,
+                      });
+                      const auditItems = (subtask.checklists || [])
+                        .filter((c: any) => isNexusAuditChecklist(c))
+                        .flatMap((c: any) => c.items || []);
 
-                      const requiredAudits = Array.from(new Set([
-                        ...getRequiredAudits(subtask.title, subtask.assigneeRoleRestrictions),
-                        ...activeItems
-                      ].filter((text) => !text.startsWith('!') && !excludedAudits.has(text.toLowerCase()) && text.toLowerCase() !== 'design audit')));
-                      
                       return requiredAudits.map((text, idx) => {
-                        const item = auditChecklist?.items?.find((i: any) => i.text.toLowerCase() === text.toLowerCase());
+                        const item = auditItems.find((i: any) => normalizeAuditName(i.text) === normalizeAuditName(text));
+                        const auditChecklist = subtask.checklists?.find((c: any) => c.id === item?.checklistId)
+                          ?? subtask.checklists?.find((c: any) => isNexusAuditChecklist(c));
                       const isCompleted = !!item?.completed;
 
                       const roles: string[] = (currentUser?.roles || []).map((r: string) => r?.toLowerCase() || '');

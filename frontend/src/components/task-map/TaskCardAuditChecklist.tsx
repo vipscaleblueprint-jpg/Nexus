@@ -8,8 +8,9 @@ import { toast } from '@/lib/toast';
 import {
   normalizeAuditName,
   getRequiredAudits,
+  getAiPickedAudits,
+  hidesDesignAudit,
   isNexusAuditChecklist,
-  HIDE_DESIGN_AUDIT,
   canPerformAudit,
   isUiUxAudit,
   isDesignAudit,
@@ -53,9 +54,11 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       .map((i: any) => normalizeAuditName((i.text || '').replace(/^!\s*/, '')))
   );
 
-  // Required audits from title & roles + any active items on the task
+  // Required audits: the AI's pick when it has one, else the title & role rules; plus any active items
   const assigneeRoles = task.assignee?.roles || task.assigneeRoleRestrictions || [];
-  const requiredTitles = getRequiredAudits(task.title || '', assigneeRoles);
+  const aiPicked = getAiPickedAudits(localChecklists, task.isSubtask ? task.subtaskId || task.id : null);
+  const hideDesign = hidesDesignAudit(aiPicked);
+  const requiredTitles = aiPicked ? [] : getRequiredAudits(task.title || '', assigneeRoles);
   const activeExistingTexts = existingItems
     .filter((i: any) => !(i.text || '').startsWith('!'))
     .map((i: any) => i.text);
@@ -79,7 +82,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       const norm = normalizeAuditName(name);
       if (!name || name.startsWith('!') || excludedSet.has(norm)) return false;
       if (
-        HIDE_DESIGN_AUDIT &&
+        hideDesign &&
         norm === 'design audit' &&
         !activeExistingTexts.some((t: string) => normalizeAuditName(t) === norm) &&
         !subStatusAudits.some((t: string) => normalizeAuditName(t) === norm)

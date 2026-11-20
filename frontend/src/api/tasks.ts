@@ -6,6 +6,8 @@ export interface MyAuditItem {
   text: string;
   createdAt: string;
   checklistId?: string;
+  /** Part of the AI's audit pick for the task (its Design Audit is shown). */
+  aiPicked?: boolean;
   task: { id: string; title: string; status: string; priority?: string; list?: { id: string; name: string } | null };
   subtask: { id: string; title: string; status?: string; completed?: boolean } | null;
 }

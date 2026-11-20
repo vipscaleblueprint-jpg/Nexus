@@ -52,7 +52,8 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
   });
 }
 
-// TEMPORARY TOGGLE: Hide Design Audit per user request until process is finalized. Set to false to restore.
+// Hides Design Audit on older tasks, whose audits still come from the title/role rules below.
+// Tasks with saved AI picks (see getAiPickedAudits) show the Design Audit the AI picked.
 export const HIDE_DESIGN_AUDIT = true;
 
 // Which auditor role (User.roles) audits each item. Mirrors server/src/services/auditAutoAssign.ts.
@@ -74,17 +75,64 @@ export function isAuditorFor(auditText: string, roles: (string | null | undefine
 }
 
 /**
- * Audits the Galaxy AI picked for a task, saved as its Audit checklist with this externalId
- * marker (Nexus-only, never a ClickUp id). Mirrors server/src/utils/auditChecklist.ts.
+ * Audits the AI picked for a task or subtask (every new one gets them), saved as its Audit
+ * checklist with this externalId marker (Nexus-only, never a ClickUp id).
+ * Mirrors server/src/utils/auditChecklist.ts.
  */
 export const isAiAuditChecklist = (c: ChecklistLike | null | undefined) =>
   !!c?.externalId?.startsWith('ai-audit:');
 
-/** The audits the AI picked for this task, or null when it has none (title rules apply). */
-export function getAiPickedAudits(checklists: ChecklistLike[] | null | undefined): string[] | null {
-  const picked = (checklists ?? []).find((c) => !c.subtaskId && isAiAuditChecklist(c) && isNexusAuditChecklist(c));
+/**
+ * The audits the AI picked for this task (no subtaskId) or this subtask, or null when it has
+ * none: an older task, whose audits still come from the title/role rules.
+ */
+export function getAiPickedAudits(
+  checklists: ChecklistLike[] | null | undefined,
+  subtaskId?: string | null,
+): string[] | null {
+  const picked = (checklists ?? []).find(
+    (c) => (subtaskId ? c.subtaskId === subtaskId : !c.subtaskId) && isAiAuditChecklist(c) && isNexusAuditChecklist(c)
+  );
   return picked ? (picked.items ?? []).map((i) => i.text) : null;
 }
+
+/**
+ * Every audit a task (or, with subtaskId, a subtask) must pass: its saved AI picks, or on older
+ * tasks the title/role rules (Design hidden). Audit items saved on it are added, "!"-excluded
+ * ones removed. Mirrors resolveRequiredAudits in server/src/utils/auditChecklist.ts.
+ */
+export function resolveRequiredAudits(opts: {
+  title: string;
+  auditorRoles?: string[];
+  checklists?: ChecklistLike[] | null;
+  subtaskId?: string | null;
+}): string[] {
+  const items = (opts.checklists ?? [])
+    .filter((c) => (opts.subtaskId ? c.subtaskId === opts.subtaskId : !c.subtaskId) && isNexusAuditChecklist(c))
+    .flatMap((c) => c.items ?? []);
+  const excluded = new Set(
+    items
+      .filter((i) => (i.text || '').startsWith('!'))
+      .map((i) => normalizeAuditName((i.text || '').replace(/^!\s*/, '')))
+  );
+  const picked = getAiPickedAudits(opts.checklists, opts.subtaskId);
+  const hideDesign = hidesDesignAudit(picked);
+
+  const seen = new Set<string>();
+  return [
+    ...(picked ? [] : getRequiredAudits(opts.title, opts.auditorRoles)),
+    ...items.map((i) => i.text),
+  ].filter((text) => {
+    const n = normalizeAuditName(text);
+    if (!text || text.startsWith('!') || excluded.has(n) || seen.has(n)) return false;
+    if (hideDesign && n === 'design audit') return false;
+    seen.add(n);
+    return true;
+  });
+}
+
+/** Design Audit stays hidden only on older tasks (no AI pick); an AI pick shows it. */
+export const hidesDesignAudit = (aiPicked: string[] | null) => HIDE_DESIGN_AUDIT && !aiPicked;
 
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): string[] => {
   const audits = new Set<string>();
@@ -178,8 +226,9 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
     .filter((i: any) => !(i.text || '').startsWith('!'))
     .map((i: any) => i.text);
 
-  // Audits the Galaxy AI picked replace the role/title rules (saved items and exclusions still apply).
-  const aiPickedAudits = isSubtask ? null : getAiPickedAudits(task.checklists);
+  // Audits the AI picked replace the role/title rules (saved items and exclusions still apply).
+  const aiPickedAudits = getAiPickedAudits(task.checklists, isSubtask ? task.id : null);
+  const hideDesign = hidesDesignAudit(aiPickedAudits);
   const requiredAuditItems = Array.from(
     new Set([
       ...(aiPickedAudits ? [] : getRequiredAudits(task.title || '', auditorRoles)),
@@ -187,7 +236,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
     ].filter((text, i, all) => {
       const norm = normalizeAuditName(text);
       if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
-      if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
+      if (hideDesign && norm === 'design audit') return false;
       return all.findIndex(t => normalizeAuditName(t) === norm) === i;
     }))
   );

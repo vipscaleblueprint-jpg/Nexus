@@ -18,6 +18,7 @@ import {
   isDesignAudit,
   AuditPermissionCheck,
   normalizeAuditName,
+  HIDE_DESIGN_AUDIT,
 } from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor, isSystemUser } from '@/lib/taskTokens';
@@ -30,7 +31,7 @@ export { getRequiredAudits, ALL_AUDIT_OPTIONS, normalizeAuditName };
 // TEMPORARY TOGGLES: Hidden per user request until process is finalized. Set to false to restore.
 export const HIDE_AUDIT_DELETE = false;
 export const HIDE_ADD_AUDIT = true;
-export const HIDE_DESIGN_AUDIT = true;
+export { HIDE_DESIGN_AUDIT };
 
 const generateTempChecklistId = () => `temp-cl-${Date.now()}`;
 const generateTempItemId = () => `temp-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -480,17 +481,19 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
     .filter(i => !(i.text || '').startsWith('!'))
     .map(i => i.text), [auditChecklists]);
 
-  // Audits the Galaxy AI picked replace the role/title rules
-  const hasAiPickedAudits = !subtaskId && getAiPickedAudits(localChecklists) !== null;
+  // Audits the AI picked (for this task, or this subtask) replace the role/title rules.
+  // Design Audit stays hidden only on older tasks, which have no AI pick.
+  const hasAiPickedAudits = getAiPickedAudits(localChecklists, subtaskId) !== null;
+  const hideDesign = HIDE_DESIGN_AUDIT && !hasAiPickedAudits;
   const requiredAuditItems = useMemo(() => Array.from(new Set([
     ...(hasAiPickedAudits ? [] : getRequiredAudits(title, auditorRoles)),
     ...activeChecklistItems
   ].filter((text, i, all) => {
     const norm = normalizeAuditName(text);
     if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
-    if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
+    if (hideDesign && norm === 'design audit') return false;
     return all.findIndex(t => normalizeAuditName(t) === norm) === i;
-  }))), [title, auditorRoles, activeChecklistItems, excludedAudits, hasAiPickedAudits]);
+  }))), [title, auditorRoles, activeChecklistItems, excludedAudits, hasAiPickedAudits, hideDesign]);
 
   const targetForAudit = useMemo(() => {
     if (!subtaskId) return { ...task, checklists: localChecklists };
@@ -546,9 +549,9 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
 
   const availableAuditsToAdd = useMemo(() => ALL_AUDIT_OPTIONS.filter(option => {
     const norm = normalizeAuditName(option.id);
-    if (HIDE_DESIGN_AUDIT && norm === 'design audit') return false;
+    if (hideDesign && norm === 'design audit') return false;
     return !requiredAuditItems.some(req => normalizeAuditName(req) === norm) || excludedAudits.has(norm);
-  }), [requiredAuditItems, excludedAudits]);
+  }), [requiredAuditItems, excludedAudits, hideDesign]);
 
   const broadcastTaskChecklists = useCallback((updatedLists: Checklist[]) => {
     if (typeof window === 'undefined') return;
@@ -1034,7 +1037,8 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       targetChecklistId = generateTempChecklistId();
     }
 
-    const isNaturallyRequired = getRequiredAudits(title, auditorRoles).some(
+    // With an AI pick, every audit is a saved item; nothing comes from the title rules.
+    const isNaturallyRequired = !hasAiPickedAudits && getRequiredAudits(title, auditorRoles).some(
       a => normalizeAuditName(a) === normAudit
     );
 
@@ -1127,7 +1131,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       console.error('[AuditSection] Failed to add audit:', e);
       toast.error('Failed to add audit to server');
     }
-  }, [canManageAudits, auditChecklists, title, auditorRoles, task.id, subtaskId, onUpdateChecklists, broadcastTaskChecklists]);
+  }, [canManageAudits, auditChecklists, title, auditorRoles, hasAiPickedAudits, task.id, subtaskId, onUpdateChecklists, broadcastTaskChecklists]);
 
   const handleRemoveAudit = useCallback(async (auditText: string) => {
     if (!canManageAudits) return;
@@ -1152,7 +1156,8 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       targetChecklistId = generateTempChecklistId();
     }
 
-    const isNaturallyRequired = getRequiredAudits(title, auditorRoles).some(
+    // With an AI pick, every audit is a saved item; nothing comes from the title rules.
+    const isNaturallyRequired = !hasAiPickedAudits && getRequiredAudits(title, auditorRoles).some(
       a => normalizeAuditName(a) === normAudit
     );
 
@@ -1231,7 +1236,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       console.error('[AuditSection] Failed to remove audit:', e);
       toast.error('Failed to remove audit from server');
     }
-  }, [canManageAudits, highlightedAudits, auditChecklists, title, auditorRoles, task.id, subtaskId, onUpdateChecklists, broadcastTaskChecklists]);
+  }, [canManageAudits, highlightedAudits, auditChecklists, title, auditorRoles, hasAiPickedAudits, task.id, subtaskId, onUpdateChecklists, broadcastTaskChecklists]);
 
   // If no audits are required and user cannot manage audits, hide section entirely
   if (requiredAuditItems.length === 0 && !canManageAudits) return null;

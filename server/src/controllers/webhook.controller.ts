@@ -11,11 +11,10 @@ import { updatePageBlocks } from '../services/pageContentService';
 import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } from '../services/toolsSync';
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
-import { aiAuditExternalId, isReviewStatus } from '../utils/auditChecklist';
+import { isReviewStatus } from '../utils/auditChecklist';
+import { queueAuditPick, saveAuditPicks } from '../services/aiAuditPicker';
 import { autoAssignAudits } from '../services/auditAutoAssign';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
-
-const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 
 
@@ -503,23 +502,12 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     });
 
     // Audits the Galaxy AI picked become the task's Audit items (final: no title rules added).
-    // Nexus-only, so no ClickUp checklist is created or matched for them.
-    const pickedAudits = Array.isArray(audits)
-      ? AUDIT_ITEM_ORDER.filter((a) => a === 'Instructions Audit' || audits.some((p: any) => String(p).trim().toLowerCase() === a.toLowerCase()))
-      : [];
-    if (pickedAudits.length > 0) {
-      try {
-        await prisma.checklist.create({
-          data: {
-            taskId: newTask.id,
-            name: 'Audit',
-            externalId: aiAuditExternalId(newTask.id),
-            items: { create: pickedAudits.map((text) => ({ text })) },
-          },
-        });
-      } catch (err) {
-        console.error('Failed to save AI-picked audits:', err);
-      }
+    // Nexus-only, so no ClickUp checklist is created or matched for them. When Galaxy sent
+    // none (its AI step failed), ask the AI here.
+    if (Array.isArray(audits) && audits.length > 0) {
+      await saveAuditPicks({ taskId: newTask.id }, audits);
+    } else {
+      queueAuditPick({ taskId: newTask.id });
     }
 
 
@@ -935,6 +923,14 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     await injectSubtaskIntoJournal(parentTask.id, { id: subtask.id, title: subtask.title });
 
     io.emit('subtask_created', subtask);
+
+    // The subtask's own audits: the ones Galaxy's AI picked, else ask the AI here.
+    const pickedAudits = req.body.audits;
+    if (Array.isArray(pickedAudits) && pickedAudits.length > 0) {
+      await saveAuditPicks({ taskId: parentTask.id, subtaskId: subtask.id }, pickedAudits);
+    } else {
+      queueAuditPick({ taskId: parentTask.id, subtaskId: subtask.id });
+    }
 
     // An "--Audit" subtask can add a required audit to its parent
     if (auditorRole || (subtask.title || '').trim().toLowerCase().startsWith('--audit')) {

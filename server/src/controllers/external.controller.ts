@@ -28,6 +28,7 @@ import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../ut
 import { syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus } from '../services/taskMapService';
 import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmFollowUpService';
 import { getTaskMoverAndUpdaters } from './task.controller';
+import { queueAuditPick } from '../services/aiAuditPicker';
 
 
 async function getOrCreateVipScaleUser() {
@@ -713,6 +714,7 @@ export async function createTask(req: Request, res: Response) {
     if (!req.body.skipAutoAudit && isReviewStatus(task.status)) {
       await autoAssignAudits(task.id, vipScaleUser.id).catch((err) => console.error('External task: audit auto-assign failed:', err));
     }
+    if (!req.body.skipAutoAudit) queueAuditPick({ taskId: task.id });
 
     try {
       const doc = await prisma.doc.findFirst({ where: { isDailyRollover: true } });
@@ -1666,6 +1668,7 @@ export async function createSubtask(req: Request, res: Response) {
         assigneeId: assigneeId || undefined,
       }
     });
+    queueAuditPick({ taskId: task.id, subtaskId: subtask.id });
 
     injectSubtaskIntoJournal(task.id, { id: subtask.id, title: subtask.title }).catch((error) => {
       console.error('Failed to inject subtask into Priorities Journal:', error);

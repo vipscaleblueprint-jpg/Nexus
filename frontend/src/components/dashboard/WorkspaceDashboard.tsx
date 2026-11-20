@@ -777,7 +777,7 @@ function WorkspaceDashboardContent({
     tasksApi
       .getMyAudits()
       .then((res) => setMyAudits(
-        (res.audits || []).filter((a) => !(a as any).completed && !(HIDE_DESIGN_AUDIT && normalizeAuditName(a.text) === "design audit")),
+        (res.audits || []).filter((a) => !(a as any).completed && !(HIDE_DESIGN_AUDIT && !a.aiPicked && normalizeAuditName(a.text) === "design audit")),
       ))
       .catch((err) => console.error("Failed to load my audits:", err));
   }, [currentTab]);

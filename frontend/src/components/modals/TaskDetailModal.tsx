@@ -5847,9 +5847,9 @@ export function TaskDetailModalContent({
                             <ComposerSendButton
                               onClick={handleAddComment}
                               disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
-                              title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                              title={isUploadingInline ? 'Uploading image...' : 'Send comment (Enter to send, Shift+Enter for new line)'}
                             >
-                              {isSubmittingComment ? 'Sendingâ€¦' : 'Send'}
+                              {isSubmittingComment ? 'Sending…' : 'Send'}
                             </ComposerSendButton>
                           </div>
                         }
@@ -10339,7 +10339,7 @@ export function SubtaskDetailView({
                           <ComposerSendButton
                             onClick={handleAddComment}
                             disabled={(isBlankCommentHtml(comment) && stagedFiles.length === 0) || isUploading || isUploadingInline || isSubmittingComment}
-                            title={isUploadingInline ? 'Uploading image...' : 'Send comment'}
+                            title={isUploadingInline ? 'Uploading image...' : 'Send comment (Enter to send, Shift+Enter for new line)'}
                           >
                             {isSubmittingComment ? 'Sending…' : 'Send'}
                           </ComposerSendButton>

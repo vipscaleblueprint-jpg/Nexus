@@ -72,6 +72,7 @@ ComposerToolButton.displayName = 'ComposerToolButton';
 export const ComposerSendButton = ({ className = '', children = 'Send', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
   <button
     type="button"
+    title={props.title || "Send (Enter to send, Shift+Enter for new line)"}
     {...props}
     // on-solid keeps text-white white in light mode (the theme remaps it to dark text elsewhere)
     className={`on-solid flex h-7 items-center gap-1.5 rounded-lg bg-gradient-to-b from-indigo-500 to-indigo-600 pl-2.5 pr-3 text-[12px] font-medium text-white shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_2px_8px_-2px_rgba(99,102,241,0.6)] transition-all hover:from-indigo-400 hover:to-indigo-500 active:scale-[0.97] disabled:pointer-events-none disabled:from-zinc-800 disabled:to-zinc-800 disabled:text-zinc-500 disabled:shadow-none cursor-pointer ${className}`}
@@ -757,7 +758,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleWrapperDrop}
-      className={`group/composer relative w-full rounded-xl border ${isDraggingOver ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/50 hover:border-zinc-600/60'} bg-zinc-900/60 ${compact ? 'py-2 pr-2 pl-5.5 text-[13px]' : 'py-3 pr-3 pl-7 text-sm'} shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar`}
+      className={`group/composer @container relative w-full rounded-xl border ${isDraggingOver ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700/50 hover:border-zinc-600/60'} bg-zinc-900/60 ${compact ? 'py-2 pr-2 pl-5.5 text-[13px]' : 'py-3 pr-3 pl-7 text-sm'} shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-all duration-200 focus-within:border-indigo-500/50 focus-within:bg-zinc-900/90 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.12),0_8px_24px_-12px_rgba(0,0,0,0.6)] custom-scrollbar`}
     >
       {isDraggingOver && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl bg-zinc-950/90 backdrop-blur-sm border-2 border-dashed border-indigo-500 shadow-[0_0_24px_rgba(99,102,241,0.35)] transition-all pointer-events-none animate-in fade-in zoom-in-95 duration-150">
@@ -942,55 +943,57 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       `}</style>
       <div><EditorContent editor={editor} /></div>
       {(footer || footerEnd) && (
-        <div className={`${compact ? '-mr-0.5 -mb-0.5 mt-1.5 flex flex-wrap items-center gap-x-0.5 gap-y-1.5 pt-1 border-t border-zinc-800/60' : '-mr-1 -mb-1 mt-2 flex flex-wrap items-center gap-x-0.5 gap-y-1.5 pt-1.5 min-w-0'}`}>
-          <ComposerToolButton
-            onClick={insertMentionTrigger}
-            disabled={disabled}
-            title="Mention someone (@)"
-            className={compact ? '!h-6 !w-6' : ''}
-          >
-            <AtSign className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-          </ComposerToolButton>
-          {footer}
-          <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'}`} />
-          <ComposerToolButton
-            onClick={() => editor.chain().focus().outdent().run()}
-            disabled={disabled}
-            title={`Decrease indent (${SHORTCUT_OUTDENT})`}
-            className={compact ? '!h-6 !w-6' : ''}
-          >
-            <IndentDecrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-          </ComposerToolButton>
-          <ComposerToolButton
-            onClick={() => editor.chain().focus().indent().run()}
-            disabled={disabled}
-            title={`Increase indent (${SHORTCUT_INDENT})`}
-            className={compact ? '!h-6 !w-6' : ''}
-          >
-            <IndentIncrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-          </ComposerToolButton>
-          <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'}`} />
-          <ComposerToolButton
-            onClick={() => editor.chain().focus().toggleTaskList().run()}
-            disabled={disabled}
-            title="Checklist"
-            className={`${compact ? '!h-6 !w-6' : ''} ${editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : ''}`}
-          >
-            <CheckSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-          </ComposerToolButton>
-          {onOpenCrmFollowUp && (
+        <div className={`${compact ? '-mr-0.5 -mb-0.5 mt-1.5 flex items-center justify-between gap-1 pt-1 border-t border-zinc-800/60' : '-mr-1 -mb-1 mt-2 flex items-center justify-between gap-1.5 pt-1.5 min-w-0'}`}>
+          <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto no-scrollbar py-0.5">
             <ComposerToolButton
-              onClick={onOpenCrmFollowUp}
+              onClick={insertMentionTrigger}
               disabled={disabled}
-              title="CRM Follow-Up (/crm) — Log follow-up & count waiting from this log"
-              className={`${compact ? '!h-6 !px-1.5 !w-auto text-[10px]' : '!px-1.5 !w-auto text-[10.5px]'} font-semibold tracking-tight text-cyan-600 dark:text-cyan-400/90 hover:text-cyan-700 dark:hover:text-cyan-300 hover:bg-cyan-500/10`}
+              title="Mention someone (@)"
+              className={compact ? '!h-6 !w-6' : ''}
             >
-              CRM
+              <AtSign className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
             </ComposerToolButton>
-          )}
-          <div className={`ml-auto flex items-center shrink-0 ${compact ? 'gap-1' : 'gap-2.5'}`}>
+            {footer}
+            <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'} shrink-0`} />
+            <ComposerToolButton
+              onClick={() => editor.chain().focus().outdent().run()}
+              disabled={disabled}
+              title={`Decrease indent (${SHORTCUT_OUTDENT})`}
+              className={compact ? '!h-6 !w-6' : ''}
+            >
+              <IndentDecrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+            </ComposerToolButton>
+            <ComposerToolButton
+              onClick={() => editor.chain().focus().indent().run()}
+              disabled={disabled}
+              title={`Increase indent (${SHORTCUT_INDENT})`}
+              className={compact ? '!h-6 !w-6' : ''}
+            >
+              <IndentIncrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+            </ComposerToolButton>
+            <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'} shrink-0`} />
+            <ComposerToolButton
+              onClick={() => editor.chain().focus().toggleTaskList().run()}
+              disabled={disabled}
+              title="Checklist"
+              className={`${compact ? '!h-6 !w-6' : ''} ${editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : ''}`}
+            >
+              <CheckSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+            </ComposerToolButton>
+            {onOpenCrmFollowUp && (
+              <ComposerToolButton
+                onClick={onOpenCrmFollowUp}
+                disabled={disabled}
+                title="CRM Follow-Up (/crm) — Log follow-up & count waiting from this log"
+                className={`${compact ? '!h-6 !px-1.5 !w-auto text-[10px]' : '!px-1.5 !w-auto text-[10.5px]'} font-semibold tracking-tight text-cyan-600 dark:text-cyan-400/90 hover:text-cyan-700 dark:hover:text-cyan-300 hover:bg-cyan-500/10 shrink-0`}
+              >
+                CRM
+              </ComposerToolButton>
+            )}
+          </div>
+          <div className={`ml-auto flex items-center shrink-0 ${compact ? 'gap-1' : 'gap-2'}`}>
             {onSubmit && !compact && (
-              <span className="hidden items-center gap-1 text-[10.5px] text-zinc-500 opacity-0 transition-opacity group-focus-within/composer:opacity-100 sm:flex">
+              <span className="hidden @[480px]:group-focus-within/composer:inline-flex items-center gap-1 text-[10.5px] text-zinc-500 transition-opacity">
                 <kbd className={KBD_CLASS}>⏎</kbd> send
                 <span className="mx-0.5 text-zinc-700">·</span>
                 <kbd className={KBD_CLASS}>⇧ ⏎</kbd> new line

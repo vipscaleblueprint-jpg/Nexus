@@ -1325,7 +1325,8 @@ export const TaskMapContainer: React.FC = () => {
   const handleAssignTask = async (
     taskId: string,
     targetUserId: string | null,
-    mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
+    mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
+    assigneeRoleRestrictions?: string[]
   ) => {
     const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
     if (!currentTask) return;
@@ -1340,7 +1341,7 @@ export const TaskMapContainer: React.FC = () => {
         }
       : null;
 
-    const optimisticTask = applyOptimisticTaskMapAssignment(currentTask, targetUser, mode);
+    const optimisticTask = applyOptimisticTaskMapAssignment(currentTask, targetUser, mode, assigneeRoleRestrictions);
     pendingAssignRef.current.set(taskId, {
       task: optimisticTask,
       targetUserId,
@@ -1407,7 +1408,12 @@ export const TaskMapContainer: React.FC = () => {
 
     // 2. Persist to backend via taskMapApi.assignTask (which automatically tracks saving state in taskMap.ts)
     try {
-      await taskMapApi.assignTask(taskId, targetUserId, mode);
+      await taskMapApi.assignTask(
+        taskId,
+        targetUserId,
+        mode,
+        assigneeRoleRestrictions ? { assigneeRoleRestrictions } : undefined
+      );
       setTimeout(() => {
         pendingAssignRef.current.delete(taskId);
         displacedIds.forEach((dId) => pendingAssignRef.current.delete(dId));

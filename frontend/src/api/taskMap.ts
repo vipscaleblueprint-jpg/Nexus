@@ -530,8 +530,9 @@ export function applyLiveWorkingTaskStatus(task: TaskMapItem): TaskMapItem {
  */
 export function applyOptimisticTaskMapAssignment(
   task: TaskMapItem,
-  targetUser: { id: string; name?: string; email?: string; avatarUrl?: string | null; roles?: string[] } | null,
-  mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
+  targetUser: { id: string; name?: string; email?: string; avatarUrl?: string | null; roles?: string[]; teamId?: string | null; team?: any } | null,
+  mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
+  assigneeRoleRestrictions?: string[]
 ): TaskMapItem {
   const existingReviews = parseTaskPmReviewsList(task);
   const filteredReviews = existingReviews.filter((r: any) => {
@@ -638,8 +639,20 @@ export function applyOptimisticTaskMapAssignment(
         }
         : null;
 
+  let nextRoleRestrictions = Array.isArray(assigneeRoleRestrictions)
+    ? assigneeRoleRestrictions
+    : task.assigneeRoleRestrictions ? [...task.assigneeRoleRestrictions] : [];
+
+  if (targetUser && !Array.isArray(assigneeRoleRestrictions)) {
+    const specifiedRole = (targetUser as any)?.specifiedRole || targetUser.roles?.[0] || targetUser.team?.name;
+    if (specifiedRole && !nextRoleRestrictions.some((r) => r.toLowerCase().trim() === specifiedRole.toLowerCase().trim())) {
+      nextRoleRestrictions = [...nextRoleRestrictions, specifiedRole];
+    }
+  }
+
   return {
     ...task,
+    assigneeRoleRestrictions: nextRoleRestrictions,
     assigneeId: targetUser.id,
     assignee: nextAssigneeObj,
     assignees: nextAssignees,
@@ -847,13 +860,14 @@ export const taskMapApi = {
   assignTask: async (
     taskId: string,
     assigneeId: string | null,
-    mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE'
+    mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
+    options?: { assigneeRoleRestrictions?: string[]; role?: string }
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
       return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/assign`, {
         method: 'PATCH',
-        body: JSON.stringify({ assigneeId, mode }),
+        body: JSON.stringify({ assigneeId, mode, ...options }),
       });
     } finally {
       markTaskSavingToDb(taskId, false);
@@ -862,13 +876,14 @@ export const taskMapApi = {
 
   transferTask: async (
     taskId: string,
-    targetUserId: string
+    targetUserId: string,
+    options?: { assigneeRoleRestrictions?: string[]; role?: string }
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
       return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/transfer`, {
         method: 'POST',
-        body: JSON.stringify({ targetUserId }),
+        body: JSON.stringify({ targetUserId, ...options }),
       });
     } finally {
       markTaskSavingToDb(taskId, false);

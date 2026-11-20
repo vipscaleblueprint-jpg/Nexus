@@ -2127,6 +2127,8 @@ async function executeTaskMapAssignment(
     action: TaskMapMoveAction;
     assigneeId: string | null;
     mode: TaskMapMoveMode;
+    assigneeRoleRestrictions?: string[];
+    role?: string;
   }
 ) {
   try {
@@ -2242,6 +2244,15 @@ async function executeTaskMapAssignment(
         }
         updateSubData.assigneeId = assigneeId;
         updateSubData.assignees = { set: [{ id: assigneeId }] };
+        if (Array.isArray(params.assigneeRoleRestrictions)) {
+          updateSubData.assigneeRoleRestrictions = params.assigneeRoleRestrictions;
+        } else {
+          const targetRole = params.role || targetUser.roles?.[0];
+          const existingRestrictions = currentSubtask.assigneeRoleRestrictions || [];
+          if (targetRole && !existingRestrictions.some((r: string) => r.toLowerCase().trim() === targetRole.toLowerCase().trim())) {
+            updateSubData.assigneeRoleRestrictions = [...existingRestrictions, targetRole];
+          }
+        }
         if (mode === 'IN_PROGRESS' && !isCadenceSubtask) {
           updateSubData.status = 'IN PROGRESS';
         } else if (mode === 'QUEUE' && !isCadenceSubtask && (isCurrentlyInProgressOrHold || !currentSubtask.status)) {
@@ -2583,6 +2594,15 @@ async function executeTaskMapAssignment(
 
       updateData.assigneeId = assigneeId;
       updateData.assignees = { set: [{ id: assigneeId }] };
+      if (Array.isArray(params.assigneeRoleRestrictions)) {
+        updateData.assigneeRoleRestrictions = params.assigneeRoleRestrictions;
+      } else {
+        const targetRole = params.role || targetUser.roles?.[0];
+        const existingRestrictions = currentTask.assigneeRoleRestrictions || [];
+        if (targetRole && !existingRestrictions.some((r: string) => r.toLowerCase().trim() === targetRole.toLowerCase().trim())) {
+          updateData.assigneeRoleRestrictions = [...existingRestrictions, targetRole];
+        }
+      }
       if (mode === 'IN_PROGRESS' && !isCadenceTask) {
         const listStatus = currentTask.listId
           ? await prisma.listStatus.findFirst({
@@ -2889,22 +2909,26 @@ async function executeTaskMapAssignment(
 }
 
 export const assignTaskMapTask = async (req: Request, res: Response) => {
-  const { assigneeId = null, mode = 'QUEUE' } = req.body || {};
+  const { assigneeId = null, mode = 'QUEUE', assigneeRoleRestrictions, role } = req.body || {};
   const normalizedMode: TaskMapMoveMode = mode === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'QUEUE';
   return executeTaskMapAssignment(req, res, {
     action: 'ASSIGN',
     assigneeId: assigneeId || null,
     mode: normalizedMode,
+    assigneeRoleRestrictions,
+    role,
   });
 };
 
 export const transferTaskMapTask = async (req: Request, res: Response) => {
-  const { targetUserId, assigneeId } = req.body || {};
+  const { targetUserId, assigneeId, assigneeRoleRestrictions, role } = req.body || {};
   const resolvedTargetId = targetUserId ?? assigneeId ?? null;
   return executeTaskMapAssignment(req, res, {
     action: 'TRANSFER',
     assigneeId: resolvedTargetId,
     mode: 'QUEUE',
+    assigneeRoleRestrictions,
+    role,
   });
 };
 

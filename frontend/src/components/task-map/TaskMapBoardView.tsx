@@ -4,6 +4,7 @@ import {
   TaskMapItem,
   TaskMapOption,
   taskMapApi,
+  getUserRoleDefinition,
   createEmptyUserBlock,
   hasUiUxOrDesignAudit,
   isProjectBasedUpwork,
@@ -144,7 +145,7 @@ interface Props {
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
-  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE') => Promise<void> | void;
+  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[]) => Promise<void> | void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   isHistory?: boolean;
   search?: string;
@@ -1051,6 +1052,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
   const workspaceTeams = useAppStore((s) => s.workspaceTeams) || [];
+  const workspaceRoles = useAppStore((s) => s.workspaceRoles) || [];
   const upworkClients = useAppStore((s) => s.upworkClients);
   const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
   const maActiveSessions = useAppStore((s) => s.maActiveSessions);
@@ -1919,31 +1921,30 @@ export const TaskMapBoardView: React.FC<Props> = ({
     setActiveOverId(null);
   };
 
-  // Validate role restrictions dynamically against DB user roles + team roles.
-  // If no active user or team in DB (or none in the current shift for PMs) holds the required role
-  // (e.g. assigning an MA to a "Design" task when no Design team exists), allow assignment cleanly.
-  const canAssignUserToTask = (task: TaskMapItem | null | undefined, targetUser: any): boolean => {
-    const roleRestrictions = (task as any)?.assigneeRoleRestrictions as string[] | undefined;
-    if (!roleRestrictions || roleRestrictions.length === 0) return true;
+  // Dynamically resolve and ensure role restrictions for the assigned user:
+  // When a user is assigned (e.g. dragged to Nyrry), immediately add their specified role
+  // (role first) to the task's assigneeRoleRestrictions so role matching is seamless and never blocked.
+  const getResolvedRoleRestrictionsForUser = (task: TaskMapItem | null | undefined, targetUser: any): string[] => {
+    const existingRoles: string[] = Array.isArray((task as any)?.assigneeRoleRestrictions)
+      ? [...(task as any).assigneeRoleRestrictions]
+      : [];
+    if (!targetUser) return existingRoles;
 
-    const directMatch = resolveUsersFromRoleRestrictions(roleRestrictions, [targetUser], workspaceTeams);
-    if (directMatch.length > 0) return true;
-
-    const workspaceMatches = resolveUsersFromRoleRestrictions(roleRestrictions, allUsers, workspaceTeams);
-    if (workspaceMatches.length === 0) {
-      return true;
+    const directMatch = resolveUsersFromRoleRestrictions(existingRoles, [targetUser], workspaceTeams);
+    if (directMatch.length > 0) {
+      return existingRoles;
     }
 
-    const activePoolUsers = shiftUsers.length > 0 ? shiftUsers : allUsers;
-    const shiftMatches = resolveUsersFromRoleRestrictions(roleRestrictions, activePoolUsers, workspaceTeams);
-    if (isPmUser && shiftMatches.length === 0) {
-      return true;
+    const roleDef = getUserRoleDefinition(targetUser, workspaceTeams, workspaceRoles);
+    const targetRole = roleDef?.mainRole || (targetUser.roles && targetUser.roles[0]) || targetUser.team?.name;
+    if (targetRole && !existingRoles.some((r) => r.toLowerCase().trim() === targetRole.toLowerCase().trim())) {
+      return [...existingRoles, targetRole];
     }
+    return existingRoles;
+  };
 
-    toast.error(
-      `${targetUser?.name || 'This user'} does not have a matching role (${roleRestrictions.join(', ')}) for this task`
-    );
-    return false;
+  const canAssignUserToTask = (_task: TaskMapItem | null | undefined, _targetUser: any): boolean => {
+    return true;
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -1985,27 +1986,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('in-progress-', '');
       const targetUser = getUserProfile(targetUserId);
 
-      if (!canAssignUserToTask(currentTask, targetUser)) {
-        return;
-      }
-
       // If already assigned to this user and already active in progress, no-op!
       if (currentAssigneeId === targetUserId && isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
         return;
       }
 
+      const nextRoles = getResolvedRoleRestrictionsForUser(currentTask, targetUser);
       const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((currentTask?.status || '').toUpperCase().trim());
       toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
       try {
         if (onAssignTask) {
-          await onAssignTask(taskId, targetUserId, 'IN_PROGRESS');
+          await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
         } else {
           const nextStatus = isCadence ? toCanonicalTaskStatus(currentTask!.status) : 'IN PROGRESS';
-          await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
+          await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
           if (onTaskUpdate) {
-            await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
+            await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
           } else {
-            await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
+            await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
           }
           onDataRefresh();
         }
@@ -2020,21 +2018,23 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('user-', '');
       const targetUser = getUserProfile(targetUserId);
 
-      if (!canAssignUserToTask(currentTask, targetUser)) {
-        return;
-      }
-
       // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
       if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId) && !isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
         return;
       }
 
+      const nextRoles = getResolvedRoleRestrictionsForUser(currentTask, targetUser);
       toast.success(`Task queued for ${targetUser?.name || 'user'}`);
       try {
         if (onAssignTask) {
-          await onAssignTask(taskId, targetUserId, 'QUEUE');
+          await onAssignTask(taskId, targetUserId, 'QUEUE', nextRoles);
         } else {
-          await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE');
+          await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE', { assigneeRoleRestrictions: nextRoles });
+          if (onTaskUpdate) {
+            await onTaskUpdate(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
+          } else {
+            await tasksApi.updateTask(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+          }
           onDataRefresh();
         }
       } catch (err: any) {
@@ -2066,21 +2066,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
     const targetUser = getUserProfile(targetUserId);
     const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
-    if (!canAssignUserToTask(existingTask, targetUser)) {
-      return;
-    }
+    const nextRoles = getResolvedRoleRestrictionsForUser(existingTask, targetUser);
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
     toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
     try {
       if (onAssignTask) {
-        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS');
+        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
       } else {
         const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask!.status) : 'IN PROGRESS';
-        await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS');
+        await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
         if (onTaskUpdate) {
-          await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId });
+          await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
         } else {
-          await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId } as any).catch(console.error);
+          await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
         }
         onDataRefresh();
       }
@@ -2095,15 +2093,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return;
     }
     const targetUser = getUserProfile(targetUserId);
-    if (!canAssignUserToTask(task, targetUser)) {
-      return;
-    }
+    const nextRoles = getResolvedRoleRestrictionsForUser(task, targetUser);
     toast.success(`Task transferred to ${targetUser?.name || 'MA'}'s To Do`);
     try {
       if (onTransferTask) {
         await onTransferTask(task.id, targetUserId);
       } else {
-        await taskMapApi.transferTask(task.id, targetUserId);
+        await taskMapApi.transferTask(task.id, targetUserId, { assigneeRoleRestrictions: nextRoles });
+        if (onTaskUpdate) {
+          await onTaskUpdate(task.id, { assigneeRoleRestrictions: nextRoles });
+        }
         onDataRefresh();
       }
     } catch (err: any) {
@@ -2292,13 +2291,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return;
     }
 
-    // 4. To Review: changes main status to IN REVIEW (if UI UX/Design audit present) or CHECKING (if no UI UX/Design audit)
+    // 4. To Review: changes main status to IN REVIEW
     // and removes from MA/PM column so it moves to the Auditor Map tab
     if (norm === 'to review' || norm === 'to_review') {
       const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
       if (isSelecting) {
-        const hasL1 = hasUiUxOrDesignAudit(task);
-        const targetStatus = hasL1 ? 'IN REVIEW' : 'CHECKING';
+        const targetStatus = 'IN REVIEW';
         if (ownerId) {
           setRecentlyMovedToReviewByUser((prev) => {
             const existing = prev[ownerId] || [];
@@ -2751,7 +2749,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   onSelect={(newStatus: string) => {
                                     let effectiveStatus = newStatus;
                                     if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                      effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                      effectiveStatus = 'In Review';
                                     }
                                     if (onTaskUpdate) {
                                       onTaskUpdate(task.id, { status: effectiveStatus });
@@ -3407,7 +3405,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 onSelect={(newStatus: string) => {
                                   let effectiveStatus = newStatus;
                                   if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                    effectiveStatus = hasUiUxOrDesignAudit(task) ? 'In Review' : 'Checking';
+                                    effectiveStatus = 'In Review';
                                     setRecentlyMovedToReviewByUser((prev) => {
                                       const existing = prev[userId] || [];
                                       if (existing.some((t) => t.id === task.id)) return prev;

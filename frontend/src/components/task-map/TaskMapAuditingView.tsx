@@ -673,7 +673,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       toast.info('Task moved to General Review queue');
       onStatusChange(taskId, updatedStatuses);
 
-      const targetStatus = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
+      const targetStatus = 'IN REVIEW';
       if (onTaskUpdate) {
         await onTaskUpdate(taskId, { assigneeId: null, status: targetStatus });
       } else {
@@ -1323,7 +1323,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                         toast.success('Task marked Ready to Send — transferred to CRM Map');
                                       } else {
                                         // User pressed 'Ready to Send' AGAIN in Auditing -> revert back to last status
-                                        const defaultRev = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
+                                        const defaultRev = 'IN REVIEW';
                                         const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
@@ -1353,7 +1353,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                         }
                                         toast.warning('Task marked for Revision — returned to original MA on Task Map');
                                       } else {
-                                        const defaultRev = hasUiUxOrDesignAudit(task) ? 'IN REVIEW' : 'CHECKING';
+                                        const defaultRev = 'IN REVIEW';
                                         const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {

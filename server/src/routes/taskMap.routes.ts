@@ -31,6 +31,7 @@ import {
   verifyClientOtpHandler,
   getClientLockStatusHandler,
 } from '../controllers/taskMap.controller';
+import { previewAutoQueueHandler } from '../controllers/autoQueue.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
 export const taskMapRouter = Router();
@@ -58,6 +59,7 @@ taskMapRouter.patch('/tasks/:id/assign', assignTaskMapTask);
 taskMapRouter.post('/tasks/:id/transfer', transferTaskMapTask);
 taskMapRouter.post('/columns/:columnId/reset', resetColumnTasksHandler);
 taskMapRouter.post('/tasks/:id/pm-review', handlePmReviewAction);
+taskMapRouter.post('/auto-queue/preview', previewAutoQueueHandler);
 taskMapRouter.post('/rollover', runRollover);
 taskMapRouter.post('/daily-rollover', runDailyRollover);
 taskMapRouter.get('/history-dates', getHistoryDates);

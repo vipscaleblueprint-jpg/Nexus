@@ -121,6 +121,12 @@ export const TaskMapTimelineDrawer: React.FC<Props> = ({ task, onClose }) => {
               } else if (log.action === 'TASK_MAP_CLAIM') {
                 icon = <User className="size-3 text-sky-400" />;
                 title = `Task claimed by ${log.details?.claimedBy || 'User'}`;
+              } else if (log.action === 'AUTO_QUEUE') {
+                icon = <User className="size-3 text-violet-400" />;
+                title = `Auto-queued to ${log.details?.assigneeName || 'MA'}`;
+                description = log.details?.reason
+                  ? `${log.details.method === 'ai' ? 'AI' : 'Rule'}: ${log.details.reason}`
+                  : undefined;
               }
 
               return (

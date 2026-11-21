@@ -38,6 +38,8 @@ import { dailyRolloverQueue } from './queues/dailyRollover.queue';
 import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TASK_MAP_DAILY_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB, LAUNCH_REVIEW_SWEEP_JOB, CRM_FOLLOW_UP_SWEEP_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
+import { autoQueueQueue } from './queues/autoQueue.queue';
+import { AUTO_QUEUE_JOB } from './workers/autoQueue.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 
 const app = express();
@@ -116,6 +118,12 @@ const server = http.createServer(app);
     jobId: 'crm-follow-up-sweep-catch-up',
     attempts: 1,
     removeOnFail: 50,
+  });
+
+  // Task Map auto-queue (Available tasks -> on-shift MAs), every 5 minutes. No-op unless AUTO_QUEUE_MODE is set.
+  await autoQueueQueue.add(AUTO_QUEUE_JOB, {}, {
+    repeat: { every: 5 * 60 * 1000 },
+    jobId: 'task-map-auto-queue',
   });
 
   // Safety net for the journal auto-append (appendMissingTasksToJournal), every 5 minutes. Kept in Redis, so a

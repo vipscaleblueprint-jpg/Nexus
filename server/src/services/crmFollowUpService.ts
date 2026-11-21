@@ -1056,7 +1056,7 @@ export async function respondToCrmFollowUp(params: {
   } else if (action === 'MOVE_TO_POOL') {
     actionLabel = 'Returned to CRM Pool';
     nextTaskStatus = 'CRM';
-    nextSubStatuses = ['To send'];
+    nextSubStatuses = ['Ready to Send'];
     clearAssignee = true;
     nextHandedOver = false;
     reviewsList = reviewsList.filter(

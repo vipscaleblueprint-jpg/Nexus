@@ -18,7 +18,7 @@ export function getManilaDateString(date: Date = new Date()): string {
 export function isUserProjectManagerOrAdmin(user: { systemRole?: string; roles?: string[] } | null | undefined): boolean {
   if (!user) return false;
   if (user.systemRole === 'ADMIN') return true;
-  const pmPattern = /project\s*manager|\bpm\b|\bsenior\b|lead/i;
+  const pmPattern = /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)|lead/i;
   return (user.roles || []).some((r) => pmPattern.test((r || '').trim()));
 }
 
@@ -126,11 +126,13 @@ export async function notifyAdminsOfClientOtpUnlock({
   clientName,
   maName,
   sheet,
+  maUserId,
 }: {
   pm: { id: string; name: string; email?: string };
   clientName: string;
   maName: string;
   sheet?: string | null;
+  maUserId?: string | null;
 }): Promise<void> {
   try {
     const allUsers = await prisma.user.findMany({
@@ -143,9 +145,14 @@ export async function notifyAdminsOfClientOtpUnlock({
       const sysRole = (u.systemRole || '').trim();
       const roles = u.roles || [];
       const isAdmin = /admin/i.test(sysRole) || roles.some((r) => /admin/i.test((r || '').trim()));
-      const isPm = /project\s*manager|\bpm\b|\bsenior\b|lead/i.test(sysRole) || roles.some((r) => /project\s*manager|\bpm\b|\bsenior\b|lead/i.test((r || '').trim()));
+      const isPm = /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)|lead/i.test(sysRole) || roles.some((r) => /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)|lead/i.test((r || '').trim()));
       return isAdmin || isPm;
     });
+
+    const recipientIds = new Set(recipients.map((r) => r.id));
+    if (maUserId && !recipientIds.has(maUserId)) {
+      recipients.push({ id: maUserId, systemRole: 'MEMBER', roles: [] });
+    }
 
     if (recipients.length === 0) return;
 

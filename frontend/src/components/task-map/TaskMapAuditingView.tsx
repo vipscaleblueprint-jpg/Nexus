@@ -245,7 +245,7 @@ const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: 
   const liveClockNow = useLiveClock(isCountingLive && !propNow);
   const now = propNow || liveClockNow;
 
-  if (prog?.isMissingTime) {
+  if (prog?.isMissingTime && !isTaskHandedOver(task)) {
     return (
       <div
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-400 font-bold text-[10px] shadow-xs select-none"
@@ -831,6 +831,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
   const sortedAuditorCols = [...auditorCols]
     .filter((col) => {
+      if (isCurrentViewer(col.auditorUser)) return true;
       if (!cleanSearch) return true;
       return isAuditorSearchMatch(col.auditorUser);
     })

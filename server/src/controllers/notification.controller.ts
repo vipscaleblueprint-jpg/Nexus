@@ -35,6 +35,8 @@ export async function getNotifications(req: Request, res: Response) {
       { type: { equals: 'CHECKLIST_ITEM_ASSIGNED', mode: 'insensitive' } },
       { type: { equals: 'LAUNCH_REVIEW_ALERT', mode: 'insensitive' } },
       { type: { equals: 'CRM_FOLLOW_UP_ALERT', mode: 'insensitive' } },
+      { type: { equals: 'CLIENT_OVERHOURS_OTP_UNLOCK', mode: 'insensitive' } },
+      { type: { equals: 'OVERTIME_OTP_UNLOCK', mode: 'insensitive' } },
       { title: { contains: 'You were assigned', mode: 'insensitive' } },
       { title: { contains: 'replied to your comment', mode: 'insensitive' } },
       { title: { contains: 'reacted', mode: 'insensitive' } },

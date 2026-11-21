@@ -365,7 +365,16 @@ export function isTaskHandedOver(task?: TaskMapItem | null): boolean {
   if (!task) return false;
   if (task.taskMap?.handedOver) return true;
   const statuses = task.taskMap?.statuses || [];
-  return statuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+  return statuses.some((s) => {
+    const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+    return norm === 'HANDOVER' || norm === 'AVAILABLETASK';
+  });
+}
+
+export function isTaskMissingTime(task?: TaskMapItem | null): boolean {
+  if (!task?.progress?.isMissingTime) return false;
+  if (isTaskHandedOver(task)) return false;
+  return true;
 }
 
 export function getEffectiveTaskMapHandlerId(task?: TaskMapItem | null): string | null {
@@ -498,6 +507,18 @@ export function isLiveWorkingProgress(progress?: TaskProgress | null): boolean {
  * (Daily, Weekly, Monthly, Recurring) strictly preserve their cadence status.
  */
 export function applyLiveWorkingTaskStatus(task: TaskMapItem): TaskMapItem {
+  if (isTaskHandedOver(task)) {
+    if (task.progress?.isMissingTime) {
+      return {
+        ...task,
+        progress: {
+          ...task.progress,
+          isMissingTime: false,
+        },
+      };
+    }
+    return task;
+  }
   if (!isLiveWorkingProgress(task.progress)) return task;
   if (isCadenceTaskMapItem(task)) return task;
 
@@ -556,6 +577,7 @@ export function applyOptimisticTaskMapAssignment(
           ...task.progress,
           timeIn: null,
           timeOut: task.progress.timeOut || (task.progress.timeIn ? 'HandedOver' : null),
+          isMissingTime: false,
         }
         : null,
       taskMap: {
@@ -969,8 +991,19 @@ export const taskMapApi = {
     });
   },
 
-  getMyDailyOtp: async (): Promise<{ isPm: boolean; otp: string | null; date?: string }> => {
-    return apiClient<{ isPm: boolean; otp: string | null; date?: string }>(`/api/task-map/my-daily-otp?_t=${Date.now()}`);
+  getMyDailyOtp: async (): Promise<{
+    isPm: boolean;
+    otp: string | null;
+    date?: string;
+    recentAuthorizations?: Array<{
+      clientName: string;
+      maName: string;
+      sheet?: string | null;
+      source?: string;
+      timestamp: string;
+    }>;
+  }> => {
+    return apiClient(`/api/task-map/my-daily-otp?_t=${Date.now()}`);
   },
 
   verifyClientOtp: async (data: { client: string; otp: string }): Promise<{ success: boolean; pmName?: string; error?: string }> => {
@@ -1793,6 +1826,7 @@ export const TASK_MAP_STATUS_COLORS = {
   ON_HOLD: '#8A8F98',        // -> ON-HOLD (Gray)
   REVISION: '#5B6BD6',       // -> REVISION (Indigo)
   TO_SEND: '#22A3AE',        // -> CRM (Teal)
+  READY_TO_SEND: '#22A3AE',  // -> CRM (Teal)
   FOLLOW_UP: '#38bdf8',      // Retains CRM (Sky)
   CLOSED: '#2FA37A',         // -> CLOSED (Green)
 } as const;
@@ -1873,7 +1907,7 @@ export function getDefaultTaskMapSubStatuses(
   options?: { isAssigned?: boolean }
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
-  if (canonical === 'CRM') return ['To send'];
+  if (canonical === 'CRM') return ['Ready to Send'];
   if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
   if (

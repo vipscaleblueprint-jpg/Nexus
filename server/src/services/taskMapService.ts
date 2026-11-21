@@ -1003,7 +1003,7 @@ export async function executeTaskMapDailyRollover(params?: {
     const pmUsers = allUsers.filter((u) => {
       if (u.systemRole === 'ADMIN') return true;
       const rolesStr = (u.roles || []).join(' ').toLowerCase();
-      if (rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior')) {
+      if (rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior pm') || rolesStr.includes('senior project manager')) {
         return true;
       }
       const nameUp = (u.name || '').toUpperCase();
@@ -1132,11 +1132,10 @@ export async function executeTaskMapDailyRollover(params?: {
     );
 
     const isPaused = (rec?.statuses || []).some((s: string) => normalizeRolloverStatus(s) === 'PAUSED');
-    const isMainInProgress = normalizeRolloverStatus(t.status) === 'INPROGRESS';
     const hasLiveSheetProgress = reviewsList.some(
       (r: any) => r?.type === 'SHEET_PROGRESS' && Boolean(r?.timeIn) && !r?.timeOut && !r?.isMissingTime
     );
-    const isActivelyProgressed = hasAssignedUser && !isPaused && (isMainInProgress || hasLiveSheetProgress);
+    const isActivelyProgressed = hasAssignedUser && !isPaused && hasLiveSheetProgress;
 
     if (hasAssignedUser && !isActivelyProgressed) {
       // Hand over to Available Tasks without changing Task.status
@@ -1231,8 +1230,7 @@ export async function executeTaskMapDailyRollover(params?: {
       const subState = taskRevs.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id);
       const isSubPaused = Array.isArray(subState?.statuses) &&
         subState.statuses.some((s: string) => normalizeRolloverStatus(s) === 'PAUSED');
-      const isSubInProgress = normalizeRolloverStatus(st.status) === 'INPROGRESS';
-      const isSubActivelyProgressed = !isSubPaused && isSubInProgress;
+      const isSubActivelyProgressed = false;
 
       if (!isSubActivelyProgressed) {
         if (st.assigneeId || (st.assignees && st.assignees.length > 0)) {

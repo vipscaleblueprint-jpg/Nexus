@@ -675,12 +675,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
     }
   };
 
-  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
+  // Helper options for sub-status dropdown in CRM (includes 'Ready to Send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
   const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => {
     const ls = task.list?.statuses;
     const isInClientDashboard = isTaskInClientDashboard(task, clients);
     const options: TaskMapOption[] = [
-      { id: 'opt-crm-tosend', label: 'To send', color: resolveSubStatusColor('To send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
+      { id: 'opt-crm-readytosend', label: 'Ready to Send', color: resolveSubStatusColor('Ready to Send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
     ];
     if (isInClientDashboard) {
       options.push({ id: 'opt-crm-sent', label: 'Sent but Waiting', color: resolveSubStatusColor('Sent but Waiting', TASK_MAP_STATUS_COLORS.SENT, task.list?.id, ls), textColor: '#ffffff', order: 1 });
@@ -772,6 +772,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
   const sortedMemberCols = [...memberCols]
     .filter((col) => {
+      if (isCurrentViewer(col.memberUser)) return true;
       if (!cleanSearch) return true;
       return isCrmMemberSearchMatch(col.memberUser);
     })
@@ -1317,7 +1318,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                     const isSelecting = (nextStatuses || []).includes(label);
                                     const cleanNext = isSelecting ? [label] : [];
 
-                                    if (label === 'To send') {
+                                    if (label === 'Ready to Send' || label === 'To send') {
                                       if (isSelecting) {
                                         const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
                                         let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
@@ -1367,7 +1368,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                           onDataRefresh();
                                         }
                                       } else {
-                                        // User clicked 'To send' AGAIN in CRM -> revert misclick back to last status
+                                        // User clicked 'Ready to Send' AGAIN in CRM -> revert misclick back to last status
                                         const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || 'IN REVIEW');
                                         onStatusChange(task.id, []);
                                         if (onTaskUpdate) {
@@ -1376,7 +1377,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                           await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
                                           onDataRefresh();
                                         }
-                                        toast.info(`Reverted 'To send' — returned to ${revertStatus}`);
+                                        toast.info(`Reverted '${label}' — returned to ${revertStatus}`);
                                       }
                                     } else if (label === 'Sent but Waiting' || label === 'Sent') {
                                       if (isSelecting) {
@@ -1421,7 +1422,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         toast.success('Task marked Sent but Waiting — status updated to WAITING');
                                       } else {
                                         // Toggled off Sent but Waiting -> revert back to CRM
-                                        onStatusChange(task.id, ['To send']);
+                                        onStatusChange(task.id, ['Ready to Send']);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
                                         } else {
@@ -1491,7 +1492,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                         }
                                         toast.info('Task set to Revision — returned to original MA on Task Map');
                                       } else {
-                                        onStatusChange(task.id, ['To send']);
+                                        onStatusChange(task.id, ['Ready to Send']);
                                         if (onTaskUpdate) {
                                           await onTaskUpdate(task.id, { status: 'CRM' });
                                         } else {

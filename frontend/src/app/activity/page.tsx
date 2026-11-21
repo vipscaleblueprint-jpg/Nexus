@@ -45,7 +45,7 @@ import { ActivityCard } from '@/components/ui/ActivityCard';
 import { isSystemUser } from '@/lib/taskTokens';
 
 type ViewMode = 'for_me' | 'show_all';
-type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments' | 'drafts';
+type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments' | 'drafts' | 'otp';
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; description: string }[] = [
   { value: 'for_me', label: 'For Me', description: 'All your notifications' },
@@ -59,6 +59,7 @@ const CATEGORIES: { value: Category; label: string; icon: any }[] = [
   { value: 'checklists', label: 'Checklists', icon: CheckSquare },
   { value: 'audits', label: 'Auditor', icon: ShieldCheck },
   { value: 'comments', label: 'Comments', icon: MessageSquare },
+  { value: 'otp', label: 'PM OTP', icon: Key },
 ];
 
 /**
@@ -207,6 +208,7 @@ function ActivityFeedContent() {
     if (typeof window !== 'undefined') {
       const cat = new URLSearchParams(window.location.search).get('category');
       if (cat === 'drafts') return 'drafts';
+      if (cat === 'otp') return 'otp';
     }
     return 'all';
   });
@@ -231,6 +233,8 @@ function ActivityFeedContent() {
     const cat = searchParams?.get('category');
     if (cat === 'drafts' && viewMode === 'for_me') {
       setCategory('drafts');
+    } else if (cat === 'otp') {
+      setCategory('otp');
     }
   }, [searchParams, viewMode]);
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'last7' | 'last30'>('all');
@@ -433,6 +437,19 @@ function ActivityFeedContent() {
     if (typeof n !== 'string' && !isAuditItem && n.id && n.isRead === false) {
       handleMarkAsRead(n.id, n.childIds);
     }
+
+    const isOtpLog =
+      item?.type === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+      item?.type === 'OVERTIME_OTP_UNLOCK' ||
+      n?.type === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+      n?.type === 'OVERTIME_OTP_UNLOCK' ||
+      n?.action === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+      n?.action === 'OVERTIME_OTP_UNLOCK';
+
+    if (isOtpLog) {
+      return;
+    }
+
     if (!taskId) return;
 
     // Detect if this activity click is specifically for a comment
@@ -879,11 +896,14 @@ function ActivityFeedContent() {
           title = `${actorName} unassigned you from ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
         } else if (type === 'COMMENT') {
           title = `${actorName} commented on ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
-        } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK') {
+        } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK' || type === 'OVERTIME_OTP_UNLOCK') {
           const clientName = raw.details?.clientName || raw.entityId || 'a client';
-          const maName = raw.details?.maName || 'an assistant';
+          const maName = raw.details?.maName || raw.details?.unlockedBy || 'an assistant';
+          taskTitle = clientName;
           title = `${actorName} authorized overtime for ${clientName} (used by ${maName})`;
-          content = raw.details?.sheet ? `Logged in spreadsheet "${raw.details.sheet}"` : `Authorized via Daily OTP`;
+          content = raw.details?.sheet
+            ? `${maName} logged work on overtime client "${clientName}" using ${actorName}'s Daily OTP on "${raw.details.sheet}"`
+            : `${maName} logged work on overtime client "${clientName}" using ${actorName}'s Daily OTP`;
         } else {
           title = raw.title || `${actorName} updated ${taskTitle}`;
         }
@@ -909,6 +929,9 @@ function ActivityFeedContent() {
           const match = title.match(/status to (.+)$/i);
           const newStatus = match ? match[1].trim() : 'updated';
           title = `${actorName} changed status to ${newStatus} on ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
+        } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK' || type === 'OVERTIME_OTP_UNLOCK') {
+          const match = (notif.title || '').match(/overtime for (.+?)(?:\s+\(|$)/i);
+          if (match) taskTitle = match[1].trim();
         }
       }
 
@@ -934,7 +957,7 @@ function ActivityFeedContent() {
       } else if (type === 'CHECKLIST_ITEM_CHECKED' || type === 'CHECKLIST_ITEM_ASSIGNED') {
         IconToUse = CheckSquare;
         iconBg = 'bg-violet-600';
-      } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK') {
+      } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK' || type === 'OVERTIME_OTP_UNLOCK') {
         IconToUse = Key;
         iconBg = 'bg-amber-600';
       }
@@ -989,6 +1012,14 @@ function ActivityFeedContent() {
         if (cat === 'audits') return type === 'AUDIT_ITEM_CHECKED';
         if (cat === 'assigned') return type === 'ASSIGNMENT' || type === 'UNASSIGNMENT' || isAuditAssignment;
         if (cat === 'comments') return type === 'COMMENT' || type === 'REPLY' || type === 'MENTION';
+        if (cat === 'otp') {
+          return (
+            type === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+            type === 'OVERTIME_OTP_UNLOCK' ||
+            item.rawItem?.action === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+            item.rawItem?.action === 'OVERTIME_OTP_UNLOCK'
+          );
+        }
         return false;
       }
 
@@ -1028,6 +1059,17 @@ function ActivityFeedContent() {
         if (type !== 'COMMENT' && type !== 'REPLY' && type !== 'MENTION') return false;
         // Comments on tasks assigned to you or where mentioned
         return isAssigned || item.rawItem?.userId === currentUser?.id;
+      }
+
+      if (cat === 'otp') {
+        return (
+          type === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+          type === 'OVERTIME_OTP_UNLOCK' ||
+          item.rawItem?.action === 'CLIENT_OVERHOURS_OTP_UNLOCK' ||
+          item.rawItem?.action === 'OVERTIME_OTP_UNLOCK' ||
+          Boolean(item.title && item.title.toLowerCase().includes('authorized overtime')) ||
+          Boolean(item.content && item.content.toLowerCase().includes('daily otp'))
+        );
       }
 
       return false;
@@ -1176,6 +1218,38 @@ function ActivityFeedContent() {
         }
       }
 
+      // Case 4: Overtime OTP Authorization events deduplication
+      if (current.type === 'CLIENT_OVERHOURS_OTP_UNLOCK' || current.type === 'OVERTIME_OTP_UNLOCK') {
+        const cluster = [current];
+        for (let j = i + 1; j < items.length; j++) {
+          const candidate = items[j];
+          if (
+            (candidate.type === 'CLIENT_OVERHOURS_OTP_UNLOCK' || candidate.type === 'OVERTIME_OTP_UNLOCK') &&
+            candidate.taskTitle === current.taskTitle &&
+            !usedIds.has(candidate.id)
+          ) {
+            const candidateTime = new Date(candidate.createdAt).getTime();
+            if (Math.abs(currentTime - candidateTime) <= 5 * 60 * 1000) {
+              cluster.push(candidate);
+              usedIds.add(candidate.id);
+            }
+          }
+        }
+
+        if (cluster.length > 1) {
+          usedIds.add(current.id);
+          const hasUnread = cluster.some((c) => !c.isRead);
+          const primaryItem = cluster.find((c) => c.content && c.content.includes('logged work')) || current;
+          merged.push({
+            ...primaryItem,
+            id: `merged_otp_${cluster.map((c) => c.id).join('_')}`,
+            childIds: cluster.flatMap((c) => c.childIds || [c.sourceId]),
+            isRead: !hasUnread,
+          });
+          continue;
+        }
+      }
+
       usedIds.add(current.id);
       merged.push(current);
     }
@@ -1210,6 +1284,7 @@ function ActivityFeedContent() {
       assigned: 0,
       comments: 0,
       drafts: drafts.length,
+      otp: 0,
     };
 
     allNormalizedItems.forEach((item) => {
@@ -1220,11 +1295,12 @@ function ActivityFeedContent() {
         if (matchesTabFilter(item, 'audits')) counts.audits++;
         if (matchesTabFilter(item, 'assigned')) counts.assigned++;
         if (matchesTabFilter(item, 'comments')) counts.comments++;
+        if (matchesTabFilter(item, 'otp')) counts.otp++;
       }
     });
 
     return counts;
-  }, [allNormalizedItems, matchesTabFilter]);
+  }, [allNormalizedItems, matchesTabFilter, drafts.length]);
 
   // Filter items for current category tab and apply merging
   const currentTabItems = useMemo(() => {

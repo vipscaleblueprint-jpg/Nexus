@@ -6,7 +6,7 @@ import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
@@ -1156,8 +1156,8 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
       hasManualUpworkTag
     );
 
-  // 1. Missing Time Alert: Red badge with infinity icon
-  if (prog?.isMissingTime) {
+  // 1. Missing Time Alert: Red badge with infinity icon (only for active live working sessions, never on handed-over or available pool tasks)
+  if (prog?.isMissingTime && isLive && !isTaskHandedOver(task)) {
     return (
       <div
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-400 font-bold text-[10px] shadow-xs select-none"

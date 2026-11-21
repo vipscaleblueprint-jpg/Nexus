@@ -290,7 +290,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           snapshotPmUsers = dbUsers.filter((u) => {
             if (u.systemRole === 'ADMIN') return true;
             const rolesStr = (u.roles || []).join(' ').toLowerCase();
-            return rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior');
+            return rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior pm') || rolesStr.includes('senior project manager');
           });
           snapshotOptions = dbRawOptions.filter((opt) => {
             const up = opt.label.toUpperCase().trim();
@@ -566,7 +566,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const isPmUser = (u: any) => {
       if (u.systemRole === 'ADMIN') return true;
       const rolesStr = (u.roles || []).join(' ').toLowerCase();
-      if (rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior')) {
+      if (rolesStr.includes('pm') || rolesStr.includes('project manager') || rolesStr.includes('team lead') || rolesStr.includes('senior pm') || rolesStr.includes('senior project manager')) {
         return true;
       }
       const nameUp = (u.name || '').toUpperCase();
@@ -577,7 +577,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-      if (statusKey === 'CRM') return ['To send'];
+      if (statusKey === 'CRM') return ['Ready to Send'];
       if (statusKey === 'WAITING') return ['Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
       if (
@@ -697,6 +697,20 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           clientName: progress.client,
           startedAt: upworkStartedAt,
         };
+      }
+
+      // If taskMapRecord.statuses contains 'In progress' but there is no active live sheet or Upwork progress right now, strip stale 'In progress' substatus
+      if (
+        Array.isArray(mapRecord.statuses) &&
+        mapRecord.statuses.some((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')
+      ) {
+        const hasLiveWork = (progress?.timeIn && !progress?.timeOut && !progress?.isMissingTime) || Boolean(upworkSession?.active);
+        if (!hasLiveWork) {
+          mapRecord = {
+            ...mapRecord,
+            statuses: mapRecord.statuses.filter((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'),
+          };
+        }
       }
 
       const isAdminTask = isHiddenAdminOrInternalTask(task.list);
@@ -1573,7 +1587,7 @@ const parsePmReviewsArray = (raw: any): any[] => {
 
 const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
   const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (statusKey === 'CRM') return ['To send'];
+  if (statusKey === 'CRM') return ['Ready to Send'];
   if (statusKey === 'WAITING') return ['Waiting'];
   if (statusKey === 'ONHOLD') return ['On-hold'];
   if (
@@ -3097,9 +3111,9 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
       // Check if all PM tags are now resolved
       const remainingPmTags = statuses.filter(s => ['CHE', 'PAU', 'HAN'].includes(s.toUpperCase()));
       if (remainingPmTags.length === 0) {
-        // Tag "To send"
-        if (!statuses.includes('To send')) {
-          statuses.push('To send');
+        // Tag "Ready to Send"
+        if (!statuses.includes('Ready to Send')) {
+          statuses.push('Ready to Send');
         }
       }
 
@@ -4539,7 +4553,25 @@ export const getMyDailyOtpHandler = async (req: Request, res: Response) => {
   }
   const otp = generateDailyOtpForUser(user.id);
   const dateStr = getManilaDateString();
-  return res.json({ isPm: true, otp, date: dateStr });
+
+  const recentLogs = await prisma.auditLog.findMany({
+    where: {
+      userId: user.id,
+      action: 'CLIENT_OVERHOURS_OTP_UNLOCK',
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+  }).catch(() => []);
+
+  const recentAuthorizations = recentLogs.map((log: any) => ({
+    clientName: log.details?.clientName || log.entityId,
+    maName: log.details?.maName || log.details?.unlockedBy || 'Assistant',
+    sheet: log.details?.sheet || null,
+    source: log.details?.source || 'spreadsheet',
+    timestamp: log.createdAt,
+  }));
+
+  return res.json({ isPm: true, otp, date: dateStr, recentAuthorizations });
 };
 
 /**

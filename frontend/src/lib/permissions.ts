@@ -75,7 +75,7 @@ export function canUserEditTask(
   };
 }
 
-const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|\bpm\b|\bsenior\b/i;
+const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)/i;
 
 /**
  * Only Project Managers, Seniors, and Admins can set a task's Team Role and Assignees.

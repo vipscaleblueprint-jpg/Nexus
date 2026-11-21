@@ -10,7 +10,26 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     const category = typeof req.query.category === 'string' ? req.query.category.toLowerCase() : 'all';
     const timeFilter = typeof req.query.timeFilter === 'string' ? req.query.timeFilter.toLowerCase() : 'all';
 
-    const userFilter = userId ? { userId } : {};
+    let userFilter: any = userId ? { userId } : {};
+    if ((category === 'otp' || category === 'pm_otp') && userId) {
+      try {
+        const selectedUserRecord = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, name: true },
+        });
+        if (selectedUserRecord?.name) {
+          userFilter = {
+            OR: [
+              { userId },
+              { details: { path: ['maName'], equals: selectedUserRecord.name } },
+              { details: { path: ['unlockedBy'], equals: selectedUserRecord.name } },
+            ],
+          };
+        }
+      } catch {
+        userFilter = userId ? { userId } : {};
+      }
+    }
 
     // Time filter boundaries
     let timeFilterWhere: any = {};
@@ -86,6 +105,8 @@ export const getAuditLogs = async (req: Request, res: Response) => {
       actionWhere = { action: { in: ['AUDIT_ITEM_CHECKED', 'AUDIT_ITEM_UNCHECKED'] } };
     } else if (category === 'assigned') {
       actionWhere = { action: { in: ['ASSIGNMENT', 'UNASSIGNMENT', 'TEAM_ROLE_CHANGE'] } };
+    } else if (category === 'otp' || category === 'pm_otp') {
+      actionWhere = { action: { in: ['CLIENT_OVERHOURS_OTP_UNLOCK', 'OVERTIME_OTP_UNLOCK'] } };
     }
 
     const auditWhere: any = {

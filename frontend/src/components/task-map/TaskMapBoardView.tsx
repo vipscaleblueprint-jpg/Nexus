@@ -264,12 +264,8 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
   const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
   if (isMyProg && task.progress?.timeOut) return false;
 
-  // 2. Task has explicit TaskMap 'In progress' sub-status
-  // Guard: if this task holds an unclosed session for this user that is STALE, it cannot act as active in progress
-  if (isTaskInProgress(task)) {
-    if (isMyProg && task.progress?.timeIn && isStaleLiveSession(task.progress.timeIn, task.progress.date)) {
-      return false;
-    }
+  // 2. Active missing-time session for this user from daily schedule sheet (entered row without Time In)
+  if (isMyProg && task.progress?.isMissingTime && !task.progress?.timeOut) {
     return true;
   }
 
@@ -1479,6 +1475,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
       });
     }
 
+    // Always ensure the logged-in user (current viewer) is present in userColumnsMap
+    if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
+      userColumnsMap[currentUser.id] = {
+        user: getUserProfile(currentUser.id, currentUser),
+        tasks: [],
+      };
+    }
+
     // Ensure any user who is actively live working on a task (or pool task) gets a column in userColumnsMap
     [...tasks, ...availablePool].forEach((t) => {
       if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
@@ -1772,6 +1776,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     const nextSortedUserColumns = Object.entries(userColumnsMap)
       .filter(([id, col]) => {
+        // The current viewing user's own column must ALWAYS show no matter what filter is active
+        if (isCurrentViewer(col.user)) {
+          return true;
+        }
         if (cleanSearch) {
           return isUserSearchMatch(col.user);
         }
@@ -2668,7 +2676,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         task.list?.name?.toLowerCase().includes('upwork') ||
                         hasManualUpworkTag
                       );
-                    const isMissingTime = Boolean(task.progress?.isMissingTime);
+                    // Available pool tasks are unassigned/handed-over and never active live-working sessions with missing time
+                    const isMissingTime = false;
                     // Only "live" when the MA actively clocked in (Time In) and has not clocked out
                     const isLive = Boolean(
                       task.progress?.timeIn &&
@@ -2838,7 +2847,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                             {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
                             <div className="w-[130px] sm:w-[145px] shrink-0 flex flex-col justify-between py-0.5">
                               <div className="flex justify-end items-center">
-                                <TaskTimeProgressSlot task={task} />
+                                <TaskTimeProgressSlot task={task} isLive={false} />
                               </div>
 
                               <div
@@ -3564,7 +3573,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               </div>
                               <TaskMapStatusDropdown
                                 selectedStatuses={
-                                  isLiveWorking ? ['In progress'] : (task.taskMap.statuses || [])
+                                  isLiveWorking
+                                    ? ['In progress']
+                                    : (task.taskMap.statuses || []).filter(
+                                        (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+                                      )
                                 }
                                 options={getUnifiedTaskMapOptions(task, user)}
                                 onToggleStatus={(label, nextStatuses) =>

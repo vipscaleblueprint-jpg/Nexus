@@ -2155,6 +2155,24 @@ export const verifyClientOtp = async (req: Request, res: Response) => {
   // 1. Mark client unlocked in Redis & in-memory cache for today
   await setClientUnlockedToday(cleanClient, pm);
 
+  // Look up MA user if possible to link notification / audit
+  let maUser = null;
+  if (maName && maName !== 'Unknown Assistant') {
+    try {
+      maUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { name: { equals: maName, mode: 'insensitive' } },
+            { email: { equals: maName, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, name: true, email: true },
+      });
+    } catch {
+      // non-blocking
+    }
+  }
+
   // 2. Record official AuditLog entry in database under that PM's ID and name
   try {
     await prisma.auditLog.create({
@@ -2169,6 +2187,7 @@ export const verifyClientOtp = async (req: Request, res: Response) => {
           pmEmail: pm.email,
           clientName: cleanClient,
           maName,
+          maId: maUser?.id || null,
           sheet: sheet || null,
           source: 'spreadsheet',
           unlockedAt: new Date().toISOString(),
@@ -2196,6 +2215,7 @@ export const verifyClientOtp = async (req: Request, res: Response) => {
     clientName: cleanClient,
     maName,
     sheet: sheet || null,
+    maUserId: maUser?.id || null,
   });
 
   return res.status(200).json({

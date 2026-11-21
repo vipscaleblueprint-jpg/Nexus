@@ -88,6 +88,21 @@ function getSessionDisplayName(session: any): string {
   return cleanUser || 'Team Member';
 }
 
+function GoogleSheetsIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M14.5 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V7.5L14.5 2Z"
+        fill="#0F9D58"
+      />
+      <path d="M14 2V8H20L14 2Z" fill="#87CEAC" />
+      <path d="M7 13H17V19H7V13Z" fill="white" />
+      <path d="M11 13V19" stroke="#0F9D58" strokeWidth="1.2" />
+      <path d="M7 16H17" stroke="#0F9D58" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
@@ -106,19 +121,28 @@ export function Header() {
 
   const isPmUser = Boolean(
     currentUser?.systemRole === 'ADMIN' ||
-    (currentUser?.roles || []).some((r: string) => /project\s*manager|\bpm\b|\bsenior\b|lead/i.test(r || ''))
+    (currentUser?.roles || []).some((r: string) => /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)|lead/i.test(r || ''))
   );
 
   const [dailyOtp, setDailyOtp] = useState<string | null>(null);
   const [isOtpOpen, setIsOtpOpen] = useState(false);
   const [copiedOtp, setCopiedOtp] = useState(false);
   const [isEyeGlowing, setIsEyeGlowing] = useState(false);
-  const [lastOtpAuth, setLastOtpAuth] = useState<{ clientName: string; maName: string; timestamp: string } | null>(null);
+  const [lastOtpAuth, setLastOtpAuth] = useState<{ clientName: string; maName: string; sheet?: string | null; timestamp: string } | null>(null);
+  const [recentOtpAuths, setRecentOtpAuths] = useState<Array<{
+    clientName: string;
+    maName: string;
+    sheet?: string | null;
+    timestamp: string;
+  }>>([]);
 
   useEffect(() => {
     if (!isPmUser) return;
     taskMapApi.getMyDailyOtp().then((res) => {
       if (res?.otp) setDailyOtp(res.otp);
+      if (res?.recentAuthorizations && res.recentAuthorizations.length > 0) {
+        setRecentOtpAuths(res.recentAuthorizations);
+      }
     }).catch(() => {});
   }, [isPmUser]);
 
@@ -127,11 +151,14 @@ export function Header() {
       const detail = e.detail;
       if (detail && currentUser && detail.pmId === currentUser.id) {
         setIsEyeGlowing(true);
-        setLastOtpAuth({
+        const newAuth = {
           clientName: detail.clientName,
           maName: detail.maName,
+          sheet: detail.sheet,
           timestamp: detail.timestamp,
-        });
+        };
+        setLastOtpAuth(newAuth);
+        setRecentOtpAuths((prev) => [newAuth, ...prev.filter((p) => p.clientName !== detail.clientName || p.timestamp !== detail.timestamp)].slice(0, 5));
       }
     };
     window.addEventListener('otp:used', handleOtpUsed);
@@ -229,6 +256,27 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Google Sheets button redirecting user to their own daily sheet base from @prisma.db */}
+          {activeUser.dailySheetUrl ? (
+            <a
+              href={activeUser.dailySheetUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="relative flex items-center justify-center p-1.5 rounded-full border border-zinc-700/80 bg-secondary/80 text-zinc-300 hover:text-white hover:border-emerald-500/60 hover:bg-emerald-500/10 transition-all cursor-pointer group shadow-xs"
+              title="Open your Google Daily Schedule Sheet"
+            >
+              <GoogleSheetsIcon className="w-4 h-4" />
+            </a>
+          ) : (
+            <button
+              onClick={() => router.push('/settings')}
+              className="relative flex items-center justify-center p-1.5 rounded-full border border-zinc-700/80 bg-secondary/80 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 transition-all cursor-pointer group shadow-xs"
+              title="No Daily Sheet configured (Click to set up in Settings)"
+            >
+              <GoogleSheetsIcon className="w-4 h-4 opacity-50 group-hover:opacity-100" />
+            </button>
+          )}
+
           {isPmUser && (
             <div className="relative">
               <button
@@ -275,16 +323,23 @@ export function Header() {
                       </span>
                     </div>
 
-                    {lastOtpAuth && (
-                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 space-y-1">
-                        <div className="font-semibold flex items-center gap-1">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                          Recent Overhours Authorization
+                    {(lastOtpAuth || recentOtpAuths.length > 0) && (
+                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 space-y-1.5 max-h-36 overflow-y-auto">
+                        <div className="font-semibold flex items-center justify-between text-amber-300">
+                          <span className="flex items-center gap-1">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                            Recent Overhours Authorization
+                          </span>
                         </div>
-                        <div className="text-zinc-300">
-                          <span className="text-amber-300 font-medium">{lastOtpAuth.maName}</span> unlocked{' '}
-                          <span className="text-zinc-100 font-semibold">{lastOtpAuth.clientName}</span>
-                        </div>
+                        {(recentOtpAuths.length > 0 ? recentOtpAuths.slice(0, 3) : lastOtpAuth ? [lastOtpAuth] : []).map((auth, idx) => (
+                          <div key={idx} className="text-zinc-300 leading-snug border-b border-amber-500/10 pb-1 last:border-0 last:pb-0">
+                            <span className="text-amber-300 font-medium">{auth.maName}</span> unlocked{' '}
+                            <span className="text-zinc-100 font-semibold">{auth.clientName}</span>
+                            {auth.sheet && (
+                              <span className="text-zinc-400 text-[10px] block truncate">Sheet: "{auth.sheet}"</span>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
 
@@ -320,6 +375,15 @@ export function Header() {
                     <div className="text-[10px] text-zinc-400 leading-relaxed">
                       Share this code with assistants when they need authorization to log work or assign tasks for clients that reached overtime limits.
                     </div>
+
+                    <Link
+                      href="/activity?category=otp"
+                      onClick={() => setIsOtpOpen(false)}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center justify-between pt-1 border-t border-border/60 font-medium transition-colors cursor-pointer"
+                    >
+                      <span>View all OTP logs in Activity</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </Link>
                   </motion.div>
                 )}
               </AnimatePresence>

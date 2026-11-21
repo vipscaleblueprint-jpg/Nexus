@@ -69,6 +69,8 @@ import { filterUsersByNotificationPreference, shouldUserReceiveNotification } fr
 import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
 import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmFollowUpService';
 import { queueAuditPick, repickAuditsAfterRename } from '../services/aiAuditPicker';
+import { checkClientLockStatus } from '../services/clientLockService';
+import { verifyDailyOtp, setClientUnlockedToday } from '../utils/dailyOtp';
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
@@ -911,6 +913,59 @@ export async function updateTask(req: Request, res: Response) {
 
     if (!currentTask) {
       return res.status(404).json({ error: 'Task not found' });
+    }
+
+    // Client Overhours / Lock enforcement
+    if (changesAssignment && (assigneeId || (assigneeIds && assigneeIds.length > 0)) && currentTask.listId) {
+      const taskList = await prisma.list.findUnique({ where: { id: currentTask.listId }, select: { name: true } });
+      if (taskList?.name) {
+        const lockStatus = await checkClientLockStatus(taskList.name);
+        if (lockStatus.isLocked) {
+          const otpInput = (req.body?.otp || '').toString().trim();
+          if (otpInput) {
+            const verification = await verifyDailyOtp(otpInput);
+            if (verification.valid && verification.pm) {
+              await setClientUnlockedToday(taskList.name, verification.pm);
+              await prisma.auditLog.create({
+                data: {
+                  action: 'CLIENT_OVERHOURS_OTP_UNLOCK',
+                  entity: 'CLIENT',
+                  entityId: taskList.name,
+                  userId: verification.pm.id,
+                  details: {
+                    pmId: verification.pm.id,
+                    pmName: verification.pm.name,
+                    pmEmail: verification.pm.email,
+                    clientName: taskList.name,
+                    taskId: currentTask.id,
+                    unlockedBy: authReq.user?.name || 'Nexus User',
+                    source: 'nexus_task_modal',
+                    unlockedAt: new Date().toISOString(),
+                  },
+                },
+              }).catch(() => {});
+              io.emit('otp:used', {
+                pmId: verification.pm.id,
+                pmName: verification.pm.name,
+                clientName: taskList.name,
+                maName: authReq.user?.name || 'Nexus User',
+                taskId: currentTask.id,
+                source: 'nexus_task_modal',
+                timestamp: new Date().toISOString(),
+              });
+            } else {
+              return res.status(400).json({ error: 'Invalid 4-digit PM OTP' });
+            }
+          } else {
+            return res.status(403).json({
+              error: 'CLIENT_LOCKED',
+              isClientLocked: true,
+              clientName: taskList.name,
+              message: `Client "${taskList.name}" has exceeded weekly hour limit. 4-digit PM OTP required to assign.`,
+            });
+          }
+        }
+      }
     }
 
     if (status !== undefined) {

@@ -25,6 +25,7 @@ import {
   X,
   FileEdit,
   Trash2,
+  Key,
 } from 'lucide-react';
 import { format, isToday, isYesterday, formatDistanceToNow } from 'date-fns';
 import { draftsApi, TaskDraft } from '@/api/drafts';
@@ -878,6 +879,11 @@ function ActivityFeedContent() {
           title = `${actorName} unassigned you from ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
         } else if (type === 'COMMENT') {
           title = `${actorName} commented on ${isSubtask ? 'subtask' : 'task'} ${taskTitle}`;
+        } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK') {
+          const clientName = raw.details?.clientName || raw.entityId || 'a client';
+          const maName = raw.details?.maName || 'an assistant';
+          title = `${actorName} authorized overtime for ${clientName} (used by ${maName})`;
+          content = raw.details?.sheet ? `Logged in spreadsheet "${raw.details.sheet}"` : `Authorized via Daily OTP`;
         } else {
           title = raw.title || `${actorName} updated ${taskTitle}`;
         }
@@ -928,6 +934,9 @@ function ActivityFeedContent() {
       } else if (type === 'CHECKLIST_ITEM_CHECKED' || type === 'CHECKLIST_ITEM_ASSIGNED') {
         IconToUse = CheckSquare;
         iconBg = 'bg-violet-600';
+      } else if (type === 'CLIENT_OVERHOURS_OTP_UNLOCK') {
+        IconToUse = Key;
+        iconBg = 'bg-amber-600';
       }
 
       return {

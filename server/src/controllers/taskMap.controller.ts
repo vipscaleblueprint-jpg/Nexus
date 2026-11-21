@@ -6,6 +6,8 @@ import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedis
 import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
+import { generateDailyOtpForUser, verifyDailyOtp, setClientUnlockedToday, getManilaDateString, isUserProjectManagerOrAdmin, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
+import { checkClientLockStatus } from '../services/clientLockService';
 import {
   evaluateTaskMapMovePermission,
   resolveEffectiveTaskMapOwnerId,
@@ -2541,6 +2543,63 @@ async function executeTaskMapAssignment(
       return res.status(perm.statusCode).json({ error: perm.error });
     }
 
+    // Guard: Client Overhours / Lock enforcement
+    // When assigning a task to a user, if the client is overtime/overhours, require a valid 4-digit PM OTP
+    if (assigneeId) {
+      const clientName = currentTask.list?.name;
+      if (clientName) {
+        const lockStatus = await checkClientLockStatus(clientName);
+        if (lockStatus.isLocked) {
+          const otpInput = (req.body?.otp || '').toString().trim();
+          if (otpInput) {
+            const verification = await verifyDailyOtp(otpInput);
+            if (verification.valid && verification.pm) {
+              await setClientUnlockedToday(clientName, verification.pm);
+              await prisma.auditLog.create({
+                data: {
+                  action: 'CLIENT_OVERHOURS_OTP_UNLOCK',
+                  entity: 'CLIENT',
+                  entityId: clientName,
+                  userId: verification.pm.id,
+                  details: {
+                    pmId: verification.pm.id,
+                    pmName: verification.pm.name,
+                    pmEmail: verification.pm.email,
+                    clientName,
+                    taskId: id,
+                    taskTitle: currentTask.title,
+                    unlockedBy: user.name,
+                    source: 'nexus_task_map',
+                    unlockedAt: new Date().toISOString(),
+                  },
+                },
+              }).catch(() => {});
+              io.emit('otp:used', {
+                pmId: verification.pm.id,
+                pmName: verification.pm.name,
+                clientName,
+                maName: user.name,
+                taskId: id,
+                source: 'nexus_task_map',
+                timestamp: new Date().toISOString(),
+              });
+            } else {
+              return res.status(400).json({ error: 'Invalid 4-digit PM OTP' });
+            }
+          } else {
+            return res.status(403).json({
+              error: 'CLIENT_LOCKED',
+              isClientLocked: true,
+              clientName,
+              hoursLogged: lockStatus.hoursLogged,
+              weeklyLimit: lockStatus.weeklyLimit,
+              message: `Client "${clientName}" has exceeded weekly hour limit. 4-digit PM OTP required to assign.`,
+            });
+          }
+        }
+      }
+    }
+
     const existingPmAssignment = reviewsList.find(
       (r: any) => r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId && r?.assignedTo === assigneeId
     );
@@ -4468,5 +4527,75 @@ export const acknowledgeCrmFollowUpsHandler = async (req: Request, res: Response
     logger.error({ error }, 'Error acknowledging CRM follow-up report');
     return res.status(500).json({ error: 'Failed to acknowledge follow-up report' });
   }
+};
+
+/**
+ * Returns today's 4-digit OTP for the currently authenticated user if they are a Project Manager or Admin.
+ */
+export const getMyDailyOtpHandler = async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  if (!user || !isUserProjectManagerOrAdmin(user)) {
+    return res.json({ isPm: false, otp: null });
+  }
+  const otp = generateDailyOtpForUser(user.id);
+  const dateStr = getManilaDateString();
+  return res.json({ isPm: true, otp, date: dateStr });
+};
+
+/**
+ * Authenticated in-app verification of a 4-digit PM OTP for client unlock.
+ */
+export const verifyClientOtpHandler = async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const { client, otp } = req.body || {};
+  if (!client || !otp) {
+    return res.status(400).json({ success: false, error: 'Client and OTP are required' });
+  }
+  const verification = await verifyDailyOtp(String(otp).trim());
+  if (!verification.valid || !verification.pm) {
+    return res.status(400).json({ success: false, error: 'Invalid 4-digit PM OTP' });
+  }
+  const pm = verification.pm;
+  await setClientUnlockedToday(client.trim(), pm);
+  await prisma.auditLog.create({
+    data: {
+      action: 'CLIENT_OVERHOURS_OTP_UNLOCK',
+      entity: 'CLIENT',
+      entityId: client.trim(),
+      userId: pm.id,
+      details: {
+        pmId: pm.id,
+        pmName: pm.name,
+        pmEmail: pm.email,
+        clientName: client.trim(),
+        unlockedBy: user?.name || 'Nexus User',
+        source: 'nexus_in_app',
+        unlockedAt: new Date().toISOString(),
+      },
+    },
+  }).catch(() => {});
+  io.emit('otp:used', {
+    pmId: pm.id,
+    pmName: pm.name,
+    clientName: client.trim(),
+    maName: user?.name || 'Nexus User',
+    source: 'nexus_in_app',
+    timestamp: new Date().toISOString(),
+  });
+  notifyAdminsOfClientOtpUnlock({
+    pm,
+    clientName: client.trim(),
+    maName: user?.name || 'Nexus User',
+  });
+  return res.json({ success: true, pmName: pm.name, clientName: client.trim() });
+};
+
+/**
+ * Returns lock and overtime pacing status for a specific client.
+ */
+export const getClientLockStatusHandler = async (req: Request, res: Response) => {
+  const clientName = String(req.query.client || '').trim();
+  const status = await checkClientLockStatus(clientName);
+  return res.json(status);
 };
 

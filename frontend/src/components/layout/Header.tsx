@@ -6,8 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store";
 import { User } from "@/lib/types";
 import { authApi } from "@/api";
-import { isSessionProjectBased } from "@/api/taskMap";
-import { ExternalLink, LogOut, ChevronDown, PanelLeft } from "lucide-react";
+import { isSessionProjectBased, taskMapApi } from "@/api/taskMap";
+import { ExternalLink, LogOut, ChevronDown, PanelLeft, Eye, Key, Copy, Check } from "lucide-react";
 import { ClickUpStatusPanel } from "./ClickUpStatusPanel";
 import { motion, AnimatePresence } from "framer-motion";
 import { NotificationBell } from "./NotificationBell";
@@ -104,6 +104,40 @@ export function Header() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const pageTitle = useAppStore(state => state.pageTitle);
 
+  const isPmUser = Boolean(
+    currentUser?.systemRole === 'ADMIN' ||
+    (currentUser?.roles || []).some((r: string) => /project\s*manager|\bpm\b|\bsenior\b|lead/i.test(r || ''))
+  );
+
+  const [dailyOtp, setDailyOtp] = useState<string | null>(null);
+  const [isOtpOpen, setIsOtpOpen] = useState(false);
+  const [copiedOtp, setCopiedOtp] = useState(false);
+  const [isEyeGlowing, setIsEyeGlowing] = useState(false);
+  const [lastOtpAuth, setLastOtpAuth] = useState<{ clientName: string; maName: string; timestamp: string } | null>(null);
+
+  useEffect(() => {
+    if (!isPmUser) return;
+    taskMapApi.getMyDailyOtp().then((res) => {
+      if (res?.otp) setDailyOtp(res.otp);
+    }).catch(() => {});
+  }, [isPmUser]);
+
+  useEffect(() => {
+    const handleOtpUsed = (e: any) => {
+      const detail = e.detail;
+      if (detail && currentUser && detail.pmId === currentUser.id) {
+        setIsEyeGlowing(true);
+        setLastOtpAuth({
+          clientName: detail.clientName,
+          maName: detail.maName,
+          timestamp: detail.timestamp,
+        });
+      }
+    };
+    window.addEventListener('otp:used', handleOtpUsed);
+    return () => window.removeEventListener('otp:used', handleOtpUsed);
+  }, [currentUser?.id]);
+
   const [now, setNow] = useState<Date>(new Date());
   useEffect(() => {
     if (!activeUpworkSessions || activeUpworkSessions.length === 0) return;
@@ -195,6 +229,103 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-2">
+          {isPmUser && (
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setIsOtpOpen(!isOtpOpen);
+                  if (isEyeGlowing) setIsEyeGlowing(false);
+                }}
+                className={`relative flex items-center justify-center p-1.5 rounded-full border transition-all cursor-pointer group ${
+                  isEyeGlowing
+                    ? 'border-amber-400 bg-amber-500/20 text-amber-300 ring-2 ring-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.6)] animate-pulse'
+                    : 'border-zinc-700/80 bg-secondary/80 text-zinc-300 hover:text-white hover:border-zinc-600'
+                }`}
+                title={
+                  isEyeGlowing
+                    ? `⚠️ Live Authorization: ${lastOtpAuth?.maName || 'An assistant'} just used your OTP for ${lastOtpAuth?.clientName || 'a client'}!`
+                    : "PM Authenticator (Click to view today's 4-digit OTP)"
+                }
+              >
+                {isEyeGlowing ? (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <Eye className="w-4 h-4 text-amber-300 relative z-10" />
+                  </>
+                ) : (
+                  <Eye className="w-4 h-4 text-zinc-300 group-hover:text-amber-300 transition-colors" />
+                )}
+              </button>
+
+              <AnimatePresence>
+                {isOtpOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                    className="absolute right-0 mt-2 w-72 p-3.5 rounded-xl bg-card border border-border shadow-2xl backdrop-blur-md z-[200] text-xs space-y-3"
+                  >
+                    <div className="flex items-center justify-between pb-2 border-b border-border">
+                      <div className="flex items-center gap-1.5 font-semibold text-zinc-100">
+                        <Key className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Daily PM Authenticator</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-mono">
+                        Asia/Manila
+                      </span>
+                    </div>
+
+                    {lastOtpAuth && (
+                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 space-y-1">
+                        <div className="font-semibold flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                          Recent Overhours Authorization
+                        </div>
+                        <div className="text-zinc-300">
+                          <span className="text-amber-300 font-medium">{lastOtpAuth.maName}</span> unlocked{' '}
+                          <span className="text-zinc-100 font-semibold">{lastOtpAuth.clientName}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="bg-secondary/70 border border-border rounded-lg p-3 text-center space-y-1.5">
+                      <div className="text-[11px] text-zinc-400">Your 4-Digit Code for Today</div>
+                      <div className="text-2xl font-mono font-bold tracking-[0.25em] text-amber-300 select-all">
+                        {dailyOtp || '----'}
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (dailyOtp) {
+                            navigator.clipboard.writeText(dailyOtp);
+                            setCopiedOtp(true);
+                            setTimeout(() => setCopiedOtp(false), 2000);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors text-[11px] cursor-pointer mt-1"
+                      >
+                        {copiedOtp ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-emerald-400 font-medium">Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3 text-zinc-400" />
+                            <span>Copy Code</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="text-[10px] text-zinc-400 leading-relaxed">
+                      Share this code with assistants when they need authorization to log work or assign tasks for clients that reached overtime limits.
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
           <NotificationBell />
 
           {/* Active Upwork Live Ticker next to Profile (Available to everyone, Non-clickable) */}

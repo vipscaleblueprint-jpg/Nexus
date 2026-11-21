@@ -17,6 +17,7 @@ import {
   AtSign,
   Rocket,
   CalendarClock,
+  Key,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { CommentContent } from '@/components/ui/CommentContent';
@@ -246,6 +247,8 @@ export function ActivityCard({
     MicroIcon = Rocket;
   } else if (normType === 'CRM_FOLLOW_UP_ALERT' || normType === 'TASK_MAP_HANDOVER_REMINDER') {
     MicroIcon = Clock;
+  } else if (normType === 'CLIENT_OVERHOURS_OTP_UNLOCK' || normType === 'OVERTIME_OTP_UNLOCK') {
+    MicroIcon = Key;
   } else if (
     normType === 'COMMENT' ||
     normType === 'REPLY'
@@ -654,6 +657,25 @@ export function ActivityCard({
       );
 
       return { titleNode, statusPills: null, mentionBadge: badgeNode };
+    }
+
+    // 9. Overtime OTP Authorization
+    if (normType === 'CLIENT_OVERHOURS_OTP_UNLOCK' || normType === 'OVERTIME_OTP_UNLOCK') {
+      let clientTarget = taskTitle;
+      if (!clientTarget || clientTarget === 'task') {
+        const match = title.match(/overtime for (.+?)(?:\s+\(|$)/i);
+        clientTarget = match ? match[1].trim() : (details?.clientName || 'client');
+      }
+
+      const titleNode = (
+        <span className="leading-snug">
+          <span className={actorClass}>{actorName}</span>
+          <span className={actionClass}> authorized overtime for </span>
+          <span className="text-amber-400 font-semibold">{clientTarget}</span>
+        </span>
+      );
+
+      return { titleNode, statusPills: null, mentionBadge: null };
     }
 
     // 8. General Fallback

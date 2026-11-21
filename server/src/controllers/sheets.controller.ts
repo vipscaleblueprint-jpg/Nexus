@@ -35,6 +35,7 @@ import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask, getManilaDateStr } from '../services/taskMapService';
+import { verifyDailyOtp, setClientUnlockedToday, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
 
 interface LinkedTarget {
   taskId: string;
@@ -2119,3 +2120,90 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+/**
+ * Verifies a 4-digit PM OTP submitted by an MA in Google Sheets when logging an overtime client.
+ * Identifies the PM, logs the authorization in Prisma AuditLog under that PM's name,
+ * marks the client as unlocked for today in Redis, and emits a real-time event so the PM's
+ * Header Eye icon glows with an instant notification.
+ */
+export const verifyClientOtp = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+
+  const { client, otp, user, sheet } = req.body || {};
+  if (!client || !client.trim()) {
+    return res.status(400).json({ success: false, error: 'Client name is required' });
+  }
+  if (!otp || !otp.trim()) {
+    return res.status(400).json({ success: false, error: 'OTP is required' });
+  }
+
+  const cleanClient = client.trim();
+  const cleanOtp = otp.trim();
+  const maName = (user || '').trim() || 'Unknown Assistant';
+
+  const verification = await verifyDailyOtp(cleanOtp);
+  if (!verification.valid || !verification.pm) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid 4-digit OTP. Please request today\'s OTP from your Project Manager.',
+    });
+  }
+
+  const pm = verification.pm;
+
+  // 1. Mark client unlocked in Redis & in-memory cache for today
+  await setClientUnlockedToday(cleanClient, pm);
+
+  // 2. Record official AuditLog entry in database under that PM's ID and name
+  try {
+    await prisma.auditLog.create({
+      data: {
+        action: 'CLIENT_OVERHOURS_OTP_UNLOCK',
+        entity: 'CLIENT',
+        entityId: cleanClient,
+        userId: pm.id,
+        details: {
+          pmId: pm.id,
+          pmName: pm.name,
+          pmEmail: pm.email,
+          clientName: cleanClient,
+          maName,
+          sheet: sheet || null,
+          source: 'spreadsheet',
+          unlockedAt: new Date().toISOString(),
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[Sheets] Failed to create audit log for client OTP unlock:', err);
+  }
+
+  // 3. Emit real-time Socket.IO event to light up the glowing Eye in that PM's Nexus Header
+  io.emit('otp:used', {
+    pmId: pm.id,
+    pmName: pm.name,
+    clientName: cleanClient,
+    maName,
+    sheet: sheet || null,
+    source: 'spreadsheet',
+    timestamp: new Date().toISOString(),
+  });
+
+  // 4. Notify all ADMINs (and PMs) via Nexus TaskNotification & Bell
+  notifyAdminsOfClientOtpUnlock({
+    pm,
+    clientName: cleanClient,
+    maName,
+    sheet: sheet || null,
+  });
+
+  return res.status(200).json({
+    success: true,
+    clientName: cleanClient,
+    pmName: pm.name,
+    pmEmail: pm.email,
+    message: `Client "${cleanClient}" successfully authorized and unlocked by PM ${pm.name}.`,
+  });
+};
+

@@ -27,6 +27,9 @@ import {
   getPendingCrmFollowUpsHandler,
   respondCrmFollowUpHandler,
   acknowledgeCrmFollowUpsHandler,
+  getMyDailyOtpHandler,
+  verifyClientOtpHandler,
+  getClientLockStatusHandler,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -66,3 +69,8 @@ taskMapRouter.get('/crm/follow-ups', getPendingCrmFollowUpsHandler);
 taskMapRouter.post('/crm/follow-ups/acknowledge', acknowledgeCrmFollowUpsHandler);
 taskMapRouter.post('/crm/follow-ups/:id/acknowledge', acknowledgeCrmFollowUpsHandler);
 taskMapRouter.post('/crm/follow-ups/:id/respond', respondCrmFollowUpHandler);
+
+// PM Daily Authenticator & Client Lock routes
+taskMapRouter.get('/my-daily-otp', getMyDailyOtpHandler);
+taskMapRouter.post('/verify-client-otp', verifyClientOtpHandler);
+taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);

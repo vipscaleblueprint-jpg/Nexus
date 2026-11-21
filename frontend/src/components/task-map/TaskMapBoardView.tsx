@@ -28,6 +28,7 @@ import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
+import { ClientOtpModal } from '../modals/ClientOtpModal';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
@@ -1087,6 +1088,23 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return {};
     }
   });
+
+  const [clientOtpModal, setClientOtpModal] = useState<{
+    isOpen: boolean;
+    clientName: string;
+    taskId: string;
+    targetUserId: string | null;
+    mode: 'IN_PROGRESS' | 'QUEUE';
+    nextRoles?: string[];
+    hoursLogged?: number;
+    weeklyLimit?: number;
+  }>({
+    isOpen: false,
+    clientName: '',
+    taskId: '',
+    targetUserId: null,
+    mode: 'QUEUE',
+  });
   const collapsedStorageKey = currentUser?.id
     ? `nexus_taskmap_collapsed_columns_v2_${currentUser.id}`
     : 'nexus_taskmap_collapsed_columns_v2';
@@ -2008,7 +2026,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
           onDataRefresh();
         }
       } catch (err: any) {
-        toast.error(err.message || 'Failed to set task In Progress');
+        const errData = err?.response?.data;
+        if (errData?.isClientLocked || errData?.error === 'CLIENT_LOCKED') {
+          setClientOtpModal({
+            isOpen: true,
+            clientName: errData.clientName || (currentTask as any)?.listName || 'Client',
+            taskId,
+            targetUserId,
+            mode: 'IN_PROGRESS',
+            nextRoles,
+            hoursLogged: errData.hoursLogged,
+            weeklyLimit: errData.weeklyLimit,
+          });
+        } else {
+          toast.error(err.message || 'Failed to set task In Progress');
+        }
       }
       return;
     }
@@ -2038,7 +2070,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
           onDataRefresh();
         }
       } catch (err: any) {
-        toast.error(err.message || 'Failed to queue task');
+        const errData = err?.response?.data;
+        if (errData?.isClientLocked || errData?.error === 'CLIENT_LOCKED') {
+          setClientOtpModal({
+            isOpen: true,
+            clientName: errData.clientName || (currentTask as any)?.listName || 'Client',
+            taskId,
+            targetUserId,
+            mode: 'QUEUE',
+            nextRoles,
+            hoursLogged: errData.hoursLogged,
+            weeklyLimit: errData.weeklyLimit,
+          });
+        } else {
+          toast.error(err.message || 'Failed to queue task');
+        }
       }
     } else if (targetColumnId === 'available-pool') {
       // If already in available pool, do nothing!
@@ -3752,6 +3798,30 @@ export const TaskMapBoardView: React.FC<Props> = ({
         isOpen={!!actionError}
         onClose={() => setActionError(null)}
         error={actionError}
+      />
+
+      {/* Client Overtime Lock OTP Authorization Modal */}
+      <ClientOtpModal
+        isOpen={clientOtpModal.isOpen}
+        onClose={() => setClientOtpModal(prev => ({ ...prev, isOpen: false }))}
+        clientName={clientOtpModal.clientName}
+        hoursLogged={clientOtpModal.hoursLogged}
+        weeklyLimit={clientOtpModal.weeklyLimit}
+        onSuccess={async (otp, pmName) => {
+          if (!clientOtpModal.taskId || !clientOtpModal.targetUserId) return;
+          try {
+            await taskMapApi.assignTask(
+              clientOtpModal.taskId,
+              clientOtpModal.targetUserId,
+              clientOtpModal.mode,
+              { assigneeRoleRestrictions: clientOtpModal.nextRoles, otp }
+            );
+            toast.success(`Task assigned under authorization from PM ${pmName}!`);
+            onDataRefresh();
+          } catch (err: any) {
+            toast.error(err.message || 'Failed to assign task after authorization');
+          }
+        }}
       />
     </DndContext>
   );

@@ -861,7 +861,7 @@ export const taskMapApi = {
     taskId: string,
     assigneeId: string | null,
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
-    options?: { assigneeRoleRestrictions?: string[]; role?: string }
+    options?: { assigneeRoleRestrictions?: string[]; role?: string; otp?: string }
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
@@ -967,6 +967,21 @@ export const taskMapApi = {
     return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`, {
       ...(params?.signal ? { signal: params.signal } : {}),
     });
+  },
+
+  getMyDailyOtp: async (): Promise<{ isPm: boolean; otp: string | null; date?: string }> => {
+    return apiClient<{ isPm: boolean; otp: string | null; date?: string }>(`/api/task-map/my-daily-otp?_t=${Date.now()}`);
+  },
+
+  verifyClientOtp: async (data: { client: string; otp: string }): Promise<{ success: boolean; pmName?: string; error?: string }> => {
+    return apiClient<{ success: boolean; pmName?: string; error?: string }>(`/api/task-map/verify-client-otp`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getClientLockStatus: async (client: string): Promise<{ clientName: string; isLocked: boolean; isOvertime: boolean; hoursLogged?: number; weeklyLimit?: number }> => {
+    return apiClient(`/api/task-map/client-lock-status?client=${encodeURIComponent(client)}&_t=${Date.now()}`);
   },
 
   updateLaunchMeta: async (

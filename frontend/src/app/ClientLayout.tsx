@@ -487,6 +487,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       scheduleNotifBadgeRefresh({ checkLastViewed: true });
     });
 
+    s.on('otp:used', (payload: any) => {
+      window.dispatchEvent(new CustomEvent('otp:used', { detail: payload }));
+    });
+
     s.on('task:comment_reaction', (payload: any) => {
       window.dispatchEvent(new CustomEvent('task:comment_reaction', { detail: payload }));
     });

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { TaskMapOption, taskMapApi } from '@/api/taskMap';
+import { TaskMapOption, taskMapApi, normalizeSubStatusKey, getTaskMapSubStatusStyle } from '@/api/taskMap';
 import { Check, Search, Pencil, Plus, Trash2, X, ChevronDown, AlertTriangle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
@@ -59,8 +59,8 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
   const [newColor, setNewColor] = useState('#3b82f6');
   const [deleteWarning, setDeleteWarning] = useState<{ id: string; inUseCount: number } | null>(null);
 
-  // Local optimistic statuses for instantaneous 0ms feedback with case-insensitive normalization
-  const norm = (s: string) => (s || '').trim().toLowerCase();
+  // Local optimistic statuses for instantaneous 0ms feedback with normalized key comparison
+  const norm = normalizeSubStatusKey;
   const [localStatuses, setLocalStatuses] = useState<string[]>(() => {
     const clean = (selectedStatuses || []).filter((s) => s.toUpperCase().trim() !== 'CRM');
     return clean.slice(0, 1);
@@ -269,7 +269,8 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
 
   const nonCrmStatuses = localStatuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
   const primaryStatus = nonCrmStatuses[0];
-  const primaryOpt = primaryStatus ? options.find((o) => o.label.toLowerCase() === primaryStatus.toLowerCase()) : null;
+  const primaryOpt = primaryStatus ? options.find((o) => norm(o.label) === norm(primaryStatus)) : null;
+  const subStatusStyle = primaryStatus ? getTaskMapSubStatusStyle(primaryStatus, options) : null;
 
   return (
     <>
@@ -286,21 +287,19 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
         }}
         onClick={toggleDropdown}
         title={readOnly ? 'Status management is restricted' : undefined}
-        className={`substatus-pill w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 select-none shadow-sm ${
+        className={`substatus-pill on-solid w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 select-none shadow-sm ${
           readOnly
             ? 'cursor-default'
-            : 'cursor-pointer hover:brightness-125 hover:contrast-105 active:scale-[0.98]'
+            : 'cursor-pointer hover:brightness-110 active:scale-[0.98]'
         } ${
           !primaryStatus
-            ? 'border border-dashed border-zinc-700/80 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/80'
-            : 'border border-transparent hover:ring-1 hover:ring-white/20'
+            ? 'border border-dashed border-zinc-300 dark:border-zinc-700/80 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-200/80 dark:hover:bg-zinc-800/80'
+            : 'border border-black/10 dark:border-white/10 hover:ring-1 hover:ring-black/20 dark:hover:ring-white/20'
         }`}
         style={
-          primaryOpt
-            ? { backgroundColor: primaryOpt.color, color: primaryOpt.textColor || '#ffffff' }
-            : primaryStatus
-              ? { backgroundColor: '#3f3f46', color: '#ffffff' }
-              : {}
+          subStatusStyle
+            ? { backgroundColor: subStatusStyle.color, color: subStatusStyle.textColor }
+            : {}
         }
       >
         <span className="truncate">
@@ -325,21 +324,21 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
               zIndex: 999999,
               transition: 'opacity 75ms ease-out',
             }}
-            className="w-72 max-h-96 overflow-y-auto custom-scrollbar p-2.5 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl flex flex-col text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
+            className="w-72 max-h-96 overflow-y-auto custom-scrollbar p-2.5 bg-card border border-zinc-200 dark:border-zinc-700/80 rounded-xl shadow-2xl flex flex-col text-zinc-800 dark:text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
           >
             {/* Search Box */}
-            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-xs mb-2">
-              <Search className="size-3 text-zinc-500 shrink-0" />
+            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-xs mb-2">
+              <Search className="size-3 text-zinc-400 dark:text-zinc-500 shrink-0" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search statuses..."
-                className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none"
+                className="w-full bg-transparent text-xs text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none"
                 autoFocus
               />
               {search && (
-                <button type="button" onClick={() => setSearch('')} className="text-zinc-500 hover:text-zinc-300">
+                <button type="button" onClick={() => setSearch('')} className="text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300">
                   <X className="size-3" />
                 </button>
               )}
@@ -347,7 +346,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
 
             {/* Warning when deleting */}
             {deleteWarning && (
-              <div className="p-2 mb-2 rounded bg-amber-950/60 border border-amber-600/50 text-amber-200 text-xs">
+              <div className="p-2 mb-2 rounded bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-600/50 text-amber-900 dark:text-amber-200 text-xs">
                 <p className="text-[11px] mb-1 font-semibold">
                   In use by {deleteWarning.inUseCount} tasks. Delete anyway?
                 </p>
@@ -355,7 +354,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setDeleteWarning(null)}
-                    className="px-2 py-0.5 text-[10px] rounded hover:bg-zinc-800 text-zinc-400"
+                    className="px-2 py-0.5 text-[10px] rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
                   >
                     Cancel
                   </button>
@@ -374,23 +373,27 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
             <div className="space-y-1 mb-2 max-h-56 overflow-y-auto custom-scrollbar pr-0.5">
               {filteredOptions.length === 0 ? (
                 <div className="py-6 text-center">
-                  <p className="text-xs text-zinc-500 italic">
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 italic">
                     {search ? 'No matching statuses' : 'No statuses configured'}
                   </p>
                 </div>
               ) : (
                 filteredOptions.map((opt) => {
                   const isSelected = localStatuses.some((s) => norm(s) === norm(opt.label));
+                  const optStyle = getTaskMapSubStatusStyle(opt.label, [opt]);
                   return (
                     <div
                       key={opt.id}
                       onClick={() => handleToggleStatus(opt.label)}
-                      className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-colors ${isSelected ? 'bg-zinc-800/80 font-medium' : 'hover:bg-zinc-800/40'
-                        }`}
+                      className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-zinc-200/70 dark:bg-zinc-800/80 font-medium'
+                          : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/40'
+                      }`}
                     >
                       <span
-                        style={{ backgroundColor: opt.color, color: opt.textColor || '#ffffff' }}
-                        className="px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide truncate max-w-[190px]"
+                        style={{ backgroundColor: optStyle.color, color: optStyle.textColor }}
+                        className="on-solid px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide truncate max-w-[190px] border border-black/10 dark:border-white/10"
                       >
                         {opt.label}
                       </span>
@@ -402,13 +405,13 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
                             e.stopPropagation();
                             handleDeleteOption(opt.id, false);
                           }}
-                          className="text-red-400 hover:text-red-300 p-1"
+                          className="text-red-500 hover:text-red-400 p-1"
                           title="Delete option"
                         >
                           <Trash2 className="size-3" />
                         </button>
                       ) : (
-                        isSelected && <Check className="size-3.5 text-blue-400 shrink-0" />
+                        isSelected && <Check className="size-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                       )}
                     </div>
                   );
@@ -418,7 +421,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
 
             {/* Admin Edit Controls */}
             {isAdmin && (
-              <div className="border-t border-zinc-800/80 pt-2 mt-auto">
+              <div className="border-t border-zinc-200 dark:border-zinc-800/80 pt-2 mt-auto">
                 {isEditMode ? (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5">
@@ -427,7 +430,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
                         value={newLabel}
                         onChange={(e) => setNewLabel(e.target.value)}
                         placeholder="Option label..."
-                        className="flex-1 bg-zinc-900 px-2 py-1 text-xs rounded border border-zinc-800 text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                        className="flex-1 bg-zinc-100 dark:bg-zinc-900 px-2 py-1 text-xs rounded border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none"
                       />
                       <input
                         type="color"
@@ -446,7 +449,7 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setIsEditMode(false)}
-                      className="w-full text-center text-[10px] text-zinc-400 hover:text-zinc-200 py-0.5"
+                      className="w-full text-center text-[10px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 py-0.5"
                     >
                       Done Editing
                     </button>
@@ -455,9 +458,9 @@ export const TaskMapStatusDropdown: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setIsEditMode(true)}
-                    className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white px-2 py-1 rounded hover:bg-zinc-800 w-full"
+                    className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 w-full"
                   >
-                    <Pencil className="size-3 text-zinc-500" />
+                    <Pencil className="size-3 text-zinc-400 dark:text-zinc-500" />
                     <span>Edit Options</span>
                   </button>
                 )}

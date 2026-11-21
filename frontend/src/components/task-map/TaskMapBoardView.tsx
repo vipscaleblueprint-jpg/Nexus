@@ -13,6 +13,7 @@ import {
   getEffectiveTaskMapHandlerId,
   countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
+  getTaskMapSubStatusStyle,
   getDefaultTaskMapSubStatuses,
   toCanonicalTaskStatus,
   matchesMarketingNameSearch,
@@ -2171,7 +2172,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const getUnifiedTaskMapOptions = (task: TaskMapItem, _user?: any): TaskMapOption[] => {
     const list: TaskMapOption[] = [
       { id: 'opt-status-avail', label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff', order: 0 },
-      { id: 'opt-status-handover', label: 'Hand Over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#f3e8ff', order: 1 },
+      { id: 'opt-status-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 },
       { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12', order: 2 },
       { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75', order: 3 },
       { id: 'opt-status-toreview', label: 'To Review', color: resolveSubStatusColor('To Review', TASK_MAP_STATUS_COLORS.TO_REVIEW, task.list?.id, task.list?.statuses), textColor: '#ffffff', order: 4 },
@@ -3796,7 +3797,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
                     Sub-Status
                   </span>
-                  <div className="px-2 py-1 text-xs rounded-md font-medium truncate bg-zinc-800 text-zinc-200 border border-zinc-700/60">
+                  <div
+                    className="on-solid px-2 py-1 text-xs rounded-md font-medium truncate border border-black/10 dark:border-white/10"
+                    style={{
+                      backgroundColor: getTaskMapSubStatusStyle(primarySubStatus, getUnifiedTaskMapOptions(activeDragTask)).color,
+                      color: getTaskMapSubStatusStyle(primarySubStatus, getUnifiedTaskMapOptions(activeDragTask)).textColor,
+                    }}
+                  >
                     {primarySubStatus}
                   </div>
                 </div>

@@ -1813,11 +1813,12 @@ export {
 
 /**
  * Canonical sub-status hex colors aligned with main task STATUS_COLORS in taskTokens.tsx
- * for every sub-status that transitions a task's main status.
+ * for every sub-status that transitions a task's main status. Hand-over is specifically styled
+ * as grey to match user preference and spreadsheet workflow.
  */
 export const TASK_MAP_STATUS_COLORS = {
   AVAILABLE_TASK: '#2563eb', // Workflow pool (no main status change)
-  HAND_OVER: '#a855f7',      // Retains IN PROGRESS
+  HAND_OVER: '#3f3f46',      // Retains IN PROGRESS (Grey)
   PAUSED: '#eab308',         // Retains IN PROGRESS
   ASK_CLIENT: '#06b6d4',     // Retains IN PROGRESS / IN REVIEW
   TO_REVIEW: '#D97B3A',      // -> IN REVIEW (Orange)
@@ -1830,6 +1831,86 @@ export const TASK_MAP_STATUS_COLORS = {
   FOLLOW_UP: '#38bdf8',      // Retains CRM (Sky)
   CLOSED: '#2FA37A',         // -> CLOSED (Green)
 } as const;
+
+/**
+ * Normalizes sub-status label strings for consistent matching regardless of casing, hyphens, or spacing.
+ */
+export function normalizeSubStatusKey(label?: string | null): string {
+  return (label || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+}
+
+/**
+ * Resolves sub-status pill color and styling for Task Map and cards, ensuring that colors
+ * reflect their dropdown option colors, Hand-over stays grey, and styling properly supports
+ * both light and dark modes.
+ */
+export function getTaskMapSubStatusStyle(
+  label?: string | null,
+  options?: TaskMapOption[]
+): {
+  color: string;
+  textColor: string;
+} {
+  const norm = normalizeSubStatusKey(label);
+  if (!norm) {
+    return {
+      color: '#3f3f46',
+      textColor: '#ffffff',
+    };
+  }
+
+  // 1. Hand-over / Handover is explicitly grey
+  if (norm === 'HANDOVER' || norm === 'HAND_OVER') {
+    return {
+      color: TASK_MAP_STATUS_COLORS.HAND_OVER,
+      textColor: '#ffffff',
+    };
+  }
+
+  // 2. Check if the label matches an existing dropdown option
+  if (Array.isArray(options) && options.length > 0) {
+    const matched = options.find((opt) => normalizeSubStatusKey(opt.label) === norm);
+    if (matched?.color) {
+      return {
+        color: matched.color,
+        textColor: matched.textColor || '#ffffff',
+      };
+    }
+  }
+
+  // 3. Known canonical fallback map
+  const canonicalColors: Record<string, { color: string; textColor: string }> = {
+    AVAILABLETASK: { color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff' },
+    HANDOVER: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
+    PAUSED: { color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12' },
+    ASKCLIENT: { color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75' },
+    TOREVIEW: { color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff' },
+    WAITING: { color: TASK_MAP_STATUS_COLORS.WAITING, textColor: '#ffffff' },
+    SENT: { color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff' },
+    SENTBUTWAITING: { color: TASK_MAP_STATUS_COLORS.SENT, textColor: '#ffffff' },
+    ONHOLD: { color: TASK_MAP_STATUS_COLORS.ON_HOLD, textColor: '#ffffff' },
+    REVISION: { color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff' },
+    REVISIONS: { color: TASK_MAP_STATUS_COLORS.REVISION, textColor: '#ffffff' },
+    TOSEND: { color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff' },
+    READYTOSEND: { color: TASK_MAP_STATUS_COLORS.READY_TO_SEND, textColor: '#ffffff' },
+    FOLLOWUP: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff' },
+    CLOSED: { color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff' },
+    DESIGNAUDIT: { color: '#ec4899', textColor: '#ffffff' },
+    UIUXAUDIT: { color: '#06b6d4', textColor: '#ffffff' },
+    INSTRUCTIONAUDIT: { color: '#10b981', textColor: '#ffffff' },
+    INSACTIONAUDIT: { color: '#10b981', textColor: '#ffffff' },
+    FUNNELAUDIT: { color: '#f59e0b', textColor: '#ffffff' },
+  };
+
+  if (canonicalColors[norm]) {
+    return canonicalColors[norm];
+  }
+
+  return {
+    color: '#3f3f46',
+    textColor: '#ffffff',
+  };
+}
 
 /** Maps task-map sub-status labels to the main (Prisma ListStatus) status they transition to. */
 const SUB_STATUS_DB_ALIAS: Record<string, string> = {

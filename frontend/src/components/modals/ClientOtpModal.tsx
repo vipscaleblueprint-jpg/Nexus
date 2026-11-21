@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Lock, ShieldAlert, Check, X, KeyRound, Loader2 } from 'lucide-react';
 import { taskMapApi } from '@/api/taskMap';
 
@@ -24,6 +24,23 @@ export function ClientOtpModal({
   const [otp, setOtp] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [myPmOtp, setMyPmOtp] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let mounted = true;
+    taskMapApi
+      .getMyDailyOtp()
+      .then((res) => {
+        if (mounted && res?.isPm && res?.otp) {
+          setMyPmOtp(res.otp);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -104,6 +121,24 @@ export function ClientOtpModal({
 
         {/* OTP Input Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
+          {myPmOtp && (
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs">
+              <span className="text-zinc-300">
+                Your PM OTP today: <strong className="font-mono text-amber-300 tracking-wider text-sm">{myPmOtp}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setOtp(myPmOtp);
+                  if (errorMessage) setErrorMessage(null);
+                }}
+                className="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[11px] transition-colors cursor-pointer"
+              >
+                Use My OTP
+              </button>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
               <KeyRound className="w-3.5 h-3.5 text-amber-400" />

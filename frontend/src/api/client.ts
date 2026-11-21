@@ -145,7 +145,17 @@ export async function apiClient<T = any>(
         return new Promise(() => {}) as Promise<T>;
       }
     }
-    throw new Error(data.error || data.message || `HTTP error ${res.status}`);
+    const errMsg = data.message || data.error || `HTTP error ${res.status}`;
+    const error: any = new Error(errMsg);
+    error.status = res.status;
+    error.data = data;
+    error.error = data.error;
+    error.isClientLocked = Boolean(data.isClientLocked || data.error === 'CLIENT_LOCKED');
+    error.clientName = data.clientName;
+    error.hoursLogged = data.hoursLogged;
+    error.weeklyLimit = data.weeklyLimit;
+    error.response = { status: res.status, data };
+    throw error;
   }
 
   return data as T;

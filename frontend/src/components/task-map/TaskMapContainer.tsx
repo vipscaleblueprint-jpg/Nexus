@@ -1326,7 +1326,8 @@ export const TaskMapContainer: React.FC = () => {
     taskId: string,
     targetUserId: string | null,
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
-    assigneeRoleRestrictions?: string[]
+    assigneeRoleRestrictions?: string[],
+    otp?: string
   ) => {
     const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
     if (!currentTask) return;
@@ -1412,7 +1413,10 @@ export const TaskMapContainer: React.FC = () => {
         taskId,
         targetUserId,
         mode,
-        assigneeRoleRestrictions ? { assigneeRoleRestrictions } : undefined
+        {
+          ...(assigneeRoleRestrictions ? { assigneeRoleRestrictions } : {}),
+          ...(otp ? { otp } : {}),
+        }
       );
       setTimeout(() => {
         pendingAssignRef.current.delete(taskId);
@@ -1425,7 +1429,17 @@ export const TaskMapContainer: React.FC = () => {
       // Immediately revert the card in the UI if the server rejects the move
       setTasks(prevTasks);
       setAvailablePool(prevPool);
-      toast.error(err?.message || 'Failed to update task assignment');
+      const errData = err?.response?.data || err?.data;
+      const isClientLocked =
+        err?.isClientLocked ||
+        errData?.isClientLocked ||
+        errData?.error === 'CLIENT_LOCKED' ||
+        err?.error === 'CLIENT_LOCKED' ||
+        err?.message?.includes('CLIENT_LOCKED') ||
+        err?.message?.toLowerCase().includes('exceeded weekly');
+      if (!isClientLocked) {
+        toast.error(err?.message || 'Failed to update task assignment');
+      }
       loadData(true);
       throw err;
     }
@@ -1468,7 +1482,17 @@ export const TaskMapContainer: React.FC = () => {
       pendingAssignRef.current.delete(taskId);
       setTasks(prevTasks);
       setAvailablePool(prevPool);
-      toast.error(err?.message || 'Failed to transfer task');
+      const errData = err?.response?.data || err?.data;
+      const isClientLocked =
+        err?.isClientLocked ||
+        errData?.isClientLocked ||
+        errData?.error === 'CLIENT_LOCKED' ||
+        err?.error === 'CLIENT_LOCKED' ||
+        err?.message?.includes('CLIENT_LOCKED') ||
+        err?.message?.toLowerCase().includes('exceeded weekly');
+      if (!isClientLocked) {
+        toast.error(err?.message || 'Failed to transfer task');
+      }
       loadData(true);
       throw err;
     }

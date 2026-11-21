@@ -957,11 +957,17 @@ export async function updateTask(req: Request, res: Response) {
               return res.status(400).json({ error: 'Invalid 4-digit PM OTP' });
             }
           } else {
+            const hoursInfo =
+              typeof lockStatus.hoursLogged === 'number' && typeof lockStatus.weeklyLimit === 'number'
+                ? ` (${lockStatus.hoursLogged.toFixed(1)} / ${lockStatus.weeklyLimit.toFixed(1)} hrs)`
+                : '';
             return res.status(403).json({
               error: 'CLIENT_LOCKED',
               isClientLocked: true,
               clientName: taskList.name,
-              message: `Client "${taskList.name}" has exceeded weekly hour limit. 4-digit PM OTP required to assign.`,
+              hoursLogged: lockStatus.hoursLogged,
+              weeklyLimit: lockStatus.weeklyLimit,
+              message: `Client "${taskList.name}" is locked: exceeded weekly limit${hoursInfo}. 4-digit PM OTP required to assign.`,
             });
           }
         }

@@ -147,7 +147,7 @@ interface Props {
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
-  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[]) => Promise<void> | void;
+  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string) => Promise<void> | void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   isHistory?: boolean;
   search?: string;
@@ -2035,17 +2035,32 @@ export const TaskMapBoardView: React.FC<Props> = ({
           onDataRefresh();
         }
       } catch (err: any) {
-        const errData = err?.response?.data;
-        if (errData?.isClientLocked || errData?.error === 'CLIENT_LOCKED') {
+        const errData = err?.response?.data || err?.data;
+        const isClientLocked =
+          err?.isClientLocked ||
+          errData?.isClientLocked ||
+          errData?.error === 'CLIENT_LOCKED' ||
+          err?.error === 'CLIENT_LOCKED' ||
+          err?.message?.includes('CLIENT_LOCKED') ||
+          err?.message?.toLowerCase().includes('exceeded weekly');
+        if (isClientLocked) {
+          const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+          const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+          const hoursInfo =
+            typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+              ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+              : '';
+          const clientName = err?.clientName || errData?.clientName || (currentTask as any)?.list?.name || (currentTask as any)?.listName || 'Client';
+          toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
           setClientOtpModal({
             isOpen: true,
-            clientName: errData.clientName || (currentTask as any)?.listName || 'Client',
+            clientName,
             taskId,
             targetUserId,
             mode: 'IN_PROGRESS',
             nextRoles,
-            hoursLogged: errData.hoursLogged,
-            weeklyLimit: errData.weeklyLimit,
+            hoursLogged,
+            weeklyLimit,
           });
         } else {
           toast.error(err.message || 'Failed to set task In Progress');
@@ -2079,17 +2094,32 @@ export const TaskMapBoardView: React.FC<Props> = ({
           onDataRefresh();
         }
       } catch (err: any) {
-        const errData = err?.response?.data;
-        if (errData?.isClientLocked || errData?.error === 'CLIENT_LOCKED') {
+        const errData = err?.response?.data || err?.data;
+        const isClientLocked =
+          err?.isClientLocked ||
+          errData?.isClientLocked ||
+          errData?.error === 'CLIENT_LOCKED' ||
+          err?.error === 'CLIENT_LOCKED' ||
+          err?.message?.includes('CLIENT_LOCKED') ||
+          err?.message?.toLowerCase().includes('exceeded weekly');
+        if (isClientLocked) {
+          const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+          const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+          const hoursInfo =
+            typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+              ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+              : '';
+          const clientName = err?.clientName || errData?.clientName || (currentTask as any)?.list?.name || (currentTask as any)?.listName || 'Client';
+          toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
           setClientOtpModal({
             isOpen: true,
-            clientName: errData.clientName || (currentTask as any)?.listName || 'Client',
+            clientName,
             taskId,
             targetUserId,
             mode: 'QUEUE',
             nextRoles,
-            hoursLogged: errData.hoursLogged,
-            weeklyLimit: errData.weeklyLimit,
+            hoursLogged,
+            weeklyLimit,
           });
         } else {
           toast.error(err.message || 'Failed to queue task');
@@ -2138,7 +2168,36 @@ export const TaskMapBoardView: React.FC<Props> = ({
         onDataRefresh();
       }
     } catch (err: any) {
-      toast.error(err.message || 'Failed to assign task');
+      const errData = err?.response?.data || err?.data;
+      const isClientLocked =
+        err?.isClientLocked ||
+        errData?.isClientLocked ||
+        errData?.error === 'CLIENT_LOCKED' ||
+        err?.error === 'CLIENT_LOCKED' ||
+        err?.message?.includes('CLIENT_LOCKED') ||
+        err?.message?.toLowerCase().includes('exceeded weekly');
+      if (isClientLocked) {
+        const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+        const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+        const hoursInfo =
+          typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+            ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+            : '';
+        const clientName = err?.clientName || errData?.clientName || (existingTask as any)?.list?.name || (existingTask as any)?.listName || 'Client';
+        toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
+        setClientOtpModal({
+          isOpen: true,
+          clientName,
+          taskId,
+          targetUserId,
+          mode: 'IN_PROGRESS',
+          nextRoles,
+          hoursLogged,
+          weeklyLimit,
+        });
+      } else {
+        toast.error(err.message || 'Failed to assign task');
+      }
     }
   };
 
@@ -2161,7 +2220,36 @@ export const TaskMapBoardView: React.FC<Props> = ({
         onDataRefresh();
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to transfer task');
+      const errData = err?.response?.data || err?.data;
+      const isClientLocked =
+        err?.isClientLocked ||
+        errData?.isClientLocked ||
+        errData?.error === 'CLIENT_LOCKED' ||
+        err?.error === 'CLIENT_LOCKED' ||
+        err?.message?.includes('CLIENT_LOCKED') ||
+        err?.message?.toLowerCase().includes('exceeded weekly');
+      if (isClientLocked) {
+        const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+        const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+        const hoursInfo =
+          typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+            ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+            : '';
+        const clientName = err?.clientName || errData?.clientName || (task as any)?.list?.name || (task as any)?.listName || 'Client';
+        toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
+        setClientOtpModal({
+          isOpen: true,
+          clientName,
+          taskId: task.id,
+          targetUserId,
+          mode: 'QUEUE',
+          nextRoles,
+          hoursLogged,
+          weeklyLimit,
+        });
+      } else {
+        toast.error(err?.message || 'Failed to transfer task');
+      }
     }
   };
 
@@ -3830,14 +3918,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
         onSuccess={async (otp, pmName) => {
           if (!clientOtpModal.taskId || !clientOtpModal.targetUserId) return;
           try {
-            await taskMapApi.assignTask(
-              clientOtpModal.taskId,
-              clientOtpModal.targetUserId,
-              clientOtpModal.mode,
-              { assigneeRoleRestrictions: clientOtpModal.nextRoles, otp }
-            );
+            if (onAssignTask) {
+              await onAssignTask(
+                clientOtpModal.taskId,
+                clientOtpModal.targetUserId,
+                clientOtpModal.mode,
+                clientOtpModal.nextRoles,
+                otp
+              );
+            } else {
+              await taskMapApi.assignTask(
+                clientOtpModal.taskId,
+                clientOtpModal.targetUserId,
+                clientOtpModal.mode,
+                { assigneeRoleRestrictions: clientOtpModal.nextRoles, otp }
+              );
+              onDataRefresh();
+            }
             toast.success(`Task assigned under authorization from PM ${pmName}!`);
-            onDataRefresh();
           } catch (err: any) {
             toast.error(err.message || 'Failed to assign task after authorization');
           }

@@ -899,7 +899,7 @@ export const taskMapApi = {
   transferTask: async (
     taskId: string,
     targetUserId: string,
-    options?: { assigneeRoleRestrictions?: string[]; role?: string }
+    options?: { assigneeRoleRestrictions?: string[]; role?: string; otp?: string }
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {

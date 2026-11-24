@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PRIORITIES } from '../../types';
 import { longText, nullableIsoDate, nullableUuid, shortText, uuid } from './common';
+import { MAX_ESTIMATED_HOURS } from '../../utils/estimatedHours';
 
 /**
  * Task.status is a free-form String column (default "TODO") rather than a
@@ -50,6 +51,8 @@ export const updateTaskSchema = z
     assigneeRoleRestrictions: z.array(z.string()).optional(),
     teamAssignAccessRole: z.string().nullable().optional(),
     recurringConfig: z.any().optional(),
+    // Hands-on hours to finish; null clears it (PMs/Admins only, checked in updateTask)
+    estimatedHours: z.number().positive().max(MAX_ESTIMATED_HOURS).nullable().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

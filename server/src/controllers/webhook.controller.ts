@@ -16,6 +16,7 @@ import { queueAuditPick, saveAuditPicks } from '../services/aiAuditPicker';
 import { autoAssignAudits } from '../services/auditAutoAssign';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
+import { parseEstimatedHours } from '../utils/estimatedHours';
 
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
@@ -302,6 +303,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
 
   try {
     const { clients, prompt, priority, assignee, task_link, listed_by, audits } = req.body;
+    const estimatedHours = parseEstimatedHours(req.body.estimated_hours);
 
     const clientName = typeof clients?.name === 'string' ? clients.name.trim() : '';
     if (!clientName) {
@@ -497,7 +499,9 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         } : {}),
         priority: mappedPriority,
         status: firstStatus?.name || 'Pending',
-        externalId: task_link || null
+        externalId: task_link || null,
+        // Galaxy's AI hours estimate (editable in Nexus)
+        ...(estimatedHours != null && { estimatedHours }),
       }
     });
 
@@ -722,6 +726,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
   try {
     const { task_link, listed_by, priority, assignee } = req.body;
+    const estimatedHours = parseEstimatedHours(req.body.estimated_hours);
 
     if (!task_link) return res.status(400).json({ error: 'task_link required' });
 
@@ -785,6 +790,11 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         injectSubtaskIntoJournal(parentTask.id, { id: already.id, title: already.title }).catch((err) =>
           console.error('[Galaxy] Failed to inject already existing subtask into journal:', err)
         );
+        // n8n's subtask creator often saves it first (without an estimate); keep Galaxy's hours.
+        if (estimatedHours != null && already.estimatedHours == null) {
+          const withEstimate = await prisma.subtask.update({ where: { id: already.id }, data: { estimatedHours } });
+          return res.status(200).json({ success: true, subtask: withEstimate });
+        }
         return res.status(200).json({ success: true, subtask: already });
       }
 
@@ -805,7 +815,11 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
       if (unlinked) {
         const linked = await prisma.subtask.update({
           where: { id: unlinked.id },
-          data: { externalId: subtaskClickUpId, ...(description && !unlinked.description && { description }) },
+          data: {
+            externalId: subtaskClickUpId,
+            ...(description && !unlinked.description && { description }),
+            ...(estimatedHours != null && unlinked.estimatedHours == null && { estimatedHours }),
+          },
         });
         injectSubtaskIntoJournal(parentTask.id, { id: linked.id, title: linked.title }).catch((err) =>
           console.error('[Galaxy] Failed to inject linked subtask into journal:', err)
@@ -894,7 +908,9 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
           assigneeId: primaryAssigneeId,
           assignees: { connect: finalAssigneeIds.map(id => ({ id })) }
         } : {}),
-        ...(resolvedTeamId ? { teamId: resolvedTeamId } : {})
+        ...(resolvedTeamId ? { teamId: resolvedTeamId } : {}),
+        // Galaxy's AI hours estimate (editable in Nexus)
+        ...(estimatedHours != null && { estimatedHours }),
       }
     });
 

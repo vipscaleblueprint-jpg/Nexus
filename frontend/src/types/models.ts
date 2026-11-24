@@ -189,6 +189,8 @@ export interface Task {
   dueDate?: string | null;
   startDate?: string | null;
   recurringConfig?: RecurringConfig | null;
+  /** Hands-on hours to finish (Galaxy's AI estimate; PMs/Admins can edit). */
+  estimatedHours?: number | null;
   listId: string;
   assigneeId?: string | null;
   assignee?: User | null;
@@ -234,6 +236,8 @@ export interface Subtask {
   team?: Team | null;
   priority: Priority;
   dueDate?: string | null;
+  /** Hands-on hours to finish (Galaxy's AI estimate; PMs/Admins can edit). */
+  estimatedHours?: number | null;
   assigneeRoleRestrictions?: string[];
   teamAssignAccessRole?: string | null;
   createdAt: string;

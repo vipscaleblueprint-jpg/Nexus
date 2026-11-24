@@ -259,6 +259,8 @@ model Task {
   /// Erased from today's daily rollover page: left off (with its subtasks) until mentioned there again
   rolloverExcluded         Boolean            @default(false)
   recurringConfig          Json?
+  /// Hands-on hours to finish (Galaxy's AI estimate on creation; PMs/Admins can edit). Used to balance the Task Map.
+  estimatedHours           Float?
   attachments              Attachment[]
   checklists               Checklist[]
   subtasks                 Subtask[]
@@ -296,6 +298,8 @@ model Subtask {
   assigneeRoleRestrictions String[]      @default([])
   teamAssignAccessRole     String?
   externalId               String?       @unique
+  /// Hands-on hours to finish (Galaxy's AI estimate on creation; PMs/Admins can edit). Used to balance the Task Map.
+  estimatedHours           Float?
   checklists               Checklist[]
   User                     User?         @relation(fields: [assigneeId], references: [id])
   task                     Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)

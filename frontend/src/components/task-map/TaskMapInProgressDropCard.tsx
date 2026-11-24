@@ -126,38 +126,44 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
     return () => clearTimeout(timer);
   }, [isOpen, cleanSearch]);
 
-  const isSearchMatching = (t: TaskMapItem) => {
-    if (!cleanSearch) return true;
-    const title = (t.title || '').toLowerCase();
-    const client = (t.progress?.client || t.list?.name || '').toLowerCase();
-    const folder = (t.list?.folder?.name || '').toLowerCase();
-    const desc = ((t as any).description || '').toLowerCase();
+  // Spelling variants people type: "xfinite" = "xfnite", "vip scale" = "vipscale"
+  const normalizeForSearch = (s: string) => s.toLowerCase().replace(/xfinite/g, 'xfnite').replace(/vip\s+scale/g, 'vipscale');
+  const searchWords = normalizeForSearch(cleanSearch).split(/\s+/).filter(Boolean);
 
-    const titleMatch = title.includes(cleanSearch);
-    const clientMatch = client.includes(cleanSearch);
-    const folderMatch = folder.includes(cleanSearch);
-    const descMatch = desc.includes(cleanSearch);
-    const adminMatch = (cleanSearch.includes('admin') || cleanSearch === 'adm') && isTaskUnderAdmin(t);
-    const tagMatch = ((t as any).tags || []).some((tag: any) =>
-      (typeof tag === 'string' ? tag : tag?.name || '').toLowerCase().includes(cleanSearch)
-    );
+  /**
+   * -1 = no match. Otherwise lower ranks first: 0 = title contains the whole search,
+   * 1 = every word is in the title, 2 = every word is somewhere (client, folder, description, tags).
+   * Every typed word must match, so "fix vip" no longer returns every VIP Scale task.
+   */
+  const searchRank = (t: TaskMapItem): number => {
+    if (searchWords.length === 0) return 0;
+    const title = normalizeForSearch(t.title || '');
+    const client = normalizeForSearch(t.progress?.client || t.list?.name || '');
+    const folder = normalizeForSearch(t.list?.folder?.name || '');
+    const desc = normalizeForSearch((t as any).description || '');
+    const tags = ((t as any).tags || [])
+      .map((tag: any) => normalizeForSearch(typeof tag === 'string' ? tag : tag?.name || ''))
+      .join(' ');
+    const admin = isTaskUnderAdmin(t) ? 'admin' : '';
+    const everywhere = `${title} ${client} ${folder} ${desc} ${tags} ${admin}`;
 
-    // Support common aliases/spelling variations: "xfinite" vs "xfnite", "vip" vs "vip scale"
-    let aliasMatch = false;
-    if (cleanSearch.includes('xfinite') || cleanSearch.includes('xfnite')) {
-      aliasMatch =
-        title.includes('xfnite') ||
-        title.includes('xfinite') ||
-        client.includes('xfnite') ||
-        client.includes('xfinite');
-    } else if (cleanSearch.includes('vip')) {
-      aliasMatch = title.includes('vip') || client.includes('vip');
-    }
-
-    return titleMatch || clientMatch || folderMatch || descMatch || adminMatch || tagMatch || aliasMatch;
+    if (title.includes(searchWords.join(' '))) return 0;
+    if (searchWords.every((w) => title.includes(w))) return 1;
+    if (searchWords.every((w) => everywhere.includes(w))) return 2;
+    return -1;
   };
 
-  const filteredQueued = queuedTasks.filter(isSearchMatching);
+  /** Matches only, best matches first (stable, so the board's own order breaks ties). */
+  const rankBySearch = (tasks: TaskMapItem[]) =>
+    !cleanSearch
+      ? tasks
+      : tasks
+          .map((t, i) => ({ t, i, r: searchRank(t) }))
+          .filter((x) => x.r >= 0)
+          .sort((a, b) => a.r - b.r || a.i - b.i)
+          .map((x) => x.t);
+
+  const filteredQueued = rankBySearch(queuedTasks);
 
   // Candidate pool for available tasks:
   // When cleanSearch is empty: display availableTasks (clean active pool, e.g. 119 client tasks).
@@ -200,7 +206,7 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
     return Array.from(map.values());
   }, [cleanSearch, availableTasks, allAvailableTasks, allTasks, queuedTasks, remoteAdminTasks]);
 
-  const filteredAvailable = searchableAvailablePool.filter(isSearchMatching);
+  const filteredAvailable = rankBySearch(searchableAvailablePool);
 
   return (
     <>

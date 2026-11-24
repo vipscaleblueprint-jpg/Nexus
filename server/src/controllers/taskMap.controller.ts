@@ -2168,11 +2168,6 @@ async function executeTaskMapAssignment(
         error: 'Target MA is required to transfer a task',
       });
     }
-    if (action === 'ASSIGN' && mode === 'IN_PROGRESS' && isPm) {
-      return res.status(403).json({
-        error: 'Project Managers cannot move tasks into In Progress. Moving a task to In Progress is the MA\'s action only.',
-      });
-    }
 
     const actorUser = await prisma.user.findUnique({
       where: { id: user.id },
@@ -3010,19 +3005,100 @@ export const transferTaskMapTask = async (req: Request, res: Response) => {
 };
 
 /**
- * Claim an available task from the pool (Restricted: PMs/Admins only)
+ * Search or list tasks under Admin folder or known Admin lists regardless of status (Closed, Daily, In Progress, etc.)
+ */
+export const getAdminTasks = async (req: Request, res: Response) => {
+  try {
+    const rawQ = ((req.query.q as string) || '').trim().toLowerCase();
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 100, 250);
+
+    // 1. Locate all lists under the Admin folder or in ADMIN_LIST_NAMES
+    const adminLists = await prisma.list.findMany({
+      where: {
+        OR: [
+          { name: { in: Array.from(ADMIN_LIST_NAMES), mode: 'insensitive' } },
+          { folder: { name: { contains: 'Admin', mode: 'insensitive' } } },
+        ],
+      },
+      select: { id: true, name: true, folder: { select: { id: true, name: true } } },
+    });
+    const adminListIds = adminLists.map((l) => l.id);
+
+    // Build search conditions across title, list name, folder name with NO status restrictions
+    let whereClause: any = {
+      listId: { in: adminListIds },
+    };
+
+    if (rawQ) {
+      if (rawQ !== 'admin' && rawQ !== 'adm') {
+        const orConditions: any[] = [
+          { title: { contains: rawQ, mode: 'insensitive' } },
+          { list: { name: { contains: rawQ, mode: 'insensitive' } } },
+          { list: { folder: { name: { contains: rawQ, mode: 'insensitive' } } } },
+        ];
+
+        // Handle common aliases/typos: "xfinite" vs "xfnite"
+        if (rawQ.includes('xfinite')) {
+          const alias = rawQ.replace(/xfinite/g, 'xfnite');
+          orConditions.push({ title: { contains: alias, mode: 'insensitive' } });
+          orConditions.push({ list: { name: { contains: alias, mode: 'insensitive' } } });
+        } else if (rawQ.includes('xfnite')) {
+          const alias = rawQ.replace(/xfnite/g, 'xfinite');
+          orConditions.push({ title: { contains: alias, mode: 'insensitive' } });
+          orConditions.push({ list: { name: { contains: alias, mode: 'insensitive' } } });
+        }
+
+        whereClause.OR = orConditions;
+      }
+    }
+
+    const tasks = await prisma.task.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        assigneeId: true,
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            folder: { select: { id: true, name: true } },
+          },
+        },
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+    });
+
+    const mappedTasks = tasks.map((t) => ({
+      ...t,
+      isAdminTask: true,
+      isClosed: isClosedStatus((t.status || '').toUpperCase().replace(/[\s_-]+/g, '')),
+      progress: {
+        client: t.list?.name || 'Admin',
+      },
+    }));
+
+    return res.json({ success: true, tasks: mappedTasks });
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching admin tasks');
+    return res.status(500).json({ error: 'Failed to fetch admin tasks' });
+  }
+};
+
+/**
+ * Claim an available task from the pool (Assign to self)
  */
 export const claimTask = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'Authentication required' });
-
-    // Enforce that only PMs and Admins can assign/claim from Available tasks
-    const allowed = await canUserSetAssignees(user.id);
-    if (!allowed) {
-      return res.status(403).json({ error: 'Only Project Managers and Admins can assign tasks from Available tasks' });
-    }
 
     // Update Task assignee
     const task = await prisma.task.update({

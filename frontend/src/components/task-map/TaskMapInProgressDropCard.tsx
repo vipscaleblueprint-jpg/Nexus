@@ -4,28 +4,35 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { UploadCloud, Search, X, Flag, Play } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
-import { TaskMapItem } from '@/api/taskMap';
+import { TaskMapItem, isTaskUnderAdmin, taskMapApi } from '@/api/taskMap';
 
 interface Props {
   userId: string;
   userName: string;
   availableTasks: TaskMapItem[];
+  allAvailableTasks?: TaskMapItem[];
+  allTasks?: TaskMapItem[];
   queuedTasks: TaskMapItem[];
-  onSelectTask: (taskId: string) => Promise<void> | void;
+  onSelectTask: (taskId: string, task?: TaskMapItem) => Promise<void> | void;
   disabled?: boolean;
   canBrowse?: boolean;
+  roleLabel?: string;
 }
 
 export const TaskMapInProgressDropCard: React.FC<Props> = ({
   userId,
   userName,
   availableTasks,
+  allAvailableTasks,
+  allTasks,
   queuedTasks,
   onSelectTask,
   disabled = false,
   canBrowse,
+  roleLabel,
 }) => {
   const allowBrowse = canBrowse !== undefined ? canBrowse : !disabled;
+  const role = roleLabel || 'MA';
   const { setNodeRef, isOver } = useDroppable({
     id: `in-progress-${userId}`,
     data: {
@@ -38,8 +45,8 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
 
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [remoteAdminTasks, setRemoteAdminTasks] = useState<TaskMapItem[]>([]);
   const cardRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
@@ -49,7 +56,7 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
       e.preventDefault();
     }
     if (!isOpen) {
-      const anchor = cardRef.current || buttonRef.current;
+      const anchor = cardRef.current;
       if (anchor) {
         const rect = anchor.getBoundingClientRect();
         const popoverWidth = 300;
@@ -99,19 +106,101 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
   }, [isOpen]);
 
   const cleanSearch = search.toLowerCase().trim();
-  const filteredQueued = queuedTasks.filter((t) => {
-    if (!cleanSearch) return true;
-    const titleMatch = (t.title || '').toLowerCase().includes(cleanSearch);
-    const clientMatch = (t.progress?.client || t.list?.name || '').toLowerCase().includes(cleanSearch);
-    return titleMatch || clientMatch;
-  });
 
-  const filteredAvailable = availableTasks.filter((t) => {
+  // Live remote search for Admin tasks across all statuses (Closed, Daily, In Progress, etc.)
+  useEffect(() => {
+    if (!isOpen) {
+      setRemoteAdminTasks([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await taskMapApi.searchAdminTasks(cleanSearch || undefined, 100);
+        setRemoteAdminTasks(results);
+      } catch (err) {
+        console.warn('Error fetching admin tasks:', err);
+      }
+    }, cleanSearch ? 150 : 0);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, cleanSearch]);
+
+  const isSearchMatching = (t: TaskMapItem) => {
     if (!cleanSearch) return true;
-    const titleMatch = (t.title || '').toLowerCase().includes(cleanSearch);
-    const clientMatch = (t.progress?.client || t.list?.name || '').toLowerCase().includes(cleanSearch);
-    return titleMatch || clientMatch;
-  });
+    const title = (t.title || '').toLowerCase();
+    const client = (t.progress?.client || t.list?.name || '').toLowerCase();
+    const folder = (t.list?.folder?.name || '').toLowerCase();
+    const desc = ((t as any).description || '').toLowerCase();
+
+    const titleMatch = title.includes(cleanSearch);
+    const clientMatch = client.includes(cleanSearch);
+    const folderMatch = folder.includes(cleanSearch);
+    const descMatch = desc.includes(cleanSearch);
+    const adminMatch = (cleanSearch.includes('admin') || cleanSearch === 'adm') && isTaskUnderAdmin(t);
+    const tagMatch = ((t as any).tags || []).some((tag: any) =>
+      (typeof tag === 'string' ? tag : tag?.name || '').toLowerCase().includes(cleanSearch)
+    );
+
+    // Support common aliases/spelling variations: "xfinite" vs "xfnite", "vip" vs "vip scale"
+    let aliasMatch = false;
+    if (cleanSearch.includes('xfinite') || cleanSearch.includes('xfnite')) {
+      aliasMatch =
+        title.includes('xfnite') ||
+        title.includes('xfinite') ||
+        client.includes('xfnite') ||
+        client.includes('xfinite');
+    } else if (cleanSearch.includes('vip')) {
+      aliasMatch = title.includes('vip') || client.includes('vip');
+    }
+
+    return titleMatch || clientMatch || folderMatch || descMatch || adminMatch || tagMatch || aliasMatch;
+  };
+
+  const filteredQueued = queuedTasks.filter(isSearchMatching);
+
+  // Candidate pool for available tasks:
+  // When cleanSearch is empty: display availableTasks (clean active pool, e.g. 119 client tasks).
+  // When cleanSearch has input: search across availableTasks, allAvailableTasks, allTasks, and remoteAdminTasks (NO status restrictions for Admin tasks!).
+  const searchableAvailablePool = React.useMemo(() => {
+    if (!cleanSearch) {
+      return availableTasks;
+    }
+
+    const map = new Map<string, TaskMapItem>();
+    const queuedIdSet = new Set(queuedTasks.map((t) => t.id));
+
+    // 1. Regular available tasks
+    for (const t of availableTasks) {
+      if (t && t.id) map.set(t.id, t);
+    }
+
+    // 2. Full unfiltered available pool
+    const extraPool = allAvailableTasks || [];
+    for (const t of extraPool) {
+      if (t && t.id && !queuedIdSet.has(t.id)) {
+        map.set(t.id, t);
+      }
+    }
+
+    // 3. Admin tasks from allTasks regardless of status (no status restrictions)
+    const extraTasks = allTasks || [];
+    for (const t of extraTasks) {
+      if (!t || !t.id || map.has(t.id) || queuedIdSet.has(t.id)) continue;
+      if (!isTaskUnderAdmin(t)) continue;
+      map.set(t.id, t);
+    }
+
+    // 4. Remote Admin tasks fetched from server (all 565 admin tasks in ClickUp/DB regardless of status)
+    for (const t of remoteAdminTasks) {
+      if (!t || !t.id || map.has(t.id) || queuedIdSet.has(t.id)) continue;
+      map.set(t.id, t);
+    }
+
+    return Array.from(map.values());
+  }, [cleanSearch, availableTasks, allAvailableTasks, allTasks, queuedTasks, remoteAdminTasks]);
+
+  const filteredAvailable = searchableAvailablePool.filter(isSearchMatching);
 
   return (
     <>
@@ -168,7 +257,7 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
           }`}
         >
           {isOver && !allowBrowse
-            ? 'Only the MA can move tasks to In Progress'
+            ? `Only the assigned ${role} or PM can move tasks to In Progress`
             : isOver
               ? 'Drop task to start In Progress'
               : 'Choose a task or drag & drop it here'}
@@ -176,25 +265,19 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
 
         {/* Subtitle Text */}
         <p className="text-[10px] text-zinc-500 mt-0.5 mb-1.5">
-          {allowBrowse ? 'Drop to set In Progress · Prioritized at top' : 'Only the assigned MA can start In Progress'}
+          {allowBrowse
+            ? 'Click whole block to browse · Drop to set In Progress'
+            : `Only the assigned ${role} or PM can start In Progress`}
         </p>
 
-        {/* Browse Tasks Button (MA own column only) */}
+        {/* Browse Tasks Action Pill (whole block triggers browse) */}
         {allowBrowse && (
-          <button
-            ref={buttonRef}
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              togglePopover(e);
-            }}
-            className="px-3 py-1 rounded-md border border-zinc-700/80 bg-zinc-800 hover:bg-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-white hover:border-zinc-500 transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+          <div
+            className="px-3 py-1 rounded-md border border-zinc-700/80 bg-zinc-800 group-hover:bg-zinc-700 text-[11px] font-semibold text-zinc-300 group-hover:text-white group-hover:border-zinc-500 transition-all shadow-xs flex items-center gap-1.5 pointer-events-none select-none"
           >
-            <Search className="size-3 text-zinc-400" />
+            <Search className="size-3 text-zinc-400 group-hover:text-zinc-200" />
             <span>Browse Tasks</span>
-          </button>
+          </div>
         )}
       </div>
 
@@ -257,30 +340,47 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
                     Assigned Queue ({filteredQueued.length})
                   </span>
                   <div className="space-y-1">
-                    {filteredQueued.map((task) => (
-                      <button
-                        key={task.id}
-                        type="button"
-                        onClick={async () => {
-                          setIsOpen(false);
-                          await onSelectTask(task.id);
-                        }}
-                        className="w-full text-left p-1.5 rounded-lg bg-card hover:bg-hover-subtle border border-border hover:border-border transition-all flex items-center justify-between gap-2 group cursor-pointer"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-foreground truncate">
-                            {task.title}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground truncate">
-                            {task.progress?.client || task.list?.name || 'General'}
-                          </p>
-                        </div>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#D04A7C]/15 text-[#D04A7C] border border-[#D04A7C]/30 shrink-0 flex items-center gap-1">
-                          <Play className="size-2.5 fill-current" />
-                          Start
-                        </span>
-                      </button>
-                    ))}
+                    {filteredQueued.map((task) => {
+                      const isAdmin = isTaskUnderAdmin(task);
+                      const clientName = task.progress?.client || task.list?.name || (isAdmin ? 'Admin' : 'General');
+                      const rawStatus = task.status || (task.isClosed ? 'Closed' : '');
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={async () => {
+                            setIsOpen(false);
+                            await onSelectTask(task.id, task);
+                          }}
+                          className="w-full text-left p-1.5 rounded-lg bg-card hover:bg-hover-subtle border border-border hover:border-border transition-all flex items-center justify-between gap-2 group cursor-pointer"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-xs font-medium text-foreground truncate max-w-[190px]">
+                                {task.title}
+                              </p>
+                              {isAdmin && (
+                                <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
+                                  Admin
+                                </span>
+                              )}
+                              {rawStatus && (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60 shrink-0">
+                                  {rawStatus}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {clientName}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#D04A7C]/15 text-[#D04A7C] border border-[#D04A7C]/30 shrink-0 flex items-center gap-1">
+                            <Play className="size-2.5 fill-current" />
+                            Start
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -292,30 +392,47 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
                     Available Pool ({filteredAvailable.length})
                   </span>
                   <div className="space-y-1">
-                    {filteredAvailable.slice(0, 15).map((task) => (
-                      <button
-                        key={task.id}
-                        type="button"
-                        onClick={async () => {
-                          setIsOpen(false);
-                          await onSelectTask(task.id);
-                        }}
-                        className="w-full text-left p-1.5 rounded-lg bg-card hover:bg-hover-subtle border border-border hover:border-border transition-all flex items-center justify-between gap-2 group cursor-pointer"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-foreground truncate">
-                            {task.title}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground truncate">
-                            {task.progress?.client || task.list?.name || 'General'}
-                          </p>
-                        </div>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0 flex items-center gap-1">
-                          <Play className="size-2.5 fill-current" />
-                          Assign & Start
-                        </span>
-                      </button>
-                    ))}
+                    {filteredAvailable.slice(0, 60).map((task) => {
+                      const isAdmin = isTaskUnderAdmin(task);
+                      const clientName = task.progress?.client || task.list?.name || (isAdmin ? 'Admin' : 'General');
+                      const rawStatus = task.status || (task.isClosed ? 'Closed' : '');
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={async () => {
+                            setIsOpen(false);
+                            await onSelectTask(task.id, task);
+                          }}
+                          className="w-full text-left p-1.5 rounded-lg bg-card hover:bg-hover-subtle border border-border hover:border-border transition-all flex items-center justify-between gap-2 group cursor-pointer"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-xs font-medium text-foreground truncate max-w-[190px]">
+                                {task.title}
+                              </p>
+                              {isAdmin && (
+                                <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
+                                  Admin
+                                </span>
+                              )}
+                              {rawStatus && (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60 shrink-0">
+                                  {rawStatus}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {clientName}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0 flex items-center gap-1">
+                            <Play className="size-2.5 fill-current" />
+                            Assign & Start
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

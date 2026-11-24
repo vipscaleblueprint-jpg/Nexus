@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getTaskMapData,
+  getAdminTasks,
   getOptions,
   upsertOption,
   deleteOption,
@@ -39,6 +40,7 @@ export const taskMapRouter = Router();
 taskMapRouter.use(authenticateToken);
 
 taskMapRouter.get('/data', getTaskMapData);
+taskMapRouter.get('/admin-tasks', getAdminTasks);
 taskMapRouter.get('/launch', getLaunchMapData);
 taskMapRouter.get('/launch/candidates', getLaunchCandidates);
 taskMapRouter.get('/options', getOptions);

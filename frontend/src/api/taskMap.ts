@@ -813,6 +813,20 @@ export const taskMapApi = {
     });
   },
 
+  searchAdminTasks: async (query?: string, limit?: number): Promise<TaskMapItem[]> => {
+    try {
+      const q = new URLSearchParams();
+      if (query) q.set('q', query);
+      if (limit) q.set('limit', String(limit));
+      q.set('_t', String(Date.now()));
+      const res = await apiClient<{ success: boolean; tasks: TaskMapItem[] }>(`/api/task-map/admin-tasks?${q.toString()}`);
+      return res.tasks || [];
+    } catch (err) {
+      console.warn('Failed to search admin tasks:', err);
+      return [];
+    }
+  },
+
   getOptions: async (): Promise<{ success: boolean; options: TaskMapOption[] }> => {
     return apiClient<{ success: boolean; options: TaskMapOption[] }>(`/api/task-map/options?_t=${Date.now()}`);
   },
@@ -1143,7 +1157,283 @@ export const taskMapApi = {
       markTaskSavingToDb(taskId, false);
     }
   },
+
+  /**
+   * Syncs task progress and time-tracking directly to the user's MA Daily Schedule spreadsheet
+   * (reference: MA Daily Schedule spreadsheet & appscript.js).
+   * - On Drag/Select to In Progress (START): records Time In = now, Time Out = blank, status = "In Progress".
+   * - On Transition to Handover or To Review (STOP): records Time Out = now, validates and splits any midnight crossings (11:59 PM -> 12:00 AM),
+   *   and attaches Task Deliverables Description (Col K) & Task Update and Deliverables (Col L).
+   */
+  syncScheduleToSpreadsheet: async (
+    params: SyncScheduleToSpreadsheetParams
+  ): Promise<{
+    success: boolean;
+    rows: SpreadsheetScheduleRow[];
+    isSplitAcrossMidnight: boolean;
+    message?: string;
+  }> => {
+    const start = params.startedAt ? new Date(params.startedAt) : new Date();
+    const end = params.stoppedAt ? new Date(params.stoppedAt) : params.mode === 'STOP' ? new Date() : null;
+
+    const rows = splitMidnightScheduleRows({
+      start,
+      end,
+      client: params.clientName,
+      task: params.taskTitle,
+      taskLink: params.taskLink,
+      status: params.status,
+      timeTracker: params.timeTracker || (params.isUpwork ? 'Upwork' : 'No Need to Track'),
+      taskDeliverablesDescription: params.taskDeliverablesDescription || params.taskTitle,
+      taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
+    });
+
+    const isSplitAcrossMidnight = rows.length > 1;
+
+    return apiClient<{
+      success: boolean;
+      rows: SpreadsheetScheduleRow[];
+      isSplitAcrossMidnight: boolean;
+      message?: string;
+    }>('/api/task-map/sheets/sync-row', {
+      method: 'POST',
+      body: JSON.stringify({
+        taskId: params.taskId,
+        subtaskId: params.subtaskId,
+        mode: params.mode,
+        sheetRow: params.sheetRow,
+        rows,
+        isSplitAcrossMidnight,
+      }),
+    });
+  },
 };
+
+// ===========================================================================
+// MA Daily Schedule Spreadsheet Column Map & Time Tracking Types
+// Reference: MA Daily Schedule spreadsheet & appscript.js
+// ===========================================================================
+
+export interface SpreadsheetScheduleRow {
+  rowNumber?: number;
+  date: string; // Col A (1): e.g. "Tuesday, September 1, 2026"
+  timeIn: string; // Col B (2): e.g. "8:40 AM"
+  timeOut: string; // Col C (3): e.g. "12:00 PM" or ""
+  durationNum?: number | string; // Col E (5): e.g. 3.33 or formula
+  durationHours?: string; // Col F (6): e.g. "3hrs 20min"
+  client: string; // Col G (7): Client Name
+  timeTracker: string; // Col H (8): "Upwork" | "No Need to Track" | "Clockify"
+  task: string; // Col I (9): Task Title
+  dc?: boolean | string; // Col J (10): false
+  taskDeliverablesDescription?: string; // Col K (11): High-level deliverable scope/title
+  taskUpdateAndDeliverables?: string; // Col L (12): Detailed update & outcome
+  taskLink?: string; // Col M (13): Nexus or ClickUp link
+  taskStatus: string; // Col N (14): "In Progress" | "In Review" | "Handover" | "Closed"
+  wasDeliverablesSubmitted?: string; // Col O (15): "None" | "Yes"
+  isRecorded?: string; // Col P (16): "No" | "Yes"
+  doubleCheckedBy?: string; // Col Q (17)
+  automation?: string; // Col R (18)
+  notes?: string; // Col S (19)
+}
+
+export interface SyncScheduleToSpreadsheetParams {
+  taskId: string;
+  subtaskId?: string | null;
+  taskTitle: string;
+  clientName: string;
+  taskLink?: string;
+  status: string; // "In Progress" | "Handover" | "To Review" | "In Review"
+  mode: 'START' | 'STOP' | 'UPDATE';
+  startedAt?: Date | string | null;
+  stoppedAt?: Date | string | null;
+  taskDeliverablesDescription?: string | null;
+  taskUpdateAndDeliverables?: string | null;
+  timeTracker?: string | null;
+  isUpwork?: boolean;
+  sheetRow?: number | null;
+}
+
+/** Formats a Date object into Manila 12-hour time format: "h:mm A" (e.g. "8:40 AM", "11:59 PM", "12:00 AM") */
+export function formatManilaTime(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+/** Formats a Date object into the standard MA Daily Schedule date header: "dddd, MMMM d, yyyy" */
+export function formatManilaDateLong(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+/**
+ * Calculates duration between two time strings on the same day.
+ * Returns { durationNum: number, durationHours: string }
+ */
+export function calculateScheduleDuration(
+  timeInStr: string,
+  timeOutStr: string
+): { durationNum: number; durationHours: string } {
+  if (!timeInStr || !timeOutStr) {
+    return { durationNum: 0, durationHours: '0min' };
+  }
+  const parseMinutes = (t: string): number => {
+    const match = t.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return 0;
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const ampm = match[3].toUpperCase();
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + m;
+  };
+  const inMin = parseMinutes(timeInStr);
+  const outMin = parseMinutes(timeOutStr);
+  let diffMin = outMin - inMin;
+  if (diffMin < 0) {
+    diffMin += 24 * 60;
+  }
+  const hours = diffMin / 60;
+  const hPart = Math.floor(hours);
+  const mPart = Math.round(diffMin % 60);
+  const durationHours = hPart > 0 ? `${hPart}hr${hPart > 1 ? 's' : ''} ${mPart}min` : `${mPart}min`;
+  return {
+    durationNum: parseFloat(hours.toFixed(2)),
+    durationHours,
+  };
+}
+
+/**
+ * Handles midnight crossovers (e.g. 11:59 PM to 12:00 AM / 12:29 AM next day).
+ * In Google Sheets, a row cannot have a Time Out on a different date without breaking daily schedule
+ * calculations. When a session crosses midnight (12:00 AM), this cleanly splits the session into
+ * separate rows per calendar day.
+ */
+export function splitMidnightScheduleRows(
+  session: {
+    start: Date;
+    end?: Date | null;
+    client: string;
+    task: string;
+    taskLink?: string;
+    status: string;
+    timeTracker?: string;
+    taskDeliverablesDescription?: string;
+    taskUpdateAndDeliverables?: string;
+  }
+): SpreadsheetScheduleRow[] {
+  const { start, end } = session;
+  if (!end) {
+    // Ongoing task (still in progress): single row for start date with blank Time Out
+    return [
+      {
+        date: formatManilaDateLong(start),
+        timeIn: formatManilaTime(start),
+        timeOut: '',
+        durationNum: 0,
+        durationHours: '0min',
+        client: session.client,
+        timeTracker: session.timeTracker || 'No Need to Track',
+        task: session.task,
+        dc: 'FALSE',
+        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
+        taskLink: session.taskLink || '',
+        taskStatus: session.status || 'In Progress',
+        wasDeliverablesSubmitted: 'None',
+        isRecorded: 'Yes',
+      },
+    ];
+  }
+
+  // Get calendar keys for start and end in Manila timezone
+  const startKey = getManilaDateKey(start);
+  const endKey = getManilaDateKey(end);
+
+  // Case 1: Same day (normal shift)
+  if (startKey === endKey) {
+    const timeIn = formatManilaTime(start);
+    const timeOut = formatManilaTime(end);
+    const { durationNum, durationHours } = calculateScheduleDuration(timeIn, timeOut);
+    return [
+      {
+        date: formatManilaDateLong(start),
+        timeIn,
+        timeOut,
+        durationNum,
+        durationHours,
+        client: session.client,
+        timeTracker: session.timeTracker || 'No Need to Track',
+        task: session.task,
+        dc: 'FALSE',
+        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
+        taskLink: session.taskLink || '',
+        taskStatus: session.status,
+        wasDeliverablesSubmitted: 'Yes',
+        isRecorded: 'Yes',
+      },
+    ];
+  }
+
+  // Case 2: Crosses midnight (e.g. 11:59 PM to 12:29 AM next day)
+  // Split into Row 1 (Day 1 until 12:00 AM) and Row 2 (Day 2 starting at 12:00 AM)
+  const rows: SpreadsheetScheduleRow[] = [];
+
+  // Row 1: Day 1 (from start time to 12:00 AM midnight)
+  const timeIn1 = formatManilaTime(start);
+  const timeOut1 = '12:00 AM';
+  const duration1 = calculateScheduleDuration(timeIn1, '12:00 AM');
+  rows.push({
+    date: formatManilaDateLong(start),
+    timeIn: timeIn1,
+    timeOut: timeOut1,
+    durationNum: duration1.durationNum,
+    durationHours: duration1.durationHours,
+    client: session.client,
+    timeTracker: session.timeTracker || 'No Need to Track',
+    task: session.task,
+    dc: 'FALSE',
+    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskUpdateAndDeliverables: `${session.taskUpdateAndDeliverables || ''} (Part 1 - Until Midnight)`.trim(),
+    taskLink: session.taskLink || '',
+    taskStatus: 'In Progress', // closed out for day 1
+    wasDeliverablesSubmitted: 'None',
+    isRecorded: 'Yes',
+  });
+
+  // Row 2: Day 2 (from 12:00 AM midnight to end time)
+  const timeIn2 = '12:00 AM';
+  const timeOut2 = formatManilaTime(end);
+  const duration2 = calculateScheduleDuration('12:00 AM', timeOut2);
+  rows.push({
+    date: formatManilaDateLong(end),
+    timeIn: timeIn2,
+    timeOut: timeOut2,
+    durationNum: duration2.durationNum,
+    durationHours: duration2.durationHours,
+    client: session.client,
+    timeTracker: session.timeTracker || 'No Need to Track',
+    task: session.task,
+    dc: 'FALSE',
+    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
+    taskLink: session.taskLink || '',
+    taskStatus: session.status,
+    wasDeliverablesSubmitted: 'Yes',
+    isRecorded: 'Yes',
+  });
+
+  return rows;
+}
 
 // ===========================================================================
 // User Roles & Short/Recreation Labels Mapping
@@ -1399,9 +1689,16 @@ export function isTaskUnderAdmin(task?: Pick<TaskMapItem, 'isAdminTask' | 'list'
   const listName = (task.list?.name || '').trim().toLowerCase();
   return (
     folderName === 'admin' ||
+    folderName.includes('admin') ||
     HIDDEN_DEFAULT_FOLDER_KEYWORDS.some((kw) => folderName.includes(kw)) ||
     listName === 'admin' ||
-    ADMIN_LIST_NAMES.has(listName)
+    ADMIN_LIST_NAMES.has(listName) ||
+    listName.includes('vip scale') ||
+    listName.includes('xfnite') ||
+    listName.includes('xfinite') ||
+    listName.includes('snaply') ||
+    listName.includes('harmony') ||
+    listName.includes('jenesia')
   );
 }
 

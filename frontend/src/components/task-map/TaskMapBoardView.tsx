@@ -24,6 +24,7 @@ import {
   attachDragToScroll,
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
+  formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -134,6 +135,8 @@ import {
 interface Props {
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
+  allAvailablePool?: TaskMapItem[];
+  allTasks?: TaskMapItem[];
   options: TaskMapOption[];
   allUsers?: any[];
   shiftUsers?: any[];
@@ -147,7 +150,7 @@ interface Props {
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
-  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string) => Promise<void> | void;
+  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string, taskOverride?: TaskMapItem) => Promise<void> | void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   isHistory?: boolean;
   search?: string;
@@ -494,13 +497,34 @@ const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   const folderName = (task.list?.folder?.name || '').toLowerCase();
   const desc = (task.description || '').toLowerCase();
   const statuses = (task.taskMap?.statuses || []).map((s: string) => (s || '').toLowerCase());
-  return (
+
+  const basicMatch =
     title.includes(q) ||
     clientName.includes(q) ||
     folderName.includes(q) ||
     desc.includes(q) ||
-    statuses.some((s: string) => s.includes(q))
-  );
+    statuses.some((s: string) => s.includes(q));
+
+  if (basicMatch) return true;
+
+  if (q.includes('admin') || q === 'adm') {
+    return isTaskUnderAdmin(task);
+  }
+
+  if (q.includes('xfinite') || q.includes('xfnite')) {
+    return (
+      title.includes('xfnite') ||
+      title.includes('xfinite') ||
+      clientName.includes('xfnite') ||
+      clientName.includes('xfinite')
+    );
+  }
+
+  if (q.includes('vip')) {
+    return title.includes('vip') || clientName.includes('vip');
+  }
+
+  return false;
 };
 
 const getColumnPriorityCounts = (items: TaskMapItem[]) => {
@@ -1030,6 +1054,8 @@ const CardTransferDropdown: React.FC<{
 export const TaskMapBoardView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
+  allAvailablePool,
+  allTasks,
   options = [],
   allUsers = [],
   shiftUsers = [],
@@ -2147,21 +2173,22 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
   };
 
-  const handleSelectInProgressTask = async (taskId: string, targetUserId: string) => {
+  const handleSelectInProgressTask = async (taskId: string, targetUserId: string, taskOverride?: TaskMapItem) => {
     if (!canStartInProgressSlot({ isPmUser, currentUserId: currentUser?.id, columnUserId: targetUserId })) {
-      toast.error("Moving a task to In Progress is the assigned MA's action only");
+      toast.error("Only the assigned MA or Project Managers can move tasks to In Progress");
       return;
     }
     const targetUser = getUserProfile(targetUserId);
-    const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    const allPoolAndTasks = [...(allTasks || tasks), ...(allAvailablePool || availablePool)];
+    const existingTask = allPoolAndTasks.find((t) => t.id === taskId) || taskOverride;
     const nextRoles = getResolvedRoleRestrictionsForUser(existingTask, targetUser);
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
     toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
     try {
       if (onAssignTask) {
-        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
+        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles, undefined, existingTask);
       } else {
-        const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask!.status) : 'IN PROGRESS';
+        const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask?.status) : 'IN PROGRESS';
         await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
         if (onTaskUpdate) {
           await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
@@ -2384,6 +2411,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (compactNorm === 'handover') {
       if (isSelecting) {
         const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+          task.progress.timeOut = formatManilaTime(new Date());
+        }
         if (onTaskUpdate) {
           await onTaskUpdate(task.id, { assigneeId: null, status: preservedStatus });
         } else {
@@ -2443,6 +2473,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
       if (isSelecting) {
         const targetStatus = 'IN REVIEW';
+        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+          task.progress.timeOut = formatManilaTime(new Date());
+        }
         if (ownerId) {
           setRecentlyMovedToReviewByUser((prev) => {
             const existing = prev[ownerId] || [];
@@ -3015,7 +3048,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
               hasSpreadsheetTaskInput(t, { isHistory, now: boardTime }) &&
               doesProgressMatchUser(t.progress?.maName, user.name)
             );
-            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput) return false;
+            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !searchQuery) return false;
 
             // Client filter check: the General Task representing the user's active schedule input is always shown in their column
             if (!t.isAssumptionBlock && userClientFilter !== 'ALL') {
@@ -3676,7 +3709,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   handleTaskMapSubStatusToggle(task, label, nextStatuses, user)
                                 }
                                 onOptionsUpdated={onOptionsUpdated}
-                                readOnly={Boolean(cardOptions?.forceNonDraggable || isLiveWorking || task.isAssumptionBlock)}
+                                readOnly={Boolean(cardOptions?.forceNonDraggable || task.isAssumptionBlock)}
                               />
                             </div>
                           </div>
@@ -3770,8 +3803,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           userId={userId}
                           userName={user.name}
                           availableTasks={sortAvailablePoolTasks(availablePool)}
+                          allAvailableTasks={allAvailablePool ? sortAvailablePoolTasks(allAvailablePool) : undefined}
+                          allTasks={allTasks || tasks}
                           queuedTasks={queuedTasks}
-                          onSelectTask={(taskId) => handleSelectInProgressTask(taskId, userId)}
+                          onSelectTask={(taskId, task) => handleSelectInProgressTask(taskId, userId, task)}
                           disabled={false}
                           canBrowse={allowStartInProgress}
                         />

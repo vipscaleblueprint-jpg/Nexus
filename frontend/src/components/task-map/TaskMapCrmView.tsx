@@ -16,6 +16,7 @@ import {
   isTaskInClientDashboard,
   isDormantClientTask,
   getTaskCrmWaitingInfo,
+  formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -34,19 +35,24 @@ import {
   Clock,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { isCrmUser, hasCrmAccess, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
+import { isCrmUser, hasCrmAccess, isProjectManagerOrAdmin, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
+import { useLiveClock } from '@/lib/liveClock';
+import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
+import { isTaskActiveInProgress, isTaskLiveWorking } from './TaskMapBoardView';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
   ColumnPriorityDropdown,
+  TaskTimeProgressSlot,
   matchesPriorityFilter,
   matchesSearchFilter,
   sortTasksUrgentFirst,
   hexToRgba,
   resolveSubStatusColor,
+  resolveTaskStatusColor,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -75,6 +81,8 @@ import {
 interface Props {
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
+  allAvailablePool?: TaskMapItem[];
+  allTasks?: TaskMapItem[];
   options: TaskMapOption[];
   allUsers?: any[];
   shiftUsers?: any[];
@@ -157,9 +165,39 @@ const DroppableColumn: React.FC<{
   );
 };
 
+const DroppableInProgressSlot: React.FC<{
+  userId: string;
+  children: React.ReactNode;
+  disabled?: boolean;
+}> = ({ userId, children, disabled }) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `in-progress-${userId}`,
+    data: {
+      type: 'in-progress-slot',
+      userId,
+    },
+    disabled,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-in-progress-dropzone="true"
+      data-no-drag-scroll="true"
+      className={`rounded-xl transition-colors duration-150 ${
+        isOver ? 'ring-2 ring-[#22A3AE] bg-[#22A3AE]/15 shadow-lg shadow-[#22A3AE]/20' : ''
+      }`}
+    >
+      {children}
+    </div>
+  );
+};
+
 export const TaskMapCrmView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
+  allAvailablePool,
+  allTasks,
   options = [],
   allUsers = [],
   shiftUsers = [],
@@ -178,6 +216,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
 }) => {
   const currentUser = useAppStore((s) => s.currentUser);
   const userHasAccess = hasCrmAccess(currentUser);
+  const boardLiveClock = useLiveClock(true);
+  const isPmUser = isProjectManagerOrAdmin(currentUser);
 
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
   const [blockedAuditAlert, setBlockedAuditAlert] = useState<{
@@ -456,7 +496,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
     const taskId = active.id as string;
     const targetColumnId = over.id as string;
-    const task = combinedTasks.find((t) => t.id === taskId);
+    const task = (allTasks || tasks).find((t) => t.id === taskId) || combinedTasks.find((t) => t.id === taskId);
     if (!task) return;
 
     const currentStatuses = task.taskMap?.statuses || [];
@@ -632,8 +672,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
       } else {
         await tasksApi.updateTask(taskId, { status: 'CLOSED' } as any).catch(console.error);
       }
-    } else if (targetColumnId.startsWith('col-crm-member-')) {
-      const memberId = targetColumnId.replace('col-crm-member-', '');
+    } else if (targetColumnId.startsWith('col-crm-member-') || targetColumnId.startsWith('in-progress-')) {
+      const memberId = targetColumnId.replace('col-crm-member-', '').replace('in-progress-', '');
       const member = crmUsers.find((u) => u.id === memberId);
       if (member) {
         const isAskClientTask =
@@ -649,6 +689,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
           if (!updatedStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'ASKCLIENT')) {
             updatedStatuses.push('Ask Client');
           }
+          if (targetColumnId.startsWith('in-progress-')) {
+            if (!updatedStatuses.includes('In progress')) {
+              updatedStatuses.push('In progress');
+            }
+          }
           toast.success(`Task assigned to ${member.name} (Ask Client)`);
           onStatusChange(taskId, updatedStatuses);
           if (onTaskUpdate) {
@@ -660,6 +705,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
           }
         } else {
           if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
+          if (targetColumnId.startsWith('in-progress-')) {
+            if (!updatedStatuses.includes('In progress')) {
+              updatedStatuses.push('In progress');
+            }
+          }
           toast.success(`Task assigned to ${member.name} for CRM outreach`);
           onStatusChange(taskId, updatedStatuses);
 
@@ -672,6 +722,31 @@ export const TaskMapCrmView: React.FC<Props> = ({
           }
         }
       }
+    }
+  };
+
+  const handleSelectInProgressTask = async (taskId: string, targetMemberId: string, taskOverride?: TaskMapItem) => {
+    const member = crmUsers.find((u) => u.id === targetMemberId);
+    if (!member) return;
+    const task = (allTasks || tasks).find((t) => t.id === taskId) || combinedTasks.find((t) => t.id === taskId) || taskOverride;
+    if (!task) return;
+
+    const currentStatuses = task.taskMap?.statuses || [];
+    let updatedStatuses = currentStatuses.filter(
+      (s) => !['SENT', 'SENT BUT WAITING', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
+    );
+    if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
+    if (!updatedStatuses.includes('In progress')) updatedStatuses.push('In progress');
+
+    toast.success(`Task set In Progress for ${member.name} (CRM)`);
+    onStatusChange(taskId, updatedStatuses);
+
+    if (onTaskUpdate) {
+      await onTaskUpdate(taskId, { assigneeId: member.id, status: 'CRM' });
+    } else {
+      await tasksApi
+        .updateTask(taskId, { assigneeId: member.id, status: 'CRM' } as any)
+        .catch(console.error);
     }
   };
 
@@ -688,9 +763,446 @@ export const TaskMapCrmView: React.FC<Props> = ({
     options.push(
       { id: 'opt-crm-followup', label: 'Follow up', color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff', order: 2 },
       { id: 'opt-crm-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 3 },
-      { id: 'opt-crm-closed', label: 'Closed', color: resolveSubStatusColor('Closed', TASK_MAP_STATUS_COLORS.CLOSED, task.list?.id, ls), textColor: '#ffffff', order: 4 }
+      { id: 'opt-crm-closed', label: 'Closed', color: resolveSubStatusColor('Closed', TASK_MAP_STATUS_COLORS.CLOSED, task.list?.id, ls), textColor: '#ffffff', order: 4 },
+      { id: 'opt-crm-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 5 },
+      { id: 'opt-crm-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 6 }
     );
     return options;
+  };
+
+  const renderCrmCard = (task: TaskMapItem, isLiveWorking: boolean = false) => {
+    const isSentWaitingCard = isCrmSent(task);
+    const waitingInfo = isSentWaitingCard ? getTaskCrmWaitingInfo(task) : null;
+    const showFollowUpBreathe = Boolean(waitingInfo?.rule.breathe);
+    const followUpHex = waitingInfo?.rule.hex || '#71717a';
+    const liveColor = resolveTaskStatusColor(
+      task.status || 'CRM',
+      task.listId || task.list?.id,
+      task.list?.statuses
+    ) || '#22A3AE';
+    const showBreathe = showFollowUpBreathe || isLiveWorking;
+    const breatheColor = showFollowUpBreathe ? followUpHex : liveColor;
+    const rawSubStatuses = task.taskMap?.statuses || [];
+    const displaySubStatuses = isSentWaitingCard
+      ? rawSubStatuses.length === 0 ||
+        rawSubStatuses.some((st) => {
+          const up = st.toUpperCase().trim();
+          return up === 'SENT' || up === 'WAITING';
+        })
+        ? ['Sent but Waiting']
+        : rawSubStatuses
+      : rawSubStatuses;
+
+    return (
+      <DraggableTaskCard key={task.id} task={task} disabled={false}>
+        <div
+          onClick={(e) => {
+            if (e.defaultPrevented) return;
+            onOpenDetail(task);
+          }}
+          className={`relative p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] border rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${
+            showBreathe
+              ? 'border-transparent shadow-md'
+              : 'border-border not-has-[[data-card-control]:hover]:hover:border-zinc-600/80'
+          }`}
+          style={
+            showBreathe
+              ? { borderColor: hexToRgba(breatheColor, 0.4) }
+              : undefined
+          }
+        >
+          {showBreathe && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe"
+              style={{
+                borderColor: breatheColor,
+                boxShadow: `0 0 0 2px ${hexToRgba(breatheColor, 0.42)}, 0 0 18px ${hexToRgba(breatheColor, 0.28)}`,
+              }}
+            />
+          )}
+          {/* Left: Task Info */}
+          <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+            {/* Client / List Name */}
+            {isLiveWorking ? (
+              <span
+                className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate text-[11px] mb-1"
+                style={{ color: liveColor }}
+              >
+                <span className="relative flex size-2 shrink-0">
+                  <span
+                    className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                    style={{ backgroundColor: liveColor }}
+                  />
+                  <span
+                    className="relative inline-flex rounded-full size-2"
+                    style={{ backgroundColor: liveColor }}
+                  />
+                </span>
+                {task.list?.name || 'General'}
+              </span>
+            ) : (
+              <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1">
+                {task.list?.name || 'General'}
+              </div>
+            )}
+
+            {/* Title */}
+            <h4
+              className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
+              title={task.title}
+            >
+              {task.title}
+            </h4>
+
+            {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
+            <div
+              className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Circle Dot Status Indicator */}
+              <CardStatusDropdown
+                taskId={task.id}
+                currentStatus={task.status || 'In progress'}
+                listId={task.listId || task.list?.id}
+                onSelect={async (newStatus) => {
+                  const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                  const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+                  if (!transitionCheck.allowed) {
+                    if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                      window.dispatchEvent(
+                        new CustomEvent('task:highlight-audits', {
+                          detail: {
+                            taskId: task.id,
+                            targetStatus: newStatus,
+                            uncheckedAudits: transitionCheck.uncheckedAudits,
+                            openSubtasks: transitionCheck.openSubtasks,
+                          },
+                        })
+                      );
+                    }
+                    setBlockedAuditAlert({
+                      isOpen: true,
+                      task,
+                      targetStatus: newStatus,
+                      uncheckedAudits: transitionCheck.uncheckedAudits,
+                      openSubtasks: transitionCheck.openSubtasks,
+                    });
+                    toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
+                    return;
+                  }
+
+                  if (onTaskUpdate) {
+                    await onTaskUpdate(task.id, { status: newStatus });
+                  } else {
+                    await tasksApi
+                      .updateTask(task.id, { status: newStatus } as any)
+                      .catch(console.error);
+                    onDataRefresh();
+                  }
+                  toast.success(`Status updated to ${newStatus}`);
+                }}
+              />
+
+              <TaskDescriptionButton
+                description={task.description}
+                taskTitle={task.title}
+              />
+
+              {/* Clickable Priority Flag */}
+              <CardPriorityDropdown
+                taskId={task.id}
+                priority={task.priority || 'NORMAL'}
+                onSelect={async (newPriority) => {
+                  if (onTaskUpdate) {
+                    await onTaskUpdate(task.id, { priority: newPriority as any });
+                  } else {
+                    await tasksApi
+                      .updateTask(task.id, { priority: newPriority as any })
+                      .catch(console.error);
+                    onDataRefresh();
+                  }
+                  toast.success(`Priority set to ${newPriority}`);
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Separator */}
+          <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
+
+          {/* Right: Section where Sub-Status is (with Posted date + Days Passed / Live Time in top right corner) */}
+          <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
+            <div className="flex justify-end items-center gap-1.5 flex-wrap">
+              {waitingInfo ? (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap"
+                  style={{
+                    backgroundColor: hexToRgba(followUpHex, 0.16),
+                    borderColor: hexToRgba(followUpHex, 0.45),
+                    color: waitingInfo.daysPassed === 0 ? '#a1a1aa' : followUpHex,
+                  }}
+                  title={`Sent but Waiting · ${waitingInfo.daysPassed} day(s) passed (${waitingInfo.rule.label}) since ${format(new Date(waitingInfo.waitingSince), 'MMM d, yyyy')}`}
+                >
+                  <Clock className="size-2.5 shrink-0" />
+                  <span>
+                    {waitingInfo.daysPassed === 0
+                      ? 'Today'
+                      : waitingInfo.daysPassed === 1
+                        ? '1 day'
+                        : `${waitingInfo.daysPassed} days`}
+                  </span>
+                </span>
+              ) : isLiveWorking || task.progress?.timeIn ? (
+                <TaskTimeProgressSlot task={task} isLive={isLiveWorking} />
+              ) : (
+                <span className="text-[10px] font-medium text-zinc-500">
+                  Posted {format(new Date(task.createdAt), 'MMM d')}
+                </span>
+              )}
+            </div>
+
+            <div
+              className="w-full"
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                Sub-Status
+              </span>
+              <TaskMapStatusDropdown
+                selectedStatuses={displaySubStatuses}
+                options={getCrmOptions(task)}
+                onToggleStatus={async (label, nextStatuses) => {
+                  const isSelecting = (nextStatuses || []).includes(label);
+                  const cleanNext = isSelecting ? [label] : [];
+
+                  if (label === 'Ready to Send' || label === 'To send') {
+                    if (isSelecting) {
+                      const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                      let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+                      if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                        try {
+                          const fresh = await tasksApi.getTask(task.id);
+                          if (fresh?.task) {
+                            const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+                            if (freshCheck.allowed) {
+                              transitionCheck = freshCheck;
+                              useAppStore.getState().updateTask(fresh.task);
+                            }
+                          }
+                        } catch {
+                          // fallback
+                        }
+                      }
+                      if (!transitionCheck.allowed) {
+                        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                          window.dispatchEvent(
+                            new CustomEvent('task:highlight-audits', {
+                              detail: {
+                                taskId: task.id,
+                                targetStatus: 'CRM',
+                                uncheckedAudits: transitionCheck.uncheckedAudits,
+                                openSubtasks: transitionCheck.openSubtasks,
+                              },
+                            })
+                          );
+                        }
+                        setBlockedAuditAlert({
+                          isOpen: true,
+                          task,
+                          targetStatus: 'CRM',
+                          uncheckedAudits: transitionCheck.uncheckedAudits,
+                          openSubtasks: transitionCheck.openSubtasks,
+                        });
+                        toast.error(transitionCheck.reason || 'Cannot move task to CRM');
+                        return;
+                      }
+
+                      onStatusChange(task.id, cleanNext);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'CRM' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                    } else {
+                      // User clicked 'Ready to Send' AGAIN in CRM -> revert misclick back to last status
+                      const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || 'IN REVIEW');
+                      onStatusChange(task.id, []);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: revertStatus });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info(`Reverted '${label}' — returned to ${revertStatus}`);
+                    }
+                  } else if (label === 'Sent but Waiting' || label === 'Sent') {
+                    if (isSelecting) {
+                      if (!isTaskInClientDashboard(task, clients)) {
+                        toast.error('Cannot mark as Sent: only tasks within Client Dashboard can be placed in Sent (this client is dormant or not in Client Dashboard).');
+                        return;
+                      }
+
+                      const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                      const transitionCheck = canTransitionTaskStatus(currentTask, 'WAITING');
+                      if (!transitionCheck.allowed) {
+                        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                          window.dispatchEvent(
+                            new CustomEvent('task:highlight-audits', {
+                              detail: {
+                                taskId: task.id,
+                                targetStatus: 'WAITING',
+                                uncheckedAudits: transitionCheck.uncheckedAudits,
+                                openSubtasks: transitionCheck.openSubtasks,
+                              },
+                            })
+                          );
+                        }
+                        setBlockedAuditAlert({
+                          isOpen: true,
+                          task,
+                          targetStatus: 'WAITING',
+                          uncheckedAudits: transitionCheck.uncheckedAudits,
+                          openSubtasks: transitionCheck.openSubtasks,
+                        });
+                        toast.error(transitionCheck.reason || 'Cannot move task to WAITING');
+                        return;
+                      }
+
+                      onStatusChange(task.id, ['Sent but Waiting']);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'WAITING' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.success('Task marked Sent but Waiting — status updated to WAITING');
+                    } else {
+                      // Toggled off Sent but Waiting -> revert back to CRM
+                      onStatusChange(task.id, ['Ready to Send']);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'CRM' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info("Reverted 'Sent but Waiting' — returned to CRM");
+                    }
+                  } else if (label === 'Closed') {
+                    if (isSelecting) {
+                      const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                      const transitionCheck = canTransitionTaskStatus(currentTask, 'CLOSED');
+                      if (!transitionCheck.allowed) {
+                        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                          window.dispatchEvent(
+                            new CustomEvent('task:highlight-audits', {
+                              detail: {
+                                taskId: task.id,
+                                targetStatus: 'CLOSED',
+                                uncheckedAudits: transitionCheck.uncheckedAudits,
+                                openSubtasks: transitionCheck.openSubtasks,
+                              },
+                            })
+                          );
+                        }
+                        setBlockedAuditAlert({
+                          isOpen: true,
+                          task,
+                          targetStatus: 'CLOSED',
+                          uncheckedAudits: transitionCheck.uncheckedAudits,
+                          openSubtasks: transitionCheck.openSubtasks,
+                        });
+                        toast.error(transitionCheck.reason || 'Cannot move task to CLOSED');
+                        return;
+                      }
+
+                      onStatusChange(task.id, cleanNext);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'CLOSED' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'CLOSED' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.success('Task marked CLOSED');
+                    } else {
+                      // Toggled off Closed -> revert back to WAITING
+                      onStatusChange(task.id, ['Sent but Waiting']);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'WAITING' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info("Reverted 'Closed' — returned to WAITING");
+                    }
+                  } else if (label === 'Follow up' && isSelecting) {
+                    onStatusChange(task.id, cleanNext);
+                    toast.warning('Task marked for Follow up');
+                  } else if (label === 'Revision' || label === 'Revisions') {
+                    if (isSelecting) {
+                      onStatusChange(task.id, ['Revision']);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'REVISION' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info('Task set to Revision — returned to original MA on Task Map');
+                    } else {
+                      onStatusChange(task.id, ['Ready to Send']);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { status: 'CRM' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info("Reverted 'Revision' — returned to CRM");
+                    }
+                  } else if (label === 'Hand-over' || label === 'Handover') {
+                    if (isSelecting) {
+                      if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+                        task.progress.timeOut = formatManilaTime(new Date());
+                      }
+                      onStatusChange(task.id, ['Ready to Send']);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { assigneeId: null, status: 'CRM' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { assigneeId: null, status: 'CRM' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info('Task handed over — returned to CRM Pool');
+                    }
+                  } else if (label === 'To Review' || label === 'To review') {
+                    if (isSelecting) {
+                      if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+                        task.progress.timeOut = formatManilaTime(new Date());
+                      }
+                      onStatusChange(task.id, []);
+                      if (onTaskUpdate) {
+                        await onTaskUpdate(task.id, { assigneeId: null, status: 'IN REVIEW' });
+                      } else {
+                        await tasksApi.updateTask(task.id, { assigneeId: null, status: 'IN REVIEW' } as any).catch(console.error);
+                        onDataRefresh();
+                      }
+                      toast.info('Task moved to Review — transferred to Auditor Map');
+                    }
+                  } else {
+                    onStatusChange(task.id, cleanNext);
+                  }
+                }}
+                onOptionsUpdated={onOptionsUpdated}
+                readOnly={false}
+              />
+            </div>
+          </div>
+        </div>
+      </DraggableTaskCard>
+    );
   };
 
   // Assemble full columns array
@@ -1112,410 +1624,128 @@ export const TaskMapCrmView: React.FC<Props> = ({
                   )}
                 </div>
 
-                {/* Cards List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1">
-                  {visibleTasks.length === 0 ? (
-                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
-                      <span className="text-xs font-semibold text-zinc-400">
-                        {col.id === 'col-crm-sent'
-                          ? 'No sent tasks'
-                          : col.id === 'col-crm-closed'
-                            ? 'No closed tasks'
-                            : 'No CRM tasks'}
-                      </span>
-                      <span className="text-[11px] text-zinc-500 mt-1">
-                        {searchQuery || activePriority !== 'ALL'
-                          ? 'No tasks match filter'
-                          : col.id === 'col-crm-sent'
-                            ? 'Drop tasks here when outreach has been sent to client'
-                            : col.id === 'col-crm-closed'
-                              ? 'Closed and verified tasks appear here'
-                              : `Drop client communication tasks here to assign to ${col.title}`}
-                      </span>
-                    </div>
-                  ) : (
-                    (col.id === 'col-crm-sent'
-                      ? sortCrmSentTasks(visibleTasks, activeFollowUpSort, sortTasksUrgentFirst)
-                      : sortTasksUrgentFirst(visibleTasks)
-                    ).map((task) => {
-                      const isSentWaitingCard = isCrmSent(task);
-                      const waitingInfo = isSentWaitingCard ? getTaskCrmWaitingInfo(task) : null;
-                      const showFollowUpBreathe = Boolean(waitingInfo?.rule.breathe);
-                      const followUpHex = waitingInfo?.rule.hex || '#71717a';
-                      const rawSubStatuses = task.taskMap?.statuses || [];
-                      const displaySubStatuses = isSentWaitingCard
-                        ? rawSubStatuses.length === 0 ||
-                          rawSubStatuses.some((st) => {
-                            const up = st.toUpperCase().trim();
-                            return up === 'SENT' || up === 'WAITING';
-                          })
-                          ? ['Sent but Waiting']
-                          : rawSubStatuses
-                        : rawSubStatuses;
+                {/* Cards List / In Progress & Queue */}
+                {col.isMember && col.memberUser ? (
+                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
+                    {(() => {
+                      const activeInProgTask = visibleTasks.find(
+                        (t) =>
+                          isTaskActiveInProgress(t, col.memberUser.name) ||
+                          (t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime) ||
+                          (t.taskMap?.statuses || []).some((s) => s.trim().toUpperCase() === 'IN PROGRESS')
+                      );
+                      const queuedTasks = visibleTasks.filter((t) => t.id !== activeInProgTask?.id);
+                      const isColumnLiveWorking = Boolean(
+                        activeInProgTask &&
+                        (isTaskLiveWorking(activeInProgTask, col.memberUser.name, boardLiveClock) ||
+                          (activeInProgTask.progress?.timeIn && !activeInProgTask.progress?.timeOut && !activeInProgTask.progress?.isMissingTime))
+                      );
+                      const liveSlotLabel = isColumnLiveWorking && activeInProgTask
+                        ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
+                        : 'In Progress';
+                      const liveSlotColor = isColumnLiveWorking && activeInProgTask
+                        ? resolveTaskStatusColor(
+                            liveSlotLabel,
+                            activeInProgTask.listId || activeInProgTask.list?.id,
+                            activeInProgTask.list?.statuses
+                          )
+                        : '#22A3AE';
+                      const isCrmOrPm = Boolean(isPmUser || (currentUser?.id && currentUser.id === col.memberUser.id));
+
                       return (
-                        <DraggableTaskCard key={task.id} task={task} disabled={false}>
-                          <div
-                            onClick={(e) => {
-                              if (e.defaultPrevented) return;
-                              onOpenDetail(task);
-                            }}
-                            className={`relative p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] border rounded-xl shadow-md min-h-[112px] flex items-stretch gap-3 transition-all group cursor-pointer ${
-                              showFollowUpBreathe
-                                ? 'border-transparent'
-                                : 'border-border not-has-[[data-card-control]:hover]:hover:border-zinc-600/80'
-                            }`}
-                            style={
-                              showFollowUpBreathe
-                                ? { borderColor: hexToRgba(followUpHex, 0.4) }
-                                : undefined
-                            }
-                          >
-                            {showFollowUpBreathe && (
-                              <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe"
-                                style={{
-                                  borderColor: followUpHex,
-                                  boxShadow: `0 0 0 2px ${hexToRgba(followUpHex, 0.42)}, 0 0 18px ${hexToRgba(followUpHex, 0.28)}`,
-                                }}
+                        <>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between px-1">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`size-2 rounded-full ${isColumnLiveWorking ? 'animate-pulse' : 'bg-zinc-600'}`}
+                                  style={isColumnLiveWorking ? { backgroundColor: liveSlotColor } : undefined}
+                                />
+                                <span
+                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? '' : 'text-zinc-400'}`}
+                                  style={isColumnLiveWorking ? { color: liveSlotColor } : undefined}
+                                >
+                                  {liveSlotLabel}
+                                </span>
+                              </div>
+                              {isColumnLiveWorking && (
+                                <span
+                                  className="text-[10px] font-mono font-semibold flex items-center gap-1"
+                                  style={{ color: liveSlotColor }}
+                                >
+                                  <span
+                                    className="size-1.5 rounded-full animate-ping shrink-0"
+                                    style={{ backgroundColor: liveSlotColor }}
+                                  />
+                                  Live Working
+                                </span>
+                              )}
+                            </div>
+
+                            {activeInProgTask ? (
+                              <DroppableInProgressSlot userId={col.memberUser.id} disabled={false}>
+                                {renderCrmCard(activeInProgTask, isColumnLiveWorking)}
+                              </DroppableInProgressSlot>
+                            ) : (
+                              <TaskMapInProgressDropCard
+                                userId={col.memberUser.id}
+                                userName={col.memberUser.name}
+                                availableTasks={poolTasks}
+                                allAvailableTasks={allAvailablePool}
+                                allTasks={allTasks || tasks}
+                                queuedTasks={queuedTasks}
+                                onSelectTask={(taskId, task) => handleSelectInProgressTask(taskId, col.memberUser.id, task)}
+                                disabled={false}
+                                canBrowse={isCrmOrPm}
+                                roleLabel="CRM member"
                               />
                             )}
-                            {/* Left: Task Info */}
-                            <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-                              {/* Client / List Name */}
-                              <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1">
-                                {task.list?.name || 'General'}
-                              </div>
-
-                              {/* Title */}
-                              <h4
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
-                                title={task.title}
-                              >
-                                {task.title}
-                              </h4>
-
-                              {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
-                              <div
-                                className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {/* Circle Dot Status Indicator */}
-                                <CardStatusDropdown
-                                  taskId={task.id}
-                                  currentStatus={task.status || 'In progress'}
-                                  listId={task.listId || task.list?.id}
-                                  onSelect={async (newStatus) => {
-                                    const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
-                                    if (!transitionCheck.allowed) {
-                                      if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                        window.dispatchEvent(
-                                          new CustomEvent('task:highlight-audits', {
-                                            detail: {
-                                              taskId: task.id,
-                                              targetStatus: newStatus,
-                                              uncheckedAudits: transitionCheck.uncheckedAudits,
-                                              openSubtasks: transitionCheck.openSubtasks,
-                                            },
-                                          })
-                                        );
-                                      }
-                                      setBlockedAuditAlert({
-                                        isOpen: true,
-                                        task,
-                                        targetStatus: newStatus,
-                                        uncheckedAudits: transitionCheck.uncheckedAudits,
-                                        openSubtasks: transitionCheck.openSubtasks,
-                                      });
-                                      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
-                                      return;
-                                    }
-
-                                    if (onTaskUpdate) {
-                                      await onTaskUpdate(task.id, { status: newStatus });
-                                    } else {
-                                      await tasksApi
-                                        .updateTask(task.id, { status: newStatus } as any)
-                                        .catch(console.error);
-                                      onDataRefresh();
-                                    }
-                                    toast.success(`Status updated to ${newStatus}`);
-                                  }}
-                                />
-
-                                <TaskDescriptionButton
-                                  description={task.description}
-                                  taskTitle={task.title}
-                                />
-
-                                {/* Clickable Priority Flag */}
-                                <CardPriorityDropdown
-                                  taskId={task.id}
-                                  priority={task.priority || 'NORMAL'}
-                                  onSelect={async (newPriority) => {
-                                    if (onTaskUpdate) {
-                                      await onTaskUpdate(task.id, { priority: newPriority as any });
-                                    } else {
-                                      await tasksApi
-                                        .updateTask(task.id, { priority: newPriority as any })
-                                        .catch(console.error);
-                                      onDataRefresh();
-                                    }
-                                    toast.success(`Priority set to ${newPriority}`);
-                                  }}
-                                />
-                              </div>
-                            </div>
-
-                            {/* Separator */}
-                            <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
-
-                            {/* Right: Section where Sub-Status is (with Posted date + Days Passed in top right corner) */}
-                            <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
-                              <div className="flex justify-end items-center gap-1.5 flex-wrap">
-                                {waitingInfo ? (
-                                  <span
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap"
-                                    style={{
-                                      backgroundColor: hexToRgba(followUpHex, 0.16),
-                                      borderColor: hexToRgba(followUpHex, 0.45),
-                                      color: waitingInfo.daysPassed === 0 ? '#a1a1aa' : followUpHex,
-                                    }}
-                                    title={`Sent but Waiting · ${waitingInfo.daysPassed} day(s) passed (${waitingInfo.rule.label}) since ${format(new Date(waitingInfo.waitingSince), 'MMM d, yyyy')}`}
-                                  >
-                                    <Clock className="size-2.5 shrink-0" />
-                                    <span>
-                                      {waitingInfo.daysPassed === 0
-                                        ? 'Today'
-                                        : waitingInfo.daysPassed === 1
-                                          ? '1 day'
-                                          : `${waitingInfo.daysPassed} days`}
-                                    </span>
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-medium text-zinc-500">
-                                    Posted {format(new Date(task.createdAt), 'MMM d')}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div
-                                className="w-full"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
-                                  Sub-Status
-                                </span>
-                                <TaskMapStatusDropdown
-                                  selectedStatuses={displaySubStatuses}
-                                  options={getCrmOptions(task)}
-                                  onToggleStatus={async (label, nextStatuses) => {
-                                    const isSelecting = (nextStatuses || []).includes(label);
-                                    const cleanNext = isSelecting ? [label] : [];
-
-                                    if (label === 'Ready to Send' || label === 'To send') {
-                                      if (isSelecting) {
-                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
-                                        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                          try {
-                                            const fresh = await tasksApi.getTask(task.id);
-                                            if (fresh?.task) {
-                                              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
-                                              if (freshCheck.allowed) {
-                                                transitionCheck = freshCheck;
-                                                useAppStore.getState().updateTask(fresh.task);
-                                              }
-                                            }
-                                          } catch {
-                                            // fallback
-                                          }
-                                        }
-                                        if (!transitionCheck.allowed) {
-                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                            window.dispatchEvent(
-                                              new CustomEvent('task:highlight-audits', {
-                                                detail: {
-                                                  taskId: task.id,
-                                                  targetStatus: 'CRM',
-                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
-                                                  openSubtasks: transitionCheck.openSubtasks,
-                                                },
-                                              })
-                                            );
-                                          }
-                                          setBlockedAuditAlert({
-                                            isOpen: true,
-                                            task,
-                                            targetStatus: 'CRM',
-                                            uncheckedAudits: transitionCheck.uncheckedAudits,
-                                            openSubtasks: transitionCheck.openSubtasks,
-                                          });
-                                          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
-                                          return;
-                                        }
-
-                                        onStatusChange(task.id, cleanNext);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'CRM' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                      } else {
-                                        // User clicked 'Ready to Send' AGAIN in CRM -> revert misclick back to last status
-                                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || 'IN REVIEW');
-                                        onStatusChange(task.id, []);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: revertStatus });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info(`Reverted '${label}' — returned to ${revertStatus}`);
-                                      }
-                                    } else if (label === 'Sent but Waiting' || label === 'Sent') {
-                                      if (isSelecting) {
-                                        if (!isTaskInClientDashboard(task, clients)) {
-                                          toast.error('Cannot mark as Sent: only tasks within Client Dashboard can be placed in Sent (this client is dormant or not in Client Dashboard).');
-                                          return;
-                                        }
-
-                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'WAITING');
-                                        if (!transitionCheck.allowed) {
-                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                            window.dispatchEvent(
-                                              new CustomEvent('task:highlight-audits', {
-                                                detail: {
-                                                  taskId: task.id,
-                                                  targetStatus: 'WAITING',
-                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
-                                                  openSubtasks: transitionCheck.openSubtasks,
-                                                },
-                                              })
-                                            );
-                                          }
-                                          setBlockedAuditAlert({
-                                            isOpen: true,
-                                            task,
-                                            targetStatus: 'WAITING',
-                                            uncheckedAudits: transitionCheck.uncheckedAudits,
-                                            openSubtasks: transitionCheck.openSubtasks,
-                                          });
-                                          toast.error(transitionCheck.reason || 'Cannot move task to WAITING');
-                                          return;
-                                        }
-
-                                        onStatusChange(task.id, ['Sent but Waiting']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'WAITING' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.success('Task marked Sent but Waiting — status updated to WAITING');
-                                      } else {
-                                        // Toggled off Sent but Waiting -> revert back to CRM
-                                        onStatusChange(task.id, ['Ready to Send']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'CRM' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info("Reverted 'Sent but Waiting' — returned to CRM");
-                                      }
-                                    } else if (label === 'Closed') {
-                                      if (isSelecting) {
-                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                        const transitionCheck = canTransitionTaskStatus(currentTask, 'CLOSED');
-                                        if (!transitionCheck.allowed) {
-                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                            window.dispatchEvent(
-                                              new CustomEvent('task:highlight-audits', {
-                                                detail: {
-                                                  taskId: task.id,
-                                                  targetStatus: 'CLOSED',
-                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
-                                                  openSubtasks: transitionCheck.openSubtasks,
-                                                },
-                                              })
-                                            );
-                                          }
-                                          setBlockedAuditAlert({
-                                            isOpen: true,
-                                            task,
-                                            targetStatus: 'CLOSED',
-                                            uncheckedAudits: transitionCheck.uncheckedAudits,
-                                            openSubtasks: transitionCheck.openSubtasks,
-                                          });
-                                          toast.error(transitionCheck.reason || 'Cannot move task to CLOSED');
-                                          return;
-                                        }
-
-                                        onStatusChange(task.id, cleanNext);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'CLOSED' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'CLOSED' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.success('Task marked CLOSED');
-                                      } else {
-                                        // Toggled off Closed -> revert back to WAITING
-                                        onStatusChange(task.id, ['Sent but Waiting']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'WAITING' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info("Reverted 'Closed' — returned to WAITING");
-                                      }
-                                    } else if (label === 'Follow up' && isSelecting) {
-                                      onStatusChange(task.id, cleanNext);
-                                      toast.warning('Task marked for Follow up');
-                                    } else if (label === 'Revision' || label === 'Revisions') {
-                                      if (isSelecting) {
-                                        onStatusChange(task.id, ['Revision']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'REVISION' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info('Task set to Revision — returned to original MA on Task Map');
-                                      } else {
-                                        onStatusChange(task.id, ['Ready to Send']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'CRM' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info("Reverted 'Revision' — returned to CRM");
-                                      }
-                                    } else {
-                                      onStatusChange(task.id, cleanNext);
-                                    }
-                                  }}
-                                  onOptionsUpdated={onOptionsUpdated}
-                                  readOnly={false}
-                                />
-                              </div>
-                            </div>
                           </div>
-                        </DraggableTaskCard>
+
+                          {/* QUEUE SECTION */}
+                          {queuedTasks.length > 0 && (
+                            <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
+                              <div className="flex items-center justify-between px-1">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                                  Queue ({queuedTasks.length})
+                                </span>
+                              </div>
+                              {sortTasksUrgentFirst(queuedTasks).map((t) => renderCrmCard(t))}
+                            </div>
+                          )}
+                        </>
                       );
-                    })
-                  )}
-                </div>
+                    })()}
+                  </div>
+                ) : (
+                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
+                    {visibleTasks.length === 0 ? (
+                      <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
+                        <span className="text-xs font-semibold text-zinc-400">
+                          {col.id === 'col-crm-sent'
+                            ? 'No sent tasks'
+                            : col.id === 'col-crm-closed'
+                              ? 'No closed tasks'
+                              : 'No CRM tasks'}
+                        </span>
+                        <span className="text-[11px] text-zinc-500 mt-1">
+                          {searchQuery || activePriority !== 'ALL'
+                            ? 'No tasks match filter'
+                            : col.id === 'col-crm-sent'
+                              ? 'Drop tasks here when outreach has been sent to client'
+                              : col.id === 'col-crm-closed'
+                                ? 'Closed and verified tasks appear here'
+                                : `Drop client communication tasks here to assign to ${col.title}`}
+                        </span>
+                      </div>
+                    ) : (
+                      (col.id === 'col-crm-sent'
+                        ? sortCrmSentTasks(visibleTasks, activeFollowUpSort, sortTasksUrgentFirst)
+                        : sortTasksUrgentFirst(visibleTasks)
+                      ).map((task) => renderCrmCard(task))
+                    )}
+                  </div>
+                )}
               </DroppableColumn>
             );
           })}

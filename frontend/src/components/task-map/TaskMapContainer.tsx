@@ -1327,9 +1327,10 @@ export const TaskMapContainer: React.FC = () => {
     targetUserId: string | null,
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
     assigneeRoleRestrictions?: string[],
-    otp?: string
+    otp?: string,
+    taskOverride?: TaskMapItem
   ) => {
-    const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId) || taskOverride;
     if (!currentTask) return;
 
     const prevTasks = tasks;
@@ -1625,7 +1626,11 @@ export const TaskMapContainer: React.FC = () => {
           (t.assignee && t.assignee.id === handlerId ? t.assignee : null) ||
           allUsers.find((u: any) => u.id === handlerId);
         const hasSheetInput = hasSpreadsheetTaskInput(t, { isHistory: isHistoryView });
-        if (!isDeveloperUser(handlerUser, workspaceTeams) && !hasSheetInput) {
+        const isInProgress =
+          (t.status || '').toUpperCase().includes('PROGRESS') ||
+          (t.taskMap?.statuses || []).some((s: string) => s.toUpperCase().includes('PROGRESS')) ||
+          Boolean(t.progress?.timeIn && !t.progress?.timeOut);
+        if (!isDeveloperUser(handlerUser, workspaceTeams) && !hasSheetInput && !isInProgress && !search) {
           return false;
         }
       }
@@ -1884,6 +1889,8 @@ export const TaskMapContainer: React.FC = () => {
             <TaskMapBoardView
               tasks={displayedTasks}
               availablePool={displayedPool}
+              allAvailablePool={availablePool}
+              allTasks={tasks}
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
@@ -1907,6 +1914,8 @@ export const TaskMapContainer: React.FC = () => {
             <TaskMapAuditingView
               tasks={displayedTasks.filter((t) => !t.isSubtask)}
               availablePool={displayedPool.filter((t) => !t.isSubtask)}
+              allAvailablePool={availablePool.filter((t) => !t.isSubtask)}
+              allTasks={tasks.filter((t) => !t.isSubtask)}
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
@@ -1927,6 +1936,8 @@ export const TaskMapContainer: React.FC = () => {
             <TaskMapCrmView
               tasks={displayedTasks.filter((t) => !t.isSubtask)}
               availablePool={displayedPool.filter((t) => !t.isSubtask)}
+              allAvailablePool={availablePool.filter((t) => !t.isSubtask)}
+              allTasks={tasks.filter((t) => !t.isSubtask)}
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}

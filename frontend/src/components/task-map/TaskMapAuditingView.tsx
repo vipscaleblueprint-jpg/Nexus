@@ -20,12 +20,15 @@ import {
   subscribeTaskMapSaving,
   isTaskSavingToDb,
   isTaskUnderAdmin,
+  formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { useLiveClock } from '@/lib/liveClock';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
+import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
+import { isTaskActiveInProgress, isTaskLiveWorking } from './TaskMapBoardView';
 import {
   ShieldCheck,
   Pin,
@@ -39,7 +42,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { isAuditorUser, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
+import { isAuditorUser, isProjectManagerOrAdmin, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { toast } from '@/lib/toast';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
@@ -50,7 +53,9 @@ import {
   matchesPriorityFilter,
   matchesSearchFilter,
   sortTasksUrgentFirst,
+  hexToRgba,
   resolveSubStatusColor,
+  resolveTaskStatusColor,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -73,6 +78,8 @@ import {
 interface Props {
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
+  allAvailablePool?: TaskMapItem[];
+  allTasks?: TaskMapItem[];
   options: TaskMapOption[];
   allUsers?: any[];
   shiftUsers?: any[];
@@ -149,6 +156,34 @@ const DroppableColumn: React.FC<{
       ref={setNodeRef}
       className={`${className || ''} transition-all duration-200 ${isOver ? 'ring-2 ring-amber-500/70 bg-amber-950/25 shadow-xl shadow-amber-950/40 scale-[1.005]' : ''
         }`}
+    >
+      {children}
+    </div>
+  );
+};
+
+const DroppableInProgressSlot: React.FC<{
+  userId: string;
+  children: React.ReactNode;
+  disabled?: boolean;
+}> = ({ userId, children, disabled }) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `in-progress-${userId}`,
+    data: {
+      type: 'in-progress-slot',
+      userId,
+    },
+    disabled,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-in-progress-dropzone="true"
+      data-no-drag-scroll="true"
+      className={`rounded-xl transition-colors duration-150 ${
+        isOver ? 'ring-2 ring-amber-500 bg-amber-500/15 shadow-lg shadow-amber-500/20' : ''
+      }`}
     >
       {children}
     </div>
@@ -237,11 +272,12 @@ function computeElapsed(timeInStr?: string | null, dateStr?: string | null, now 
 interface TaskTimeProgressSlotProps {
   task: TaskMapItem;
   now?: Date;
+  isLive?: boolean;
 }
 
-const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: propNow }) => {
+const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: propNow, isLive = true }) => {
   const prog = task.progress;
-  const isCountingLive = Boolean(prog?.timeIn && !prog?.timeOut);
+  const isCountingLive = Boolean(isLive && prog?.timeIn && !prog?.timeOut);
   const liveClockNow = useLiveClock(isCountingLive && !propNow);
   const now = propNow || liveClockNow;
 
@@ -294,6 +330,8 @@ const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: 
 export const TaskMapAuditingView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
+  allAvailablePool,
+  allTasks,
   options = [],
   allUsers = [],
   shiftUsers = [],
@@ -340,6 +378,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   }, [cleanSearch]);
 
   const currentUser = useAppStore((s) => s.currentUser);
+  const boardLiveClock = useLiveClock(true);
+  const isPmUser = isProjectManagerOrAdmin(currentUser);
 
   // Column controls: Priority filter, Sub-status filter, Client filter, Admin toggle, search, pin, collapse
   const [columnPriorityFilters, setColumnPriorityFilters] = useState<Record<string, string>>({});
@@ -642,7 +682,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
     const taskId = active.id as string;
     const targetColumnId = over.id as string;
-    const task = combinedTasks.find((t) => t.id === taskId);
+    const task = (allTasks || tasks).find((t) => t.id === taskId) || combinedTasks.find((t) => t.id === taskId);
     if (!task) return;
 
     const currentStatuses = task.taskMap?.statuses || [];
@@ -682,8 +722,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           .catch(console.error);
         onDataRefresh();
       }
-    } else if (targetColumnId.startsWith('col-auditor-')) {
-      const auditorId = targetColumnId.replace('col-auditor-', '');
+    } else if (targetColumnId.startsWith('col-auditor-') || targetColumnId.startsWith('in-progress-')) {
+      const auditorId = targetColumnId.replace('col-auditor-', '').replace('in-progress-', '');
       const auditor = auditorUsers.find((a) => a.id === auditorId);
       if (auditor) {
         const auditorRolesLower = [
@@ -740,6 +780,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         }
 
         updatedStatuses = [auditType];
+        if (targetColumnId.startsWith('in-progress-')) {
+          if (!updatedStatuses.includes('In progress')) {
+            updatedStatuses.push('In progress');
+          }
+        }
         toast.success(`Task assigned to ${auditor.name} (${auditType})`);
         onStatusChange(taskId, updatedStatuses);
 
@@ -757,6 +802,79 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     }
   };
 
+  const handleSelectInProgressTask = async (taskId: string, targetAuditorId: string, taskOverride?: TaskMapItem) => {
+    const auditor = auditorUsers.find((a) => a.id === targetAuditorId);
+    if (!auditor) return;
+    const task = (allTasks || tasks).find((t) => t.id === taskId) || combinedTasks.find((t) => t.id === taskId) || taskOverride;
+    if (!task) return;
+
+    const auditorRolesLower = [
+      ...(auditor.roles || []),
+      auditor.role || '',
+      auditor.title || '',
+    ].map((r: string) => (r || '').toLowerCase());
+    const hasUiUxRole = auditorRolesLower.some((r) => r.includes('ui') || r.includes('ux'));
+    const hasDesignRole = auditorRolesLower.some((r) => r.includes('design') || r.includes('graphic'));
+    const hasInstrRole = auditorRolesLower.some((r) => r.includes('instruction') || r.includes('copy'));
+    const hasFunnelRole = auditorRolesLower.some((r) => r.includes('funnel'));
+
+    const auditStatus = getTaskAuditStatus(task);
+    const unchecked = auditStatus.uncheckedAudits || [];
+    const needsUiUx = unchecked.some((a) => isUiUxAudit(a));
+    const needsDesign = unchecked.some((a) => a.toLowerCase().includes('design'));
+    const needsInstr = unchecked.some((a) => a.toLowerCase().includes('instruction'));
+    const needsFunnel = unchecked.some((a) => isFunnelAudit(a));
+
+    let auditType = getDesignatedAuditType(auditor);
+    if (hasUiUxRole && needsUiUx) {
+      auditType = 'UI UX Audit';
+    } else if (hasDesignRole && needsDesign) {
+      auditType = 'Design Audit';
+    } else if (hasInstrRole && needsInstr) {
+      auditType = 'Instruction Audit';
+    } else if (hasFunnelRole && needsFunnel) {
+      auditType = 'Funnel Audit';
+    }
+
+    const permCheck = canPerformAudit(auditType, task, undefined, auditor.id);
+    if (!permCheck.allowed) {
+      toast.error(permCheck.reason || 'Cannot assign: prerequisites not completed.');
+      return;
+    }
+    if (isFunnelAudit(auditType)) {
+      const uiUxActors = getCompletedAuditActorIds(isUiUxAudit, task);
+      if (uiUxActors.actorIds.includes(auditor.id)) {
+        toast.error(
+          `${auditor.name} already completed the UI/UX Audit for this task — Funnel Audit must be assigned to a different Funnel Auditor.`
+        );
+        return;
+      }
+    }
+    if (isUiUxAudit(auditType)) {
+      const funnelActors = getCompletedAuditActorIds(isFunnelAudit, task);
+      if (funnelActors.actorIds.includes(auditor.id)) {
+        toast.error(
+          `${auditor.name} already completed the Funnel Audit for this task — UI/UX Audit must be assigned to a different UI/UX Auditor.`
+        );
+        return;
+      }
+    }
+
+    const updatedStatuses = [auditType, 'In progress'];
+    toast.success(`Task set In Progress for ${auditor.name} (${auditType})`);
+    onStatusChange(taskId, updatedStatuses);
+
+    const targetStatus = (auditType === 'UI UX Audit' || auditType === 'Design Audit') ? 'IN REVIEW' : 'CHECKING';
+    if (onTaskUpdate) {
+      await onTaskUpdate(taskId, { assigneeId: auditor.id, status: targetStatus });
+    } else {
+      await tasksApi
+        .updateTask(taskId, { assigneeId: auditor.id, status: targetStatus } as any)
+        .catch(console.error);
+      onDataRefresh();
+    }
+  };
+
   // Helper options for sub-status dropdown in Auditing
   const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => {
     const ls = task.list?.statuses;
@@ -768,7 +886,316 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     { id: 'opt-audit-readytosend', label: 'Ready to Send', color: resolveSubStatusColor('Ready to Send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 5 },
     { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 6 },
     { id: 'opt-audit-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 7 },
+    { id: 'opt-audit-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 8 },
+    { id: 'opt-audit-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 9 },
     ];
+  };
+
+  const renderAuditorCard = (
+    task: TaskMapItem,
+    isQueueColumn: boolean = false,
+    isLiveWorking: boolean = false
+  ) => {
+    const liveColor = resolveTaskStatusColor(
+      task.status || 'In Progress',
+      task.listId || task.list?.id,
+      task.list?.statuses
+    ) || '#f59e0b';
+
+    return (
+      <DraggableTaskCard key={task.id} task={task} disabled={false}>
+        <div
+          onClick={(e) => {
+            if (e.defaultPrevented) return;
+            onOpenDetail(task);
+          }}
+          className={`relative p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] border rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer ${
+            isLiveWorking
+              ? 'border-transparent shadow-md'
+              : 'border-border not-has-[[data-card-control]:hover]:hover:border-zinc-600/80'
+          }`}
+          style={isLiveWorking ? { borderColor: hexToRgba(liveColor, 0.4) } : undefined}
+        >
+          {isLiveWorking && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe"
+              style={{
+                borderColor: liveColor,
+                boxShadow: `0 0 0 2px ${hexToRgba(liveColor, 0.42)}, 0 0 18px ${hexToRgba(liveColor, 0.28)}`,
+              }}
+            />
+          )}
+          <div className="flex items-stretch gap-3">
+            {/* Left: Task Info */}
+            <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+              {/* Client / List Name */}
+              {isLiveWorking ? (
+                <span
+                  className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate text-[11px] mb-1"
+                  style={{ color: liveColor }}
+                >
+                  <span className="relative flex size-2 shrink-0">
+                    <span
+                      className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                      style={{ backgroundColor: liveColor }}
+                    />
+                    <span
+                      className="relative inline-flex rounded-full size-2"
+                      style={{ backgroundColor: liveColor }}
+                    />
+                  </span>
+                  {task.list?.name || 'General'}
+                </span>
+              ) : (
+                <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1">
+                  {task.list?.name || 'General'}
+                </div>
+              )}
+
+              {/* Title */}
+              <h4
+                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
+                title={task.title}
+              >
+                {task.title}
+              </h4>
+
+              {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
+              <div
+                className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Circle Dot Status Indicator */}
+                <CardStatusDropdown
+                  taskId={task.id}
+                  currentStatus={task.status || 'In progress'}
+                  listId={task.listId || task.list?.id}
+                  onSelect={async (newStatus) => {
+                    const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
+                    if (!transitionCheck.allowed) {
+                      if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                        window.dispatchEvent(
+                          new CustomEvent('task:highlight-audits', {
+                            detail: {
+                              taskId: task.id,
+                              targetStatus: newStatus,
+                              uncheckedAudits: transitionCheck.uncheckedAudits,
+                              openSubtasks: transitionCheck.openSubtasks,
+                            },
+                          })
+                        );
+                      }
+                      setBlockedAuditAlert({
+                        isOpen: true,
+                        task,
+                        targetStatus: newStatus,
+                        uncheckedAudits: transitionCheck.uncheckedAudits,
+                        openSubtasks: transitionCheck.openSubtasks,
+                      });
+                      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
+                      return;
+                    }
+
+                    if (onTaskUpdate) {
+                      await onTaskUpdate(task.id, { status: newStatus });
+                    } else {
+                      await tasksApi
+                        .updateTask(task.id, { status: newStatus } as any)
+                        .catch(console.error);
+                      onDataRefresh();
+                    }
+                    toast.success(`Status updated to ${newStatus}`);
+                  }}
+                />
+
+                <TaskDescriptionButton
+                  description={task.description}
+                  taskTitle={task.title}
+                />
+
+                {/* Clickable Priority Flag */}
+                <CardPriorityDropdown
+                  taskId={task.id}
+                  priority={task.priority || 'NORMAL'}
+                  onSelect={async (newPriority) => {
+                    if (onTaskUpdate) {
+                      await onTaskUpdate(task.id, { priority: newPriority as any });
+                    } else {
+                      await tasksApi
+                        .updateTask(task.id, { priority: newPriority as any })
+                        .catch(console.error);
+                      onDataRefresh();
+                    }
+                    toast.success(`Priority set to ${newPriority}`);
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Separator */}
+            <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
+
+            {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
+            <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
+              <div className="flex justify-end items-center">
+                <TaskTimeProgressSlot task={task} isLive={isLiveWorking} />
+              </div>
+
+              <div
+                className="w-full"
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                  Sub-Status
+                </span>
+                <TaskMapStatusDropdown
+                  selectedStatuses={task.taskMap?.statuses || []}
+                  options={getAuditingOptions(task)}
+                  onToggleStatus={async (label, nextStatuses) => {
+                    const isSelecting = (nextStatuses || []).includes(label);
+                    const cleanNext = isSelecting ? [label] : [];
+                    const norm = label.toLowerCase().trim();
+
+                    if (norm === 'ready to send' || norm === 'readytosend' || norm === 'to send') {
+                      if (isSelecting) {
+                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+                        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                          try {
+                            const fresh = await tasksApi.getTask(task.id);
+                            if (fresh?.task) {
+                              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+                              if (freshCheck.allowed) {
+                                transitionCheck = freshCheck;
+                                useAppStore.getState().updateTask(fresh.task);
+                              }
+                            }
+                          } catch {
+                            // fallback
+                          }
+                        }
+                        if (!transitionCheck.allowed) {
+                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                            window.dispatchEvent(
+                              new CustomEvent('task:highlight-audits', {
+                                detail: {
+                                  taskId: task.id,
+                                  targetStatus: 'CRM',
+                                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                                  openSubtasks: transitionCheck.openSubtasks,
+                                },
+                              })
+                            );
+                          }
+                          setBlockedAuditAlert({
+                            isOpen: true,
+                            task,
+                            targetStatus: 'CRM',
+                            uncheckedAudits: transitionCheck.uncheckedAudits,
+                            openSubtasks: transitionCheck.openSubtasks,
+                          });
+                          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
+                          return;
+                        }
+
+                        onStatusChange(task.id, ['Ready to Send']);
+                        if (onTaskUpdate) {
+                          await onTaskUpdate(task.id, { status: 'CRM' });
+                        } else {
+                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                          onDataRefresh();
+                        }
+                        toast.success('Task marked Ready to Send — transferred to CRM Map');
+                      } else {
+                        // User pressed 'Ready to Send' AGAIN in Auditing -> revert back to last status
+                        const defaultRev = 'IN REVIEW';
+                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
+                        onStatusChange(task.id, []);
+                        if (onTaskUpdate) {
+                          await onTaskUpdate(task.id, { status: revertStatus });
+                        } else {
+                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                          onDataRefresh();
+                        }
+                        toast.info(`Reverted 'Ready to Send' — returned to ${revertStatus}`);
+                      }
+                    } else if (norm === 'ask client' || norm === 'askclient') {
+                      if (isSelecting) {
+                        onStatusChange(task.id, ['Ask Client']);
+                        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
+                      } else {
+                        onStatusChange(task.id, []);
+                        toast.info("Removed 'Ask Client'");
+                      }
+                    } else if (norm === 'revision' || norm === 'revisions') {
+                      if (isSelecting) {
+                        onStatusChange(task.id, ['Revision']);
+                        if (onTaskUpdate) {
+                          await onTaskUpdate(task.id, { status: 'REVISION' } as any);
+                        } else {
+                          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
+                          onDataRefresh();
+                        }
+                        toast.warning('Task marked for Revision — returned to original MA on Task Map');
+                      } else {
+                        const defaultRev = 'IN REVIEW';
+                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
+                        onStatusChange(task.id, []);
+                        if (onTaskUpdate) {
+                          await onTaskUpdate(task.id, { status: revertStatus });
+                        } else {
+                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                          onDataRefresh();
+                        }
+                        toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
+                      }
+                    } else if (norm === 'handover' || norm === 'hand-over' || norm === 'to review' || norm === 'to_review') {
+                      if (isSelecting) {
+                        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+                          task.progress.timeOut = formatManilaTime(new Date());
+                        }
+                        onStatusChange(task.id, []);
+                        if (onTaskUpdate) {
+                          await onTaskUpdate(task.id, { assigneeId: null, status: 'IN REVIEW' });
+                        } else {
+                          await tasksApi.updateTask(task.id, { assigneeId: null, status: 'IN REVIEW' } as any).catch(console.error);
+                          onDataRefresh();
+                        }
+                        toast.info('Task returned to Review queue');
+                      }
+                    } else {
+                      // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit
+                      onStatusChange(task.id, cleanNext);
+                      if (isSelecting) {
+                        toast.success(`Sub-status set to ${label}`);
+                      }
+                    }
+                  }}
+                  onOptionsUpdated={onOptionsUpdated}
+                  readOnly={false}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Under-the-card Audit Checklist */}
+          <TaskCardAuditChecklist
+            task={task}
+            isQueueColumn={isQueueColumn}
+            currentUser={currentUser}
+            onChecklistsUpdated={(updatedCls) => {
+              task.checklists = updatedCls;
+            }}
+          />
+        </div>
+      </DraggableTaskCard>
+    );
   };
 
   // Assemble full columns array
@@ -1131,270 +1558,117 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                   )}
                 </div>
 
-                {/* Cards List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1">
-                  {visibleTasks.length === 0 ? (
-                    <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
-                      <span className="text-xs font-semibold text-zinc-400">
-                        No tasks to review
-                      </span>
-                      <span className="text-[11px] text-zinc-500 mt-1">
-                        {searchQuery || activePriority !== 'ALL'
-                          ? 'No tasks match filter'
-                          : `Drop tasks here to assign to ${col.title}`}
-                      </span>
-                    </div>
-                  ) : (
-                    sortTasksUrgentFirst(visibleTasks).map((task) => {
-                      return (
-                        <DraggableTaskCard key={task.id} task={task} disabled={false}>
-                          <div
-                            onClick={(e) => {
-                              if (e.defaultPrevented) return;
-                              onOpenDetail(task);
-                            }}
-                            className="p-3 bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 border border-border not-has-[[data-card-control]:hover]:hover:border-zinc-600/80 not-has-[[data-card-control]:hover]:hover:shadow-md active:scale-[0.99] rounded-xl shadow-md min-h-[112px] flex flex-col justify-between transition-all group cursor-pointer"
-                          >
-                            <div className="flex items-stretch gap-3">
-                              {/* Left: Task Info */}
-                            <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-                              {/* Client / List Name */}
-                              <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1">
-                                {task.list?.name || 'General'}
-                              </div>
-
-                              {/* Title */}
-                              <h4
-                                className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
-                                title={task.title}
-                              >
-                                {task.title}
-                              </h4>
-
-                              {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
-                              <div
-                                className="flex items-center gap-2 text-xs text-zinc-500 pt-1"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {/* Circle Dot Status Indicator */}
-                                <CardStatusDropdown
-                                  taskId={task.id}
-                                  currentStatus={task.status || 'In progress'}
-                                  listId={task.listId || task.list?.id}
-                                  onSelect={async (newStatus) => {
-                                    const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                    const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
-                                    if (!transitionCheck.allowed) {
-                                      if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                        window.dispatchEvent(
-                                          new CustomEvent('task:highlight-audits', {
-                                            detail: {
-                                              taskId: task.id,
-                                              targetStatus: newStatus,
-                                              uncheckedAudits: transitionCheck.uncheckedAudits,
-                                              openSubtasks: transitionCheck.openSubtasks,
-                                            },
-                                          })
-                                        );
-                                      }
-                                      setBlockedAuditAlert({
-                                        isOpen: true,
-                                        task,
-                                        targetStatus: newStatus,
-                                        uncheckedAudits: transitionCheck.uncheckedAudits,
-                                        openSubtasks: transitionCheck.openSubtasks,
-                                      });
-                                      toast.error(transitionCheck.reason || `Cannot move task to ${newStatus}`);
-                                      return;
-                                    }
-
-                                    if (onTaskUpdate) {
-                                      await onTaskUpdate(task.id, { status: newStatus });
-                                    } else {
-                                      await tasksApi
-                                        .updateTask(task.id, { status: newStatus } as any)
-                                        .catch(console.error);
-                                      onDataRefresh();
-                                    }
-                                    toast.success(`Status updated to ${newStatus}`);
-                                  }}
-                                />
-
-                                <TaskDescriptionButton
-                                  description={task.description}
-                                  taskTitle={task.title}
-                                />
-
-                                {/* Clickable Priority Flag */}
-                                <CardPriorityDropdown
-                                  taskId={task.id}
-                                  priority={task.priority || 'NORMAL'}
-                                  onSelect={async (newPriority) => {
-                                    if (onTaskUpdate) {
-                                      await onTaskUpdate(task.id, { priority: newPriority as any });
-                                    } else {
-                                      await tasksApi
-                                        .updateTask(task.id, { priority: newPriority as any })
-                                        .catch(console.error);
-                                      onDataRefresh();
-                                    }
-                                    toast.success(`Priority set to ${newPriority}`);
-                                  }}
-                                />
-                              </div>
-                            </div>
-
-                            {/* Separator */}
-                            <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
-
-                            {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
-                            <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
-                              <div className="flex justify-end items-center">
-                                <TaskTimeProgressSlot task={task} />
-                              </div>
-
-                              <div
-                                className="w-full"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
-                                  Sub-Status
-                                </span>
-                                <TaskMapStatusDropdown
-                                  selectedStatuses={task.taskMap?.statuses || []}
-                                  options={getAuditingOptions(task)}
-                                  onToggleStatus={async (label, nextStatuses) => {
-                                    const isSelecting = (nextStatuses || []).includes(label);
-                                    const cleanNext = isSelecting ? [label] : [];
-                                    const norm = label.toLowerCase().trim();
-                                    
-                                    if (norm === 'ready to send' || norm === 'readytosend' || norm === 'to send') {
-                                      if (isSelecting) {
-                                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                                        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
-                                        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                          try {
-                                            const fresh = await tasksApi.getTask(task.id);
-                                            if (fresh?.task) {
-                                              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
-                                              if (freshCheck.allowed) {
-                                                transitionCheck = freshCheck;
-                                                useAppStore.getState().updateTask(fresh.task);
-                                              }
-                                            }
-                                          } catch {
-                                            // fallback
-                                          }
-                                        }
-                                        if (!transitionCheck.allowed) {
-                                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                                            window.dispatchEvent(
-                                              new CustomEvent('task:highlight-audits', {
-                                                detail: {
-                                                  taskId: task.id,
-                                                  targetStatus: 'CRM',
-                                                  uncheckedAudits: transitionCheck.uncheckedAudits,
-                                                  openSubtasks: transitionCheck.openSubtasks,
-                                                },
-                                              })
-                                            );
-                                          }
-                                          setBlockedAuditAlert({
-                                            isOpen: true,
-                                            task,
-                                            targetStatus: 'CRM',
-                                            uncheckedAudits: transitionCheck.uncheckedAudits,
-                                            openSubtasks: transitionCheck.openSubtasks,
-                                          });
-                                          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
-                                          return;
-                                        }
-
-                                        onStatusChange(task.id, ['Ready to Send']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'CRM' });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.success('Task marked Ready to Send — transferred to CRM Map');
-                                      } else {
-                                        // User pressed 'Ready to Send' AGAIN in Auditing -> revert back to last status
-                                        const defaultRev = 'IN REVIEW';
-                                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
-                                        onStatusChange(task.id, []);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: revertStatus });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info(`Reverted 'Ready to Send' — returned to ${revertStatus}`);
-                                      }
-                                    } else if (norm === 'ask client' || norm === 'askclient') {
-                                      if (isSelecting) {
-                                        onStatusChange(task.id, ['Ask Client']);
-                                        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
-                                      } else {
-                                        onStatusChange(task.id, []);
-                                        toast.info("Removed 'Ask Client'");
-                                      }
-                                    } else if (norm === 'revision' || norm === 'revisions') {
-                                      if (isSelecting) {
-                                        onStatusChange(task.id, ['Revision']);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: 'REVISION' } as any);
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.warning('Task marked for Revision — returned to original MA on Task Map');
-                                      } else {
-                                        const defaultRev = 'IN REVIEW';
-                                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
-                                        onStatusChange(task.id, []);
-                                        if (onTaskUpdate) {
-                                          await onTaskUpdate(task.id, { status: revertStatus });
-                                        } else {
-                                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                                          onDataRefresh();
-                                        }
-                                        toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
-                                      }
-                                    } else {
-                                      // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit
-                                      onStatusChange(task.id, cleanNext);
-                                      if (isSelecting) {
-                                        toast.success(`Sub-status set to ${label}`);
-                                      }
-                                    }
-                                  }}
-                                  onOptionsUpdated={onOptionsUpdated}
-                                  readOnly={false}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Under-the-card Audit Checklist */}
-                            <TaskCardAuditChecklist
-                              task={task}
-                              isQueueColumn={col.id === 'col-to-review'}
-                              currentUser={currentUser}
-                              onChecklistsUpdated={(updatedCls) => {
-                                task.checklists = updatedCls;
-                              }}
-                            />
-                          </div>
-                        </DraggableTaskCard>
+                {/* Cards List / In Progress & Queue */}
+                {col.isAuditor && col.auditorUser ? (
+                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
+                    {(() => {
+                      const activeInProgTask = visibleTasks.find(
+                        (t) =>
+                          isTaskActiveInProgress(t, col.auditorUser.name) ||
+                          (t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime) ||
+                          (t.taskMap?.statuses || []).some((s) => s.trim().toUpperCase() === 'IN PROGRESS')
                       );
-                    })
-                  )}
-                </div>
+                      const queuedTasks = visibleTasks.filter((t) => t.id !== activeInProgTask?.id);
+                      const isColumnLiveWorking = Boolean(
+                        activeInProgTask &&
+                        (isTaskLiveWorking(activeInProgTask, col.auditorUser.name, boardLiveClock) ||
+                          (activeInProgTask.progress?.timeIn && !activeInProgTask.progress?.timeOut && !activeInProgTask.progress?.isMissingTime))
+                      );
+                      const liveSlotLabel = isColumnLiveWorking && activeInProgTask
+                        ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
+                        : 'In Progress';
+                      const liveSlotColor = isColumnLiveWorking && activeInProgTask
+                        ? resolveTaskStatusColor(
+                            liveSlotLabel,
+                            activeInProgTask.listId || activeInProgTask.list?.id,
+                            activeInProgTask.list?.statuses
+                          )
+                        : '#f59e0b';
+                      const isAuditorOrPm = Boolean(isPmUser || (currentUser?.id && currentUser.id === col.auditorUser.id));
+
+                      return (
+                        <>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between px-1">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`size-2 rounded-full ${isColumnLiveWorking ? 'animate-pulse' : 'bg-zinc-600'}`}
+                                  style={isColumnLiveWorking ? { backgroundColor: liveSlotColor } : undefined}
+                                />
+                                <span
+                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? '' : 'text-zinc-400'}`}
+                                  style={isColumnLiveWorking ? { color: liveSlotColor } : undefined}
+                                >
+                                  {liveSlotLabel}
+                                </span>
+                              </div>
+                              {isColumnLiveWorking && (
+                                <span
+                                  className="text-[10px] font-mono font-semibold flex items-center gap-1"
+                                  style={{ color: liveSlotColor }}
+                                >
+                                  <span
+                                    className="size-1.5 rounded-full animate-ping shrink-0"
+                                    style={{ backgroundColor: liveSlotColor }}
+                                  />
+                                  Live Working
+                                </span>
+                              )}
+                            </div>
+
+                            {activeInProgTask ? (
+                              <DroppableInProgressSlot userId={col.auditorUser.id} disabled={false}>
+                                {renderAuditorCard(activeInProgTask, false, isColumnLiveWorking)}
+                              </DroppableInProgressSlot>
+                            ) : (
+                              <TaskMapInProgressDropCard
+                                userId={col.auditorUser.id}
+                                userName={col.auditorUser.name}
+                                availableTasks={toReviewTasks}
+                                allAvailableTasks={allAvailablePool}
+                                allTasks={allTasks || tasks}
+                                queuedTasks={queuedTasks}
+                                onSelectTask={(taskId, task) => handleSelectInProgressTask(taskId, col.auditorUser.id, task)}
+                                disabled={false}
+                                canBrowse={isAuditorOrPm}
+                                roleLabel="Auditor"
+                              />
+                            )}
+                          </div>
+
+                          {/* QUEUE SECTION */}
+                          {queuedTasks.length > 0 && (
+                            <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
+                              <div className="flex items-center justify-between px-1">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                                  Queue ({queuedTasks.length})
+                                </span>
+                              </div>
+                              {sortTasksUrgentFirst(queuedTasks).map((t) => renderAuditorCard(t, false))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
+                    {visibleTasks.length === 0 ? (
+                      <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
+                        <span className="text-xs font-semibold text-zinc-400">
+                          No tasks to review
+                        </span>
+                        <span className="text-[11px] text-zinc-500 mt-1">
+                          {searchQuery || activePriority !== 'ALL'
+                            ? 'No tasks match filter'
+                            : `Drop tasks here to assign to ${col.title}`}
+                        </span>
+                      </div>
+                    ) : (
+                      sortTasksUrgentFirst(visibleTasks).map((task) => renderAuditorCard(task, true))
+                    )}
+                  </div>
+                )}
               </DroppableColumn>
             );
           })}

@@ -106,11 +106,7 @@ export function evaluateTaskMapMovePermission(
 
   if (mode === 'IN_PROGRESS') {
     if (isPm) {
-      return {
-        allowed: false,
-        statusCode: 403,
-        error: 'Project Managers cannot move tasks into In Progress. Moving a task to In Progress is the MA\'s action only.',
-      };
+      return { allowed: true, statusCode: 200 };
     }
     if (!targetAssigneeId || targetAssigneeId !== actorId) {
       return {
@@ -119,11 +115,11 @@ export function evaluateTaskMapMovePermission(
         error: 'You can only move tasks into your own In Progress block',
       };
     }
-    if (currentOwnerId !== actorId) {
+    if (currentOwnerId && currentOwnerId !== actorId) {
       return {
         allowed: false,
         statusCode: 403,
-        error: 'You can only move tasks within your own column',
+        error: 'You cannot move a task assigned to another user',
       };
     }
     return { allowed: true, statusCode: 200 };
@@ -142,14 +138,14 @@ export function evaluateTaskMapMovePermission(
       return {
         allowed: false,
         statusCode: 403,
-        error: 'You cannot move tasks into another MA\'s column',
+        error: 'You cannot move tasks into another MA\'s column. Only Project Managers and Admins can assign tasks to others.',
       };
     }
-    if (currentOwnerId !== actorId) {
+    if (currentOwnerId && currentOwnerId !== actorId) {
       return {
         allowed: false,
         statusCode: 403,
-        error: 'You can only move tasks within your own column',
+        error: 'You cannot move a task assigned to another user',
       };
     }
   }

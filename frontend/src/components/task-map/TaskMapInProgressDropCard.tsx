@@ -38,29 +38,36 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
 
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const cardRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
-  const togglePopover = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!isOpen && buttonRef.current) {
-      const rect = buttonRef.current.getBoundingClientRect();
-      const popoverWidth = 300;
-      const popoverHeight = 320;
+  const togglePopover = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!isOpen) {
+      const anchor = cardRef.current || buttonRef.current;
+      if (anchor) {
+        const rect = anchor.getBoundingClientRect();
+        const popoverWidth = 300;
+        const popoverHeight = 320;
 
-      let top = rect.bottom + 6;
-      if (top + popoverHeight > window.innerHeight - 10) {
-        top = Math.max(10, rect.top - popoverHeight - 6);
+        let top = rect.bottom + 6;
+        if (top + popoverHeight > window.innerHeight - 10) {
+          top = Math.max(10, rect.top - popoverHeight - 6);
+        }
+
+        let left = rect.left + (rect.width - popoverWidth) / 2;
+        if (left + popoverWidth > window.innerWidth - 10) {
+          left = Math.max(10, window.innerWidth - popoverWidth - 10);
+        }
+        if (left < 10) left = 10;
+
+        setCoords({ top, left });
       }
-
-      let left = rect.left - 40;
-      if (left + popoverWidth > window.innerWidth - 10) {
-        left = Math.max(10, window.innerWidth - popoverWidth - 10);
-      }
-      if (left < 10) left = 10;
-
-      setCoords({ top, left });
     }
     setIsOpen(!isOpen);
     setSearch('');
@@ -70,31 +77,24 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
     if (!isOpen) return;
 
     const handleOutside = (e: MouseEvent) => {
-      if (
-        buttonRef.current &&
-        !buttonRef.current.contains(e.target as Node) &&
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node)
-      ) {
+      if (cardRef.current && cardRef.current.contains(e.target as Node)) {
+        return;
+      }
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     };
 
-    const handleScrollOrResize = (e: Event) => {
-      if (popoverRef.current && popoverRef.current.contains(e.target as Node)) {
-        return;
-      }
+    const handleResize = () => {
       setIsOpen(false);
     };
 
     document.addEventListener('mousedown', handleOutside);
-    window.addEventListener('resize', handleScrollOrResize);
-    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleResize);
 
     return () => {
       document.removeEventListener('mousedown', handleOutside);
-      window.removeEventListener('resize', handleScrollOrResize);
-      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleResize);
     };
   }, [isOpen]);
 
@@ -116,14 +116,32 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
   return (
     <>
       <div
-        ref={setNodeRef}
+        ref={(node) => {
+          setNodeRef(node);
+          (cardRef as any).current = node;
+        }}
         data-in-progress-dropzone="true"
-        className={`relative group w-full rounded-xl border-2 border-dashed transition-colors duration-150 select-none flex flex-col items-center justify-center text-center p-3 min-h-[112px] ${
+        data-no-drag-scroll="true"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+        }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+        }}
+        onClick={(e) => {
+          if (!allowBrowse) return;
+          togglePopover(e);
+        }}
+        className={`relative group w-full rounded-xl border-2 border-dashed transition-all duration-150 select-none flex flex-col items-center justify-center text-center p-3 min-h-[112px] ${
+          allowBrowse
+            ? 'cursor-pointer hover:border-zinc-500/90 hover:bg-zinc-800/60 active:scale-[0.99]'
+            : 'cursor-default'
+        } ${
           isOver && !allowBrowse
             ? 'border-red-500/70 bg-red-950/20 ring-2 ring-red-500/40 shadow-lg shadow-red-950/20'
             : isOver
               ? 'border-[#D04A7C] bg-[#D04A7C]/15 ring-2 ring-[#D04A7C]/50 shadow-lg shadow-[#D04A7C]/20'
-              : 'border-zinc-700/70 hover:border-zinc-500/90 bg-zinc-900/40 hover:bg-zinc-900/70 shadow-xs'
+              : 'border-zinc-700/70 bg-zinc-900/40 shadow-xs'
         }`}
       >
         {/* Upload / Cloud Icon */}
@@ -168,7 +186,10 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={togglePopover}
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePopover(e);
+            }}
             className="px-3 py-1 rounded-md border border-zinc-700/80 bg-zinc-800 hover:bg-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-white hover:border-zinc-500 transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
           >
             <Search className="size-3 text-zinc-400" />

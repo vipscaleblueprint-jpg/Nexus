@@ -567,6 +567,52 @@ function SubtaskRow({
     return () => { cancelled = true; };
   }, [activeTab, taskId, subtask.id, onAddCommentLocally]);
 
+  // Real-time subtask comment synchronization
+  useEffect(() => {
+    if (!subtask.id) return;
+
+    const handleCommentAdded = (payload: { taskId: string; comment: any; subtaskId?: string }) => {
+      if (payload.subtaskId === subtask.id) {
+        const cur = commentsRef.current || [];
+        if (!cur.some((c: any) => c.id === payload.comment.id)) {
+          const updated = [...cur, payload.comment];
+          onAddCommentLocally?.(subtask.id, updated);
+        }
+      }
+    };
+
+    const handleCommentDeleted = (payload: { taskId: string; commentId: string; subtaskId?: string }) => {
+      if (payload.subtaskId === subtask.id) {
+        const cur = commentsRef.current || [];
+        const updated = cur.filter((c: any) => c.id !== payload.commentId);
+        onAddCommentLocally?.(subtask.id, updated);
+      }
+    };
+
+    if (socket) {
+      socket.on('task:comment_added', handleCommentAdded);
+      socket.on('task:comment_deleted', handleCommentDeleted);
+    }
+
+    const onWinCommentAdded = (e: any) => {
+      if (e.detail) handleCommentAdded(e.detail);
+    };
+    const onWinCommentDeleted = (e: any) => {
+      if (e.detail) handleCommentDeleted(e.detail);
+    };
+    window.addEventListener('task:comment_added', onWinCommentAdded);
+    window.addEventListener('task:comment_deleted', onWinCommentDeleted);
+
+    return () => {
+      if (socket) {
+        socket.off('task:comment_added', handleCommentAdded);
+        socket.off('task:comment_deleted', handleCommentDeleted);
+      }
+      window.removeEventListener('task:comment_added', onWinCommentAdded);
+      window.removeEventListener('task:comment_deleted', onWinCommentDeleted);
+    };
+  }, [socket, subtask.id, onAddCommentLocally]);
+
   const handleTitleSubmit = () => {
     setIsEditingTitle(false);
     if (titleVal.trim() && titleVal !== subtask.title) {
@@ -1921,14 +1967,14 @@ function SubtaskRow({
                     <input
                       type="text"
                       value={commentText}
-                      disabled={subtask.completed}
+                      disabled={isSubmittingComment}
                       onChange={(e) => setCommentText(e.target.value)}
-                      placeholder={subtask.completed ? "Locked" : "Write a comment..."}
+                      placeholder="Write a comment..."
                       className="w-full bg-card border border-zinc-800 focus:border-zinc-700 rounded-lg pl-3 pr-[70px] py-2 text-[12px] text-zinc-200 placeholder:text-zinc-500 outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <button
                       type="submit"
-                      disabled={!commentText.trim() || isSubmittingComment || subtask.completed}
+                      disabled={!commentText.trim() || isSubmittingComment}
                       className="absolute right-1 flex items-center justify-center gap-1.5 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:bg-transparent disabled:text-zinc-600 text-zinc-300 text-[11px] font-medium rounded transition-colors cursor-pointer"
                     >
                       <Send className="w-3.5 h-3.5" />

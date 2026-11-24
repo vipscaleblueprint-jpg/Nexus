@@ -107,9 +107,9 @@ export function canStartInProgressSlot(params: {
   currentUserId?: string | null;
   columnUserId?: string | null;
 }): boolean {
-  const { isPmUser, currentUserId, columnUserId } = params;
-  if (isPmUser) return false;
-  return Boolean(currentUserId && columnUserId && currentUserId === columnUserId);
+  const { currentUserId, columnUserId } = params;
+  if (!currentUserId || !columnUserId) return false;
+  return currentUserId === columnUserId;
 }
 
 export function canTransferTaskMapCard(isPmUser: boolean): boolean {

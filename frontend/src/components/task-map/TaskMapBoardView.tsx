@@ -382,7 +382,9 @@ const DroppableColumn: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      className={`${className || ''} transition-colors duration-150 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/20 shadow-xl shadow-blue-950/30' : ''
+      data-task-column={id}
+      data-droppable-column="true"
+      className={`${className || ''} cursor-default transition-colors duration-150 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/20 shadow-xl shadow-blue-950/30' : ''
         }`}
     >
       {children}
@@ -412,6 +414,7 @@ const DroppableInProgressSlot: React.FC<{
     <div
       ref={setNodeRef}
       data-in-progress-dropzone="true"
+      data-no-drag-scroll="true"
       className={`rounded-xl transition-colors duration-150 ${
         isOver ? 'ring-2 ring-[#D04A7C] bg-[#D04A7C]/15 shadow-lg shadow-[#D04A7C]/20' : ''
       }`}
@@ -3707,7 +3710,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 });
 
                 return (
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
+                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
                     {/* IN PROGRESS SLOT / CARD */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between px-1">

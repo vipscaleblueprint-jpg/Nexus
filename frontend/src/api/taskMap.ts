@@ -2319,8 +2319,12 @@ export function attachDragToScroll(container: HTMLElement): () => void {
 
     if (
       target.closest('button, input, textarea, select, option, label, a') ||
-      target.closest('[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle], [data-in-progress-dropzone], [data-no-drag-scroll]') ||
-      target.closest('[role="dialog"], [role="menu"], [data-portal], [draggable="true"], [aria-roledescription="draggable"], .no-board-drag, .no-drag-scroll')
+      target.closest(
+        '[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle], [data-in-progress-dropzone], [data-no-drag-scroll], [data-task-column], [data-droppable-column], [data-column-body]'
+      ) ||
+      target.closest(
+        '[role="dialog"], [role="menu"], [data-portal], [draggable="true"], [aria-roledescription="draggable"], .no-board-drag, .no-drag-scroll'
+      )
     ) {
       return;
     }
@@ -2352,12 +2356,17 @@ export function attachDragToScroll(container: HTMLElement): () => void {
     const dy = moveEvent.clientY - startY;
 
     if (!isDragging) {
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      // Only initiate board horizontal drag when horizontal movement is dominant and exceeds threshold
+      if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
         isDragging = true;
         prevScrollBehavior = container.style.scrollBehavior;
         container.style.scrollBehavior = 'auto';
         document.body.style.cursor = 'grabbing';
         document.body.style.userSelect = 'none';
+      } else if (Math.abs(dy) > 6 && Math.abs(dy) >= Math.abs(dx)) {
+        // Vertical movement (e.g. scrolling or card dragging within a column) - cancel board horizontal drag
+        isMouseDown = false;
+        return;
       } else {
         return;
       }

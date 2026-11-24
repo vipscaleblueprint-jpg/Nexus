@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap } from '../services/redisService';
+import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap, deleteMaActiveSession } from '../services/redisService';
 import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
@@ -110,6 +110,42 @@ const CLOSED_OR_EXCLUDED_STATUS_VARIANTS = [
 ];
 
 const inFlightTaskMapQueries = new Map<string, Promise<any>>();
+
+/**
+ * Asynchronously triggers the n8n webhook to append the newly started task row
+ * into the MA's personal Daily Schedule spreadsheet.
+ */
+async function triggerN8nStartTaskWebhook(params: {
+  userId: string;
+  userName: string;
+  userEmail?: string | null;
+  dailySheetUrl?: string | null;
+  taskId: string;
+  subtaskId?: string | null;
+  taskTitle: string;
+  clientName: string;
+  taskLink?: string | null;
+  status?: string;
+  timeIn?: string;
+  timeOut?: string | null;
+  taskDeliverablesDescription?: string | null;
+  taskUpdateAndDeliverables?: string | null;
+  description?: string | null;
+  date?: string;
+  mode?: 'START' | 'STOP' | 'UPDATE';
+}) {
+  const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
+  try {
+    const res = await fetch(n8nUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);
+  } catch (err: any) {
+    logger.warn(`[n8n Sync] Warning: failed to trigger n8n webhook: ${err.message}`);
+  }
+}
 
 /**
  * Fetch all client lists residing under any "Client Dashboard" folder/space in PostgreSQL (cached briefly).
@@ -430,8 +466,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             },
           },
         },
-        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
         subtasks: {
           where: { completed: false },
@@ -1614,7 +1650,7 @@ const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
 export const updateTaskStatuses = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { statuses } = req.body;
+    const { statuses, taskDeliverablesDescription, taskUpdateAndDeliverables, timeOut } = req.body;
     const user = (req as any).user;
 
     if (!Array.isArray(statuses)) {
@@ -1626,10 +1662,19 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const actorUser = user?.id
       ? await prisma.user.findUnique({
           where: { id: user.id },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, dailySheetUrl: true },
         })
       : null;
     const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
+
+    const nowManilaTime = timeOut
+      ? String(timeOut).trim()
+      : new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        }).format(new Date());
 
     const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
     const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
@@ -1638,7 +1683,10 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
       ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND'].includes(norm)
     );
-    const shouldClearAssignee = isHandoverSubStatus || isWorkflowTransferOut;
+    const isClosedSubStatus = normSubStatuses.some((norm) =>
+      ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(norm)
+    );
+    const shouldClearAssignee = isHandoverSubStatus || isWorkflowTransferOut || isClosedSubStatus;
 
     const target = parseTaskMapTargetId(id);
 
@@ -1699,9 +1747,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       const subtask = await prisma.subtask.findUnique({
         where: { id: target.entityId },
         include: {
-          assignees: { select: { id: true, name: true, roles: true } },
-          User: { select: { id: true, name: true, roles: true } },
-          task: { select: { id: true, title: true } },
+          assignees: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
+          User: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
+          task: { select: { id: true, title: true, listId: true, list: { select: { id: true, name: true } } } },
         },
       });
       if (!subtask) {
@@ -1749,7 +1797,51 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         }
 
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
-        if (subtask.assigneeId || (subtask.assignees && subtask.assignees.length > 0)) {
+        for (const r of pmReviews) {
+          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id && r.timeIn && !r.timeOut) {
+            r.timeOut = nowManilaTime;
+            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+          }
+          if (r?.type === 'UPWORK_SESSION' && r?.subtaskId === subtask.id && r.active) {
+            r.active = false;
+            r.stoppedAt = new Date().toISOString();
+          }
+        }
+        const subUser = subtask.User || (subtask.assignees && subtask.assignees[0]);
+        const subNamesToClear = [actorDisplayName, subUser?.name].filter(Boolean) as string[];
+        for (const n of subNamesToClear) {
+          await deleteMaActiveSession(n).catch(() => {});
+          const clearedPayload = { maName: n, cleared: true, taskId: target.rawId };
+          io.emit('ma:session_updated', clearedPayload);
+          io.emit('task_map:ma_progress_changed', clearedPayload);
+          io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.rawId });
+        }
+        if (isHandoverSubStatus || isWorkflowTransferOut) {
+          triggerN8nStartTaskWebhook({
+            userId: subtask.assigneeId || subUser?.id || user?.id,
+            userName: subUser?.name || actorDisplayName,
+            userEmail: (subUser as any)?.email || actorUser?.email,
+            dailySheetUrl: (subUser as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
+            taskId: subtask.taskId,
+            subtaskId: subtask.id,
+            taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
+            clientName: (subtask.task as any)?.list?.name || 'General',
+            taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
+            status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+            timeOut: nowManilaTime,
+            taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+            taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
+            description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : subtask.title || '',
+            mode: 'STOP',
+          });
+        }
+        if (isClosedSubStatus) {
+          await prisma.subtask.update({
+            where: { id: subtask.id },
+            data: { status: 'CLOSED', completed: true, assigneeId: null, assignees: { set: [] } },
+          });
+        } else if (subtask.assigneeId || (subtask.assignees && subtask.assignees.length > 0)) {
           await prisma.subtask.update({
             where: { id: subtask.id },
             data: { assigneeId: null, assignees: { set: [] } },
@@ -1830,9 +1922,11 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       where: { id },
       select: {
         title: true,
+        listId: true,
+        list: { select: { id: true, name: true } },
         assigneeId: true,
-        assignees: { select: { id: true, name: true, roles: true } },
-        assignee: { select: { id: true, name: true, email: true, roles: true } },
+        assignees: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
+        assignee: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
       },
     });
 
@@ -2008,8 +2102,75 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       }
       if (Array.isArray(pmReviews)) {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
+        // Clock out any open sheet progress and close Upwork session on handover / transfer
+        for (const r of pmReviews) {
+          if (r?.type === 'SHEET_PROGRESS' && !r?.subtaskId && r.timeIn && !r.timeOut) {
+            r.timeOut = nowManilaTime;
+            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+          }
+          if (r?.type === 'UPWORK_SESSION' && !r?.subtaskId && r.active) {
+            r.active = false;
+            r.stoppedAt = new Date().toISOString();
+          }
+        }
       }
-      if (currentTask?.assigneeId || (currentTask?.assignees && currentTask.assignees.length > 0)) {
+      const namesToClear = [actorDisplayName, currentTask?.assignee?.name].filter(Boolean) as string[];
+      for (const n of namesToClear) {
+        await deleteMaActiveSession(n).catch(() => {});
+        const clearedPayload = { maName: n, cleared: true, taskId: id };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: id });
+      }
+      if (isHandoverSubStatus || isWorkflowTransferOut) {
+        const primaryAssignee = currentTask?.assignee || (currentTask?.assignees && currentTask.assignees[0]);
+        triggerN8nStartTaskWebhook({
+          userId: currentTask?.assigneeId || primaryAssignee?.id || user?.id,
+          userName: primaryAssignee?.name || actorDisplayName,
+          userEmail: primaryAssignee?.email || actorUser?.email,
+          dailySheetUrl: (primaryAssignee as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
+          taskId: id,
+          taskTitle: currentTask?.title || 'Task',
+          clientName: (currentTask as any)?.list?.name || 'General',
+          taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
+          status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+          timeOut: nowManilaTime,
+          taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+          taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
+          description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : currentTask?.title || '',
+          mode: 'STOP',
+        });
+      }
+      if (isRedisReady()) {
+        await redis.hdel('task_map:upwork_active', id).catch(() => {});
+      }
+      if (isClosedSubStatus) {
+        const taskWithList = await prisma.task.findUnique({
+          where: { id },
+          select: { listId: true },
+        });
+        const listClosedStatus = taskWithList?.listId
+          ? await prisma.listStatus.findFirst({
+              where: {
+                listId: taskWithList.listId,
+                name: { in: ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'], mode: 'insensitive' },
+              },
+              select: { name: true },
+            }).catch(() => null)
+          : null;
+        const targetClosedStatus = listClosedStatus?.name ?? 'CLOSED';
+
+        await prisma.task.update({
+          where: { id },
+          data: {
+            status: targetClosedStatus,
+            assigneeId: null,
+            assignees: { set: [] },
+          },
+        });
+        io.emit('task:updated', { id, status: targetClosedStatus, assigneeId: null, assignees: [] });
+      } else if (currentTask?.assigneeId || (currentTask?.assignees && currentTask.assignees.length > 0)) {
         await prisma.task.update({
           where: { id },
           data: { assigneeId: null, assignees: { set: [] } },
@@ -2168,11 +2329,6 @@ async function executeTaskMapAssignment(
         error: 'Target MA is required to transfer a task',
       });
     }
-    if (action === 'ASSIGN' && mode === 'IN_PROGRESS' && isPm) {
-      return res.status(403).json({
-        error: 'Project Managers cannot move tasks into In Progress. Moving a task to In Progress is the MA\'s action only.',
-      });
-    }
 
     const actorUser = await prisma.user.findUnique({
       where: { id: user.id },
@@ -2253,7 +2409,7 @@ async function executeTaskMapAssignment(
       if (assigneeId) {
         const targetUser = await prisma.user.findUnique({
           where: { id: assigneeId },
-          select: { id: true, name: true, roles: true, systemRole: true },
+          select: { id: true, name: true, roles: true, systemRole: true, dailySheetUrl: true, email: true },
         });
         if (!targetUser) {
           return res.status(404).json({ error: 'Target user not found' });
@@ -2286,8 +2442,8 @@ async function executeTaskMapAssignment(
         where: { id: currentSubtask.id },
         data: updateSubData,
         include: {
-          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
         },
       });
 
@@ -2334,6 +2490,66 @@ async function executeTaskMapAssignment(
           updatedSubtask.User?.id === assigneeId
             ? updatedSubtask.User
             : (updatedSubtask.assignees || []).find((u: any) => u.id === assigneeId);
+
+        if (mode === 'IN_PROGRESS') {
+          const nowManilaTime = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Manila',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          }).format(new Date());
+
+          const nowManilaDate = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Manila',
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          }).format(new Date());
+
+          const existingSubProgIdx = reviewsList.findIndex(
+            (r: any) => r?.type === 'SHEET_PROGRESS' && r?.subtaskId === currentSubtask.id
+          );
+          const liveSubProg = {
+            type: 'SHEET_PROGRESS',
+            subtaskId: currentSubtask.id,
+            timeIn: nowManilaTime,
+            timeOut: null,
+            isMissingTime: false,
+            isUpwork: false,
+            client: currentSubtask.task?.list?.name || 'General',
+            timeTracker: 'No Need to Track',
+            maName: targetSubUser?.name || actorName,
+            status: 'In progress',
+            date: nowManilaDate,
+            taskDeliverables: currentSubtask.title,
+            taskUpdateAndDeliverables: null,
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          if (existingSubProgIdx !== -1) {
+            reviewsList[existingSubProgIdx] = { ...reviewsList[existingSubProgIdx], ...liveSubProg };
+          } else {
+            reviewsList.push(liveSubProg);
+          }
+
+          // Trigger n8n webhook asynchronously to append row to MA Daily Schedule
+          triggerN8nStartTaskWebhook({
+            userId: assigneeId,
+            userName: targetSubUser?.name || actorName,
+            userEmail: targetSubUser?.email || actorUser?.email,
+            dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
+            taskId: currentSubtask.taskId,
+            subtaskId: currentSubtask.id,
+            taskTitle: `${currentSubtask.title} (${currentSubtask.task?.title || 'Subtask'})`,
+            clientName: currentSubtask.task?.list?.name || 'General',
+            taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
+            status: 'In Progress',
+            timeIn: nowManilaTime,
+            date: nowManilaDate,
+          });
+        }
+
         if (!isReviewOrCrmSub && targetSubUser && !isNonMaReviewerOnlyRole(targetSubUser as any)) {
           reviewsList = upsertOriginalMaEntry(reviewsList, {
             userId: targetSubUser.id,
@@ -2662,7 +2878,7 @@ async function executeTaskMapAssignment(
     if (assigneeId) {
       const targetUser = await prisma.user.findUnique({
         where: { id: assigneeId },
-        select: { id: true, name: true, roles: true, systemRole: true },
+        select: { id: true, name: true, roles: true, systemRole: true, dailySheetUrl: true, email: true },
       });
 
       if (!targetUser) {
@@ -2722,8 +2938,8 @@ async function executeTaskMapAssignment(
             },
           },
         },
-        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
       },
     });
@@ -2754,6 +2970,61 @@ async function executeTaskMapAssignment(
         mode: mode || 'QUEUE',
         assignedAt: new Date().toISOString(),
       });
+
+      if (mode === 'IN_PROGRESS') {
+        const nowManilaTime = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        }).format(new Date());
+
+        const nowManilaDate = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }).format(new Date());
+
+        const existingProgIdx = reviewsList.findIndex((r: any) => r?.type === 'SHEET_PROGRESS' && !r?.subtaskId);
+        const liveProg = {
+          type: 'SHEET_PROGRESS',
+          timeIn: nowManilaTime,
+          timeOut: null,
+          isMissingTime: false,
+          isUpwork: false,
+          client: updatedTask.list?.name || 'General',
+          timeTracker: 'No Need to Track',
+          maName: updatedTask.assignee?.name || actorName,
+          status: 'In progress',
+          date: nowManilaDate,
+          taskDeliverables: updatedTask.title,
+          taskUpdateAndDeliverables: null,
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (existingProgIdx !== -1) {
+          reviewsList[existingProgIdx] = { ...reviewsList[existingProgIdx], ...liveProg };
+        } else {
+          reviewsList.push(liveProg);
+        }
+
+        // Trigger n8n webhook asynchronously to append row to MA Daily Schedule
+        triggerN8nStartTaskWebhook({
+          userId: assigneeId,
+          userName: updatedTask.assignee?.name || actorName,
+          userEmail: updatedTask.assignee?.email || actorUser?.email,
+          dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
+          taskId: id,
+          taskTitle: updatedTask.title,
+          clientName: updatedTask.list?.name || 'General',
+          taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
+          status: 'In Progress',
+          timeIn: nowManilaTime,
+          date: nowManilaDate,
+        });
+      }
 
       const taskStatusNorm = (updatedTask.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       const isReviewOrCrmTask = [
@@ -3010,19 +3281,100 @@ export const transferTaskMapTask = async (req: Request, res: Response) => {
 };
 
 /**
- * Claim an available task from the pool (Restricted: PMs/Admins only)
+ * Search or list tasks under Admin folder or known Admin lists regardless of status (Closed, Daily, In Progress, etc.)
+ */
+export const getAdminTasks = async (req: Request, res: Response) => {
+  try {
+    const rawQ = ((req.query.q as string) || '').trim().toLowerCase();
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 100, 250);
+
+    // 1. Locate all lists under the Admin folder or in ADMIN_LIST_NAMES
+    const adminLists = await prisma.list.findMany({
+      where: {
+        OR: [
+          { name: { in: Array.from(ADMIN_LIST_NAMES), mode: 'insensitive' } },
+          { folder: { name: { contains: 'Admin', mode: 'insensitive' } } },
+        ],
+      },
+      select: { id: true, name: true, folder: { select: { id: true, name: true } } },
+    });
+    const adminListIds = adminLists.map((l) => l.id);
+
+    // Build search conditions across title, list name, folder name with NO status restrictions
+    let whereClause: any = {
+      listId: { in: adminListIds },
+    };
+
+    if (rawQ) {
+      if (rawQ !== 'admin' && rawQ !== 'adm') {
+        const orConditions: any[] = [
+          { title: { contains: rawQ, mode: 'insensitive' } },
+          { list: { name: { contains: rawQ, mode: 'insensitive' } } },
+          { list: { folder: { name: { contains: rawQ, mode: 'insensitive' } } } },
+        ];
+
+        // Handle common aliases/typos: "xfinite" vs "xfnite"
+        if (rawQ.includes('xfinite')) {
+          const alias = rawQ.replace(/xfinite/g, 'xfnite');
+          orConditions.push({ title: { contains: alias, mode: 'insensitive' } });
+          orConditions.push({ list: { name: { contains: alias, mode: 'insensitive' } } });
+        } else if (rawQ.includes('xfnite')) {
+          const alias = rawQ.replace(/xfnite/g, 'xfinite');
+          orConditions.push({ title: { contains: alias, mode: 'insensitive' } });
+          orConditions.push({ list: { name: { contains: alias, mode: 'insensitive' } } });
+        }
+
+        whereClause.OR = orConditions;
+      }
+    }
+
+    const tasks = await prisma.task.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        priority: true,
+        assigneeId: true,
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        list: {
+          select: {
+            id: true,
+            name: true,
+            folder: { select: { id: true, name: true } },
+          },
+        },
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+    });
+
+    const mappedTasks = tasks.map((t) => ({
+      ...t,
+      isAdminTask: true,
+      isClosed: isClosedStatus((t.status || '').toUpperCase().replace(/[\s_-]+/g, '')),
+      progress: {
+        client: t.list?.name || 'Admin',
+      },
+    }));
+
+    return res.json({ success: true, tasks: mappedTasks });
+  } catch (error: any) {
+    logger.error({ error }, 'Error fetching admin tasks');
+    return res.status(500).json({ error: 'Failed to fetch admin tasks' });
+  }
+};
+
+/**
+ * Claim an available task from the pool (Assign to self)
  */
 export const claimTask = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: 'Authentication required' });
-
-    // Enforce that only PMs and Admins can assign/claim from Available tasks
-    const allowed = await canUserSetAssignees(user.id);
-    if (!allowed) {
-      return res.status(403).json({ error: 'Only Project Managers and Admins can assign tasks from Available tasks' });
-    }
 
     // Update Task assignee
     const task = await prisma.task.update({
@@ -4634,4 +4986,174 @@ export const getClientLockStatusHandler = async (req: Request, res: Response) =>
   const status = await checkClientLockStatus(clientName);
   return res.json(status);
 };
+
+/**
+ * Returns the daily schedule spreadsheet configuration for the given or current user.
+ * Resolves `dailySheetUrl` directly from the User record in PostgreSQL.
+ */
+export const getUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const targetUserId = (req.query.userId as string) || user?.id;
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, name: true, email: true, dailySheetUrl: true, avatarUrl: true, roles: true },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const rawUrl = targetUser.dailySheetUrl || '';
+    const match = rawUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    const spreadsheetId = match ? match[1] : null;
+
+    return res.json({
+      success: true,
+      userId: targetUser.id,
+      userName: targetUser.name,
+      userEmail: targetUser.email,
+      dailySheetUrl: targetUser.dailySheetUrl || null,
+      spreadsheetId,
+      hasSpreadsheetLink: Boolean(targetUser.dailySheetUrl && targetUser.dailySheetUrl.trim()),
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * Handles explicit schedule row sync from frontend to spreadsheet / n8n
+ */
+export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => {
+  try {
+    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, userId } = req.body;
+    const user = (req as any).user;
+
+    const targetUserId = userId || user?.id;
+    const actorUser = targetUserId
+      ? await prisma.user.findUnique({
+          where: { id: targetUserId },
+          select: { id: true, name: true, email: true, dailySheetUrl: true },
+        })
+      : null;
+    const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
+
+    const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+
+    // Strict validation: Select client and task first before time in and out
+    if (targetRow) {
+      const hasTime = Boolean(
+        (targetRow.timeIn && String(targetRow.timeIn).trim()) ||
+        (targetRow.timeOut && String(targetRow.timeOut).trim())
+      );
+      const clientStr = (targetRow.client || '').toString().trim();
+      const taskStr = (targetRow.task || '').toString().trim();
+      const hasClient = Boolean(clientStr && clientStr.toLowerCase() !== 'general' && clientStr.toLowerCase() !== 'no client inputted');
+      const hasTask = Boolean(taskStr && taskStr.toLowerCase() !== 'task' && taskStr.toLowerCase() !== 'no task inputted');
+
+      if (hasTime && (!hasClient || !hasTask)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Select client and task first before time in and out',
+          fieldErrors: {
+            ...(!hasClient ? { client: 'Client must be selected first' } : {}),
+            ...(!hasTask ? { task: 'Task must be selected first' } : {}),
+          },
+        });
+      }
+    }
+
+    const cleanTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
+    if (cleanTaskId) {
+      const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
+      let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
+
+      if (targetRow) {
+        const nowTimeOut = targetRow.timeOut || new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        }).format(new Date());
+
+        let matched = false;
+        for (const r of pmReviews) {
+          if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
+            if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
+              r.timeOut = nowTimeOut;
+              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+              matched = true;
+            } else if (!r.timeOut) {
+              r.timeOut = nowTimeOut;
+              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+              matched = true;
+            }
+          }
+        }
+        if (!matched && mode === 'STOP') {
+          pmReviews.push({
+            type: 'SHEET_PROGRESS',
+            taskId: cleanTaskId,
+            subtaskId: subtaskId || null,
+            timeIn: targetRow.timeIn || '',
+            timeOut: nowTimeOut,
+            client: targetRow.client || 'General',
+            task: targetRow.task || 'Task',
+            taskDeliverables: targetRow.taskDeliverablesDescription || null,
+            taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        await updateTaskMapRecord(cleanTaskId, { pmReviews });
+      }
+
+      if (mode === 'STOP') {
+        await deleteMaActiveSession(actorDisplayName).catch(() => {});
+        const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
+      }
+    }
+
+    // Always forward row to n8n webhook for realtime spreadsheet update based on user's dailySheetUrl from database
+    if (targetRow) {
+      triggerN8nStartTaskWebhook({
+        userId: actorUser?.id || user?.id,
+        userName: actorDisplayName,
+        userEmail: actorUser?.email,
+        dailySheetUrl: actorUser?.dailySheetUrl,
+        taskId: cleanTaskId || taskId || 'general-task',
+        subtaskId: subtaskId || null,
+        taskTitle: targetRow.task || 'Task',
+        clientName: targetRow.client || 'General',
+        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : ''),
+        status: targetRow.taskStatus || mode,
+        timeIn: targetRow.timeIn,
+        timeOut: targetRow.timeOut,
+        taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
+        description: targetRow.taskDeliverablesDescription || targetRow.task,
+        date: targetRow.date,
+        mode: mode || (targetRow.timeOut ? 'STOP' : 'START'),
+      });
+    }
+
+    return res.json({
+      success: true,
+      rows: rows || [],
+      isSplitAcrossMidnight: Boolean(isSplitAcrossMidnight),
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in syncSpreadsheetRowHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 

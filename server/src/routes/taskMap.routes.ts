@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getTaskMapData,
+  getAdminTasks,
   getOptions,
   upsertOption,
   deleteOption,
@@ -30,6 +31,8 @@ import {
   getMyDailyOtpHandler,
   verifyClientOtpHandler,
   getClientLockStatusHandler,
+  syncSpreadsheetRowHandler,
+  getUserDailyScheduleConfigHandler,
 } from '../controllers/taskMap.controller';
 import { previewAutoQueueHandler } from '../controllers/autoQueue.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
@@ -40,6 +43,7 @@ export const taskMapRouter = Router();
 taskMapRouter.use(authenticateToken);
 
 taskMapRouter.get('/data', getTaskMapData);
+taskMapRouter.get('/admin-tasks', getAdminTasks);
 taskMapRouter.get('/launch', getLaunchMapData);
 taskMapRouter.get('/launch/candidates', getLaunchCandidates);
 taskMapRouter.get('/options', getOptions);
@@ -76,3 +80,7 @@ taskMapRouter.post('/crm/follow-ups/:id/respond', respondCrmFollowUpHandler);
 taskMapRouter.get('/my-daily-otp', getMyDailyOtpHandler);
 taskMapRouter.post('/verify-client-otp', verifyClientOtpHandler);
 taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);
+
+// Spreadsheet Schedule Row Sync & User Config
+taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
+taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);

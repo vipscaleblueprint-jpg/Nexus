@@ -54,6 +54,7 @@ export interface TaskProgress {
   date: string | null;
   sheetRow?: number;
   taskDeliverables?: string | null;
+  taskDeliverablesDescription?: string | null;
   taskUpdateAndDeliverables?: string | null;
   updatedAt?: string;
 }
@@ -221,15 +222,17 @@ export interface TaskMapItem {
 export type TrackFilter = 'ALL' | 'LIVE' | 'ACTIVE';
 
 /**
- * True when a progress/daily-log row is dated today (Manila). Accepts YYYY-MM-DD, ISO strings,
- * or M/D/YYYY sheet dates; falls back to `updatedAt` when the row has no date.
+ * True when a progress/daily-log row is dated for the target date (Manila, defaults to today).
+ * Accepts YYYY-MM-DD, ISO strings, or M/D/YYYY sheet dates; falls back to `updatedAt` when the row has no date.
  */
 export function isProgressLoggedToday(
   prog?: { date?: string | null; updatedAt?: string | null } | null,
-  now: Date = new Date()
+  nowOrTargetDate: Date | string = new Date()
 ): boolean {
   if (!prog) return false;
-  const today = getManilaDateKey(now);
+  const targetDateKey = getManilaDateKey(nowOrTargetDate);
+  if (!targetDateKey) return false;
+
   let key: string | null = null;
   const raw = (prog.date || '').trim();
   const sheet = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -247,7 +250,7 @@ export function isProgressLoggedToday(
   if (!key && prog.updatedAt) {
     key = getManilaDateKey(prog.updatedAt);
   }
-  return !!key && key === today;
+  return !!key && key === targetDateKey;
 }
 
 export interface ShiftUser {
@@ -644,16 +647,23 @@ export function applyOptimisticTaskMapAssignment(
     ...(task.assignees || []).filter((u: any) => u && u.id !== targetUser.id),
   ];
 
-  const sameWorkerProgress = Boolean(
-    task.progress?.maName &&
-    targetUser.name &&
-    task.progress.maName.trim().toLowerCase() === targetUser.name.trim().toLowerCase()
-  );
   const nextProgress =
     mode === 'IN_PROGRESS'
-      ? sameWorkerProgress
-        ? task.progress
-        : null
+      ? {
+          timeIn: formatManilaTime(new Date()),
+          timeOut: null,
+          isMissingTime: false,
+          isUpwork: Boolean(task.progress?.isUpwork),
+          client: task.progress?.client || task.list?.name || 'General',
+          timeTracker: task.progress?.timeTracker || 'No Need to Track',
+          maName: targetUser.name || 'Team Member',
+          status: 'In Progress',
+          date: formatManilaDateLong(new Date()),
+          taskDeliverables: task.title,
+          taskUpdateAndDeliverables: '',
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
       : task.progress
         ? {
           ...task.progress,
@@ -813,6 +823,20 @@ export const taskMapApi = {
     });
   },
 
+  searchAdminTasks: async (query?: string, limit?: number): Promise<TaskMapItem[]> => {
+    try {
+      const q = new URLSearchParams();
+      if (query) q.set('q', query);
+      if (limit) q.set('limit', String(limit));
+      q.set('_t', String(Date.now()));
+      const res = await apiClient<{ success: boolean; tasks: TaskMapItem[] }>(`/api/task-map/admin-tasks?${q.toString()}`);
+      return res.tasks || [];
+    } catch (err) {
+      console.warn('Failed to search admin tasks:', err);
+      return [];
+    }
+  },
+
   getOptions: async (): Promise<{ success: boolean; options: TaskMapOption[] }> => {
     return apiClient<{ success: boolean; options: TaskMapOption[] }>(`/api/task-map/options?_t=${Date.now()}`);
   },
@@ -843,13 +867,21 @@ export const taskMapApi = {
 
   updateTaskStatuses: async (
     taskId: string,
-    statuses: string[]
+    statuses: string[],
+    extra?: {
+      taskDeliverablesDescription?: string | null;
+      taskUpdateAndDeliverables?: string | null;
+      timeOut?: string | null;
+    }
   ): Promise<{
     success: boolean;
     taskMap: TaskMapRecord;
     upworkStartedAt?: string | null;
     upworkSession?: UpworkSession | null;
     activeUpworkSessions?: UpworkSession[];
+    originalMaId?: string | null;
+    assigneeId?: string | null;
+    assignee?: any;
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
@@ -859,9 +891,12 @@ export const taskMapApi = {
         upworkStartedAt?: string | null;
         upworkSession?: UpworkSession | null;
         activeUpworkSessions?: UpworkSession[];
+        originalMaId?: string | null;
+        assigneeId?: string | null;
+        assignee?: any;
       }>(`/api/task-map/tasks/${taskId}/statuses`, {
         method: 'PATCH',
-        body: JSON.stringify({ statuses }),
+        body: JSON.stringify({ statuses, ...(extra || {}) }),
       });
     } finally {
       markTaskSavingToDb(taskId, false);
@@ -1143,7 +1178,815 @@ export const taskMapApi = {
       markTaskSavingToDb(taskId, false);
     }
   },
+
+  /**
+   * Syncs task progress and time-tracking directly to the user's MA Daily Schedule spreadsheet
+   * (reference: MA Daily Schedule spreadsheet & appscript.js).
+   * - Strict validation: Client (Col G) and Task (Col I) must be selected first before Time In/Out.
+   * - On Drag/Select to In Progress (START): records Time In = now, Time Out = blank, status = "In Progress".
+   * - On Transition to Handover or To Review (STOP): records Time Out = now, validates and splits any midnight crossings (11:59 PM -> 12:00 AM),
+   *   and attaches Task Deliverables Description (Col K) & Task Update and Deliverables (Col L).
+   */
+  syncScheduleToSpreadsheet: async (
+    params: SyncScheduleToSpreadsheetParams
+  ): Promise<{
+    success: boolean;
+    rows: SpreadsheetScheduleRow[];
+    isSplitAcrossMidnight: boolean;
+    message?: string;
+  }> => {
+    // Validate client and task first before time in/out
+    const val = validateScheduleRow({
+      client: params.clientName,
+      task: params.taskTitle,
+      timeIn: params.startedAt ? formatManilaTime(new Date(params.startedAt)) : 'now',
+      timeOut: params.stoppedAt ? formatManilaTime(new Date(params.stoppedAt)) : undefined,
+    });
+    if (!val.valid) {
+      throw new Error(val.error || 'Select client and task first before time in and out');
+    }
+
+    const start = params.startedAt ? new Date(params.startedAt) : new Date();
+    const end = params.stoppedAt ? new Date(params.stoppedAt) : params.mode === 'STOP' ? new Date() : null;
+
+    const rows = splitMidnightScheduleRows({
+      start,
+      end,
+      client: params.clientName,
+      task: params.taskTitle,
+      taskLink: params.taskLink,
+      status: params.status,
+      timeTracker: params.timeTracker || (params.isUpwork ? 'Upwork' : 'No Need to Track'),
+      taskDeliverablesDescription: params.taskDeliverablesDescription || params.taskTitle,
+      taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
+    });
+
+    const isSplitAcrossMidnight = rows.length > 1;
+
+    return apiClient<{
+      success: boolean;
+      rows: SpreadsheetScheduleRow[];
+      isSplitAcrossMidnight: boolean;
+      message?: string;
+    }>('/api/task-map/sheets/sync-row', {
+      method: 'POST',
+      body: JSON.stringify({
+        taskId: params.taskId,
+        subtaskId: params.subtaskId,
+        userId: params.userId,
+        mode: params.mode,
+        sheetRow: params.sheetRow,
+        rows,
+        isSplitAcrossMidnight,
+      }),
+    });
+  },
+
+  /**
+   * Fetches the user's Daily Schedule spreadsheet link and configuration from the database.
+   */
+  getDailyScheduleConfig: async (userId?: string): Promise<UserDailyScheduleConfig> => {
+    const q = userId ? `?userId=${encodeURIComponent(userId)}&_t=${Date.now()}` : `?_t=${Date.now()}`;
+    return apiClient<UserDailyScheduleConfig>(`/api/task-map/sheets/user-config${q}`);
+  },
+
+  /**
+   * Realtime spreadsheet table row input: validates client + task are selected first,
+   * auto-assigns and locks Date, calculates duration, and sends a realtime update to the spreadsheet.
+   */
+  inputScheduleRow: async (
+    params: InputScheduleRowParams
+  ): Promise<InputScheduleRowResult> => {
+    return inputRowToSpreadsheet(params);
+  },
 };
+
+// ===========================================================================
+// MA Daily Schedule Spreadsheet Column Map & Time Tracking Types
+// Reference: MA Daily Schedule spreadsheet & appscript.js
+// ===========================================================================
+
+export interface SpreadsheetColumnDef {
+  colNumber: number;
+  colLetter: string;
+  key: keyof SpreadsheetScheduleRow;
+  header: string;
+  type: 'date' | 'time' | 'text' | 'number' | 'boolean' | 'select' | 'link';
+  locked?: boolean;
+  required?: boolean;
+  options?: string[];
+  placeholder?: string;
+  width?: number;
+  description?: string;
+}
+
+/**
+ * Standard column definitions for the MA Daily Schedule Google Sheet (Columns A to S / 1 to 19).
+ */
+export const MA_DAILY_SCHEDULE_COLUMNS: SpreadsheetColumnDef[] = [
+  {
+    colNumber: 1,
+    colLetter: 'A',
+    key: 'date',
+    header: 'Date',
+    type: 'date',
+    locked: true,
+    required: true,
+    description: 'Auto-assigned on row edit and locked in sheet and Nexus',
+    width: 220,
+  },
+  {
+    colNumber: 2,
+    colLetter: 'B',
+    key: 'timeIn',
+    header: 'Time In',
+    type: 'time',
+    placeholder: '8:40 AM',
+    required: false,
+    description: 'Start time of the work session (Requires Client & Task selected first)',
+    width: 100,
+  },
+  {
+    colNumber: 3,
+    colLetter: 'C',
+    key: 'timeOut',
+    header: 'Time Out',
+    type: 'time',
+    placeholder: '5:00 PM',
+    required: false,
+    description: 'End time of the work session (Requires Client & Task selected first)',
+    width: 100,
+  },
+  {
+    colNumber: 4,
+    colLetter: 'D',
+    key: 'breakTime' as any,
+    header: 'Break',
+    type: 'text',
+    locked: false,
+    width: 80,
+  },
+  {
+    colNumber: 5,
+    colLetter: 'E',
+    key: 'durationNum',
+    header: 'Duration (Num)',
+    type: 'number',
+    locked: true,
+    description: 'Calculated decimal hours (e.g. 3.33)',
+    width: 110,
+  },
+  {
+    colNumber: 6,
+    colLetter: 'F',
+    key: 'durationHours',
+    header: 'Duration (Hours)',
+    type: 'text',
+    locked: true,
+    description: 'Formatted duration (e.g. "3hrs 20min")',
+    width: 130,
+  },
+  {
+    colNumber: 7,
+    colLetter: 'G',
+    key: 'client',
+    header: 'Client',
+    type: 'select',
+    required: true,
+    description: 'Client name (MUST be selected first before time in/out)',
+    width: 180,
+  },
+  {
+    colNumber: 8,
+    colLetter: 'H',
+    key: 'timeTracker',
+    header: 'Time Tracker',
+    type: 'select',
+    options: ['No Need to Track', 'Upwork', 'Clockify'],
+    width: 150,
+  },
+  {
+    colNumber: 9,
+    colLetter: 'I',
+    key: 'task',
+    header: 'Task',
+    type: 'text',
+    required: true,
+    description: 'Task Title (MUST be selected first before time in/out)',
+    width: 240,
+  },
+  {
+    colNumber: 10,
+    colLetter: 'J',
+    key: 'dc',
+    header: 'DC',
+    type: 'boolean',
+    width: 60,
+  },
+  {
+    colNumber: 11,
+    colLetter: 'K',
+    key: 'taskDeliverablesDescription',
+    header: 'Task Deliverables Description',
+    type: 'text',
+    description: 'Scope and deliverable breakdown',
+    width: 260,
+  },
+  {
+    colNumber: 12,
+    colLetter: 'L',
+    key: 'taskUpdateAndDeliverables',
+    header: 'Task Update and Deliverables',
+    type: 'text',
+    description: 'Detailed outcome, findings, or handover update',
+    width: 260,
+  },
+  {
+    colNumber: 13,
+    colLetter: 'M',
+    key: 'taskLink',
+    header: 'Task Link',
+    type: 'link',
+    description: 'Nexus or ClickUp task URL',
+    width: 180,
+  },
+  {
+    colNumber: 14,
+    colLetter: 'N',
+    key: 'taskStatus',
+    header: 'Status',
+    type: 'select',
+    options: ['In Progress', 'In Review', 'Handover', 'Closed', 'Waiting', 'CRM', 'Revision', 'On-hold'],
+    width: 130,
+  },
+  {
+    colNumber: 15,
+    colLetter: 'O',
+    key: 'wasDeliverablesSubmitted',
+    header: 'Was Deliverables Submitted?',
+    type: 'select',
+    options: ['None', 'Yes', 'No'],
+    width: 170,
+  },
+  {
+    colNumber: 16,
+    colLetter: 'P',
+    key: 'isRecorded',
+    header: 'IsRecorded?',
+    type: 'select',
+    options: ['Yes', 'No'],
+    width: 100,
+  },
+  {
+    colNumber: 17,
+    colLetter: 'Q',
+    key: 'doubleCheckedBy',
+    header: 'Double Checked By',
+    type: 'text',
+    width: 140,
+  },
+  {
+    colNumber: 18,
+    colLetter: 'R',
+    key: 'automation',
+    header: 'Automation',
+    type: 'text',
+    width: 130,
+  },
+  {
+    colNumber: 19,
+    colLetter: 'S',
+    key: 'notes',
+    header: 'Notes',
+    type: 'text',
+    width: 160,
+  },
+];
+
+export interface UserDailyScheduleConfig {
+  success: boolean;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  dailySheetUrl: string | null;
+  spreadsheetId: string | null;
+  hasSpreadsheetLink: boolean;
+}
+
+export interface RowValidationResult {
+  valid: boolean;
+  error?: string;
+  fieldErrors: Partial<Record<keyof SpreadsheetScheduleRow, string>>;
+}
+
+export interface DailyScheduleTable {
+  userId: string;
+  userName: string;
+  dailySheetUrl: string | null;
+  spreadsheetId: string | null;
+  sheetName: string;
+  columns: SpreadsheetColumnDef[];
+  rows: SpreadsheetScheduleRow[];
+  activeRow: SpreadsheetScheduleRow | null;
+  totalDurationHours: string;
+  totalDurationNum: number;
+  updatedAt?: string;
+}
+
+export interface SpreadsheetScheduleRow {
+  id?: string;
+  rowNumber?: number;
+  date: string; // Col A (1): e.g. "Tuesday, September 1, 2026"
+  timeIn: string; // Col B (2): e.g. "8:40 AM"
+  timeOut: string; // Col C (3): e.g. "12:00 PM" or ""
+  breakTime?: string; // Col D (4)
+  durationNum?: number | string; // Col E (5): e.g. 3.33 or formula
+  durationHours?: string; // Col F (6): e.g. "3hrs 20min"
+  client: string; // Col G (7): Client Name
+  timeTracker: string; // Col H (8): "Upwork" | "No Need to Track" | "Clockify"
+  task: string; // Col I (9): Task Title
+  dc?: boolean | string; // Col J (10): false
+  taskDeliverablesDescription?: string; // Col K (11): High-level deliverable scope/title
+  taskUpdateAndDeliverables?: string; // Col L (12): Detailed update & outcome
+  taskLink?: string; // Col M (13): Nexus or ClickUp link
+  taskStatus: string; // Col N (14): "In Progress" | "In Review" | "Handover" | "Closed"
+  wasDeliverablesSubmitted?: string; // Col O (15): "None" | "Yes"
+  isRecorded?: string; // Col P (16): "No" | "Yes"
+  doubleCheckedBy?: string; // Col Q (17)
+  automation?: string; // Col R (18)
+  notes?: string; // Col S (19)
+  taskId?: string | null;
+  subtaskId?: string | null;
+  isSaving?: boolean;
+}
+
+export interface SyncScheduleToSpreadsheetParams {
+  taskId: string;
+  subtaskId?: string | null;
+  userId?: string;
+  taskTitle: string;
+  clientName: string;
+  taskLink?: string;
+  status: string; // "In Progress" | "Handover" | "To Review" | "In Review"
+  mode: 'START' | 'STOP' | 'UPDATE';
+  startedAt?: Date | string | null;
+  stoppedAt?: Date | string | null;
+  taskDeliverablesDescription?: string | null;
+  taskUpdateAndDeliverables?: string | null;
+  timeTracker?: string | null;
+  isUpwork?: boolean;
+  sheetRow?: number | null;
+}
+
+export interface InputScheduleRowParams {
+  userId?: string;
+  taskId?: string | null;
+  subtaskId?: string | null;
+  rowNumber?: number | null;
+  date?: string;
+  timeIn?: string;
+  timeOut?: string;
+  client: string;
+  task: string;
+  timeTracker?: string;
+  taskDeliverablesDescription?: string;
+  taskUpdateAndDeliverables?: string;
+  taskStatus?: string;
+  taskLink?: string;
+  wasDeliverablesSubmitted?: string;
+  isRecorded?: string;
+  mode?: 'START' | 'STOP' | 'UPDATE';
+}
+
+export interface InputScheduleRowResult {
+  success: boolean;
+  rows: SpreadsheetScheduleRow[];
+  isSplitAcrossMidnight: boolean;
+  message?: string;
+}
+
+/**
+ * Validates a schedule row.
+ * STRICT ENFORCEMENT: Client (Col G) and Task (Col I) MUST be selected first
+ * before Time In (Col B) or Time Out (Col C) can be recorded.
+ */
+export function validateScheduleRow(row: Partial<SpreadsheetScheduleRow>): RowValidationResult {
+  const fieldErrors: Partial<Record<keyof SpreadsheetScheduleRow, string>> = {};
+
+  const timeInTrim = (row.timeIn || '').trim();
+  const timeOutTrim = (row.timeOut || '').trim();
+  const clientTrim = (row.client || '').trim();
+  const taskTrim = (row.task || '').trim();
+
+  const isClientValid = clientTrim !== '' && clientTrim.toLowerCase() !== 'no client inputted' && clientTrim.toLowerCase() !== 'general';
+  const isTaskValid = taskTrim !== '' && taskTrim.toLowerCase() !== 'no task inputted' && taskTrim.toLowerCase() !== 'task' && taskTrim.toLowerCase() !== 'general task';
+
+  const hasTimeInput = Boolean(timeInTrim || timeOutTrim);
+
+  if (hasTimeInput) {
+    if (!isClientValid) {
+      fieldErrors.client = 'Select client first before time in and out';
+    }
+    if (!isTaskValid) {
+      fieldErrors.task = 'Select task first before time in and out';
+    }
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return {
+      valid: false,
+      error: 'Select client and task first before time in and out',
+      fieldErrors,
+    };
+  }
+
+  return {
+    valid: true,
+    fieldErrors: {},
+  };
+}
+
+/**
+ * Creates a new spreadsheet row object with Date auto-populated to Manila today (locked).
+ */
+export function createScheduleRow(partial?: Partial<SpreadsheetScheduleRow>): SpreadsheetScheduleRow {
+  const autoDate = formatManilaDateLong(new Date());
+  const client = (partial?.client || '').trim();
+  const task = (partial?.task || '').trim();
+  const timeIn = (partial?.timeIn || '').trim();
+  const timeOut = (partial?.timeOut || '').trim();
+
+  const { durationNum, durationHours } = calculateScheduleDuration(timeIn, timeOut);
+
+  return {
+    id: partial?.id || `row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    rowNumber: partial?.rowNumber,
+    date: partial?.date && partial.date.trim() ? partial.date.trim() : autoDate,
+    timeIn,
+    timeOut,
+    breakTime: partial?.breakTime || '',
+    durationNum,
+    durationHours,
+    client,
+    timeTracker: partial?.timeTracker || 'No Need to Track',
+    task,
+    dc: partial?.dc ?? 'FALSE',
+    taskDeliverablesDescription: partial?.taskDeliverablesDescription || task || '',
+    taskUpdateAndDeliverables: partial?.taskUpdateAndDeliverables || '',
+    taskLink: partial?.taskLink || '',
+    taskStatus: partial?.taskStatus || (timeOut ? 'Done' : 'In Progress'),
+    wasDeliverablesSubmitted: partial?.wasDeliverablesSubmitted || (timeOut ? 'Yes' : 'None'),
+    isRecorded: partial?.isRecorded || 'Yes',
+    doubleCheckedBy: partial?.doubleCheckedBy || '',
+    automation: partial?.automation || '',
+    notes: partial?.notes || '',
+    taskId: partial?.taskId || null,
+    subtaskId: partial?.subtaskId || null,
+  };
+}
+
+/**
+ * Updates a schedule row while enforcing validation and recalculating duration.
+ * Protects Date from manual overwrites.
+ */
+export function updateScheduleRow(
+  currentRow: SpreadsheetScheduleRow,
+  patch: Partial<SpreadsheetScheduleRow>
+): { row: SpreadsheetScheduleRow; validation: RowValidationResult } {
+  const nextClient = patch.client !== undefined ? patch.client.trim() : currentRow.client;
+  const nextTask = patch.task !== undefined ? patch.task.trim() : currentRow.task;
+  const nextTimeIn = patch.timeIn !== undefined ? patch.timeIn.trim() : currentRow.timeIn;
+  const nextTimeOut = patch.timeOut !== undefined ? patch.timeOut.trim() : currentRow.timeOut;
+
+  const validation = validateScheduleRow({
+    client: nextClient,
+    task: nextTask,
+    timeIn: nextTimeIn,
+    timeOut: nextTimeOut,
+  });
+
+  const { durationNum, durationHours } = calculateScheduleDuration(nextTimeIn, nextTimeOut);
+
+  const updatedRow: SpreadsheetScheduleRow = {
+    ...currentRow,
+    ...patch,
+    date: currentRow.date, // Date is locked on row edit
+    client: nextClient,
+    task: nextTask,
+    timeIn: nextTimeIn,
+    timeOut: nextTimeOut,
+    durationNum,
+    durationHours,
+    taskDeliverablesDescription:
+      patch.taskDeliverablesDescription !== undefined
+        ? patch.taskDeliverablesDescription
+        : currentRow.taskDeliverablesDescription || nextTask,
+  };
+
+  return {
+    row: updatedRow,
+    validation,
+  };
+}
+
+/**
+ * Calculates summary metrics across spreadsheet rows for a daily schedule table.
+ */
+export function calculateTableTotals(rows: SpreadsheetScheduleRow[]): {
+  totalDurationNum: number;
+  totalDurationHours: string;
+  activeCount: number;
+  completedCount: number;
+} {
+  let totalMin = 0;
+  let activeCount = 0;
+  let completedCount = 0;
+
+  for (const r of rows) {
+    if (r.timeIn && !r.timeOut) activeCount++;
+    if (r.timeIn && r.timeOut) completedCount++;
+
+    const durNum = typeof r.durationNum === 'number' ? r.durationNum : parseFloat(String(r.durationNum || 0));
+    if (!isNaN(durNum) && durNum > 0) {
+      totalMin += Math.round(durNum * 60);
+    }
+  }
+
+  const hours = totalMin / 60;
+  const hPart = Math.floor(hours);
+  const mPart = totalMin % 60;
+  const totalDurationHours = hPart > 0 ? `${hPart}hr${hPart > 1 ? 's' : ''} ${mPart}min` : `${mPart}min`;
+
+  return {
+    totalDurationNum: parseFloat(hours.toFixed(2)),
+    totalDurationHours,
+    activeCount,
+    completedCount,
+  };
+}
+
+/**
+ * Constructs a fully initialized DailyScheduleTable model for an MA user based on their database config.
+ */
+export function createDailyScheduleTable(params: {
+  user: { id: string; name: string; dailySheetUrl?: string | null };
+  rows?: SpreadsheetScheduleRow[];
+  sheetName?: string;
+}): DailyScheduleTable {
+  const rows = (params.rows || []).map((r) => createScheduleRow(r));
+  const activeRow = rows.find((r) => Boolean(r.timeIn && !r.timeOut)) || null;
+  const totals = calculateTableTotals(rows);
+
+  const rawUrl = params.user.dailySheetUrl || '';
+  const match = rawUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  const spreadsheetId = match ? match[1] : null;
+
+  return {
+    userId: params.user.id,
+    userName: params.user.name,
+    dailySheetUrl: params.user.dailySheetUrl || null,
+    spreadsheetId,
+    sheetName: params.sheetName || '2025',
+    columns: MA_DAILY_SCHEDULE_COLUMNS,
+    rows,
+    activeRow,
+    totalDurationHours: totals.totalDurationHours,
+    totalDurationNum: totals.totalDurationNum,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Dispatches a realtime row update to the user's MA Daily Schedule spreadsheet.
+ * Enforces client and task requirement before time in/out.
+ */
+export async function inputRowToSpreadsheet(
+  params: InputScheduleRowParams
+): Promise<InputScheduleRowResult> {
+  const validation = validateScheduleRow({
+    client: params.client,
+    task: params.task,
+    timeIn: params.timeIn,
+    timeOut: params.timeOut,
+  });
+
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Select client and task first before time in and out');
+  }
+
+  const row = createScheduleRow({
+    rowNumber: params.rowNumber || undefined,
+    date: params.date,
+    timeIn: params.timeIn || '',
+    timeOut: params.timeOut || '',
+    client: params.client,
+    task: params.task,
+    timeTracker: params.timeTracker || 'No Need to Track',
+    taskDeliverablesDescription: params.taskDeliverablesDescription || params.task,
+    taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
+    taskStatus: params.taskStatus || (params.timeOut ? 'Done' : 'In Progress'),
+    taskLink: params.taskLink || '',
+    wasDeliverablesSubmitted: params.wasDeliverablesSubmitted || (params.timeOut ? 'Yes' : 'None'),
+    isRecorded: params.isRecorded || 'Yes',
+  });
+
+  const mode = params.mode || (params.timeOut ? 'STOP' : 'START');
+
+  return apiClient<InputScheduleRowResult>('/api/task-map/sheets/sync-row', {
+    method: 'POST',
+    body: JSON.stringify({
+      taskId: params.taskId || null,
+      subtaskId: params.subtaskId || null,
+      userId: params.userId,
+      mode,
+      sheetRow: params.rowNumber,
+      rows: [row],
+      isSplitAcrossMidnight: false,
+    }),
+  });
+}
+
+/** Formats a Date object into Manila 12-hour time format: "h:mm A" (e.g. "8:40 AM", "11:59 PM", "12:00 AM") */
+export function formatManilaTime(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+/** Formats a Date object into the standard MA Daily Schedule date header: "dddd, MMMM d, yyyy" */
+export function formatManilaDateLong(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+/**
+ * Calculates duration between two time strings on the same day.
+ * Returns { durationNum: number, durationHours: string }
+ */
+export function calculateScheduleDuration(
+  timeInStr: string,
+  timeOutStr: string
+): { durationNum: number; durationHours: string } {
+  if (!timeInStr || !timeOutStr) {
+    return { durationNum: 0, durationHours: '0min' };
+  }
+  const parseMinutes = (t: string): number => {
+    const match = t.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return 0;
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const ampm = match[3].toUpperCase();
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + m;
+  };
+  const inMin = parseMinutes(timeInStr);
+  const outMin = parseMinutes(timeOutStr);
+  let diffMin = outMin - inMin;
+  if (diffMin < 0) {
+    diffMin += 24 * 60;
+  }
+  const hours = diffMin / 60;
+  const hPart = Math.floor(hours);
+  const mPart = Math.round(diffMin % 60);
+  const durationHours = hPart > 0 ? `${hPart}hr${hPart > 1 ? 's' : ''} ${mPart}min` : `${mPart}min`;
+  return {
+    durationNum: parseFloat(hours.toFixed(2)),
+    durationHours,
+  };
+}
+
+/**
+ * Handles midnight crossovers (e.g. 11:59 PM to 12:00 AM / 12:29 AM next day).
+ * In Google Sheets, a row cannot have a Time Out on a different date without breaking daily schedule
+ * calculations. When a session crosses midnight (12:00 AM), this cleanly splits the session into
+ * separate rows per calendar day.
+ */
+export function splitMidnightScheduleRows(
+  session: {
+    start: Date;
+    end?: Date | null;
+    client: string;
+    task: string;
+    taskLink?: string;
+    status: string;
+    timeTracker?: string;
+    taskDeliverablesDescription?: string;
+    taskUpdateAndDeliverables?: string;
+  }
+): SpreadsheetScheduleRow[] {
+  const { start, end } = session;
+  if (!end) {
+    // Ongoing task (still in progress): single row for start date with blank Time Out
+    return [
+      {
+        date: formatManilaDateLong(start),
+        timeIn: formatManilaTime(start),
+        timeOut: '',
+        durationNum: 0,
+        durationHours: '0min',
+        client: session.client,
+        timeTracker: session.timeTracker || 'No Need to Track',
+        task: session.task,
+        dc: 'FALSE',
+        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
+        taskLink: session.taskLink || '',
+        taskStatus: session.status || 'In Progress',
+        wasDeliverablesSubmitted: 'None',
+        isRecorded: 'Yes',
+      },
+    ];
+  }
+
+  // Get calendar keys for start and end in Manila timezone
+  const startKey = getManilaDateKey(start);
+  const endKey = getManilaDateKey(end);
+
+  // Case 1: Same day (normal shift)
+  if (startKey === endKey) {
+    const timeIn = formatManilaTime(start);
+    const timeOut = formatManilaTime(end);
+    const { durationNum, durationHours } = calculateScheduleDuration(timeIn, timeOut);
+    return [
+      {
+        date: formatManilaDateLong(start),
+        timeIn,
+        timeOut,
+        durationNum,
+        durationHours,
+        client: session.client,
+        timeTracker: session.timeTracker || 'No Need to Track',
+        task: session.task,
+        dc: 'FALSE',
+        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
+        taskLink: session.taskLink || '',
+        taskStatus: session.status,
+        wasDeliverablesSubmitted: 'Yes',
+        isRecorded: 'Yes',
+      },
+    ];
+  }
+
+  // Case 2: Crosses midnight (e.g. 11:59 PM to 12:29 AM next day)
+  // Split into Row 1 (Day 1 until 12:00 AM) and Row 2 (Day 2 starting at 12:00 AM)
+  const rows: SpreadsheetScheduleRow[] = [];
+
+  // Row 1: Day 1 (from start time to 12:00 AM midnight)
+  const timeIn1 = formatManilaTime(start);
+  const timeOut1 = '12:00 AM';
+  const duration1 = calculateScheduleDuration(timeIn1, '12:00 AM');
+  rows.push({
+    date: formatManilaDateLong(start),
+    timeIn: timeIn1,
+    timeOut: timeOut1,
+    durationNum: duration1.durationNum,
+    durationHours: duration1.durationHours,
+    client: session.client,
+    timeTracker: session.timeTracker || 'No Need to Track',
+    task: session.task,
+    dc: 'FALSE',
+    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskUpdateAndDeliverables: `${session.taskUpdateAndDeliverables || ''} (Part 1 - Until Midnight)`.trim(),
+    taskLink: session.taskLink || '',
+    taskStatus: 'In Progress', // closed out for day 1
+    wasDeliverablesSubmitted: 'None',
+    isRecorded: 'Yes',
+  });
+
+  // Row 2: Day 2 (from 12:00 AM midnight to end time)
+  const timeIn2 = '12:00 AM';
+  const timeOut2 = formatManilaTime(end);
+  const duration2 = calculateScheduleDuration('12:00 AM', timeOut2);
+  rows.push({
+    date: formatManilaDateLong(end),
+    timeIn: timeIn2,
+    timeOut: timeOut2,
+    durationNum: duration2.durationNum,
+    durationHours: duration2.durationHours,
+    client: session.client,
+    timeTracker: session.timeTracker || 'No Need to Track',
+    task: session.task,
+    dc: 'FALSE',
+    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
+    taskLink: session.taskLink || '',
+    taskStatus: session.status,
+    wasDeliverablesSubmitted: 'Yes',
+    isRecorded: 'Yes',
+  });
+
+  return rows;
+}
 
 // ===========================================================================
 // User Roles & Short/Recreation Labels Mapping
@@ -1399,9 +2242,16 @@ export function isTaskUnderAdmin(task?: Pick<TaskMapItem, 'isAdminTask' | 'list'
   const listName = (task.list?.name || '').trim().toLowerCase();
   return (
     folderName === 'admin' ||
+    folderName.includes('admin') ||
     HIDDEN_DEFAULT_FOLDER_KEYWORDS.some((kw) => folderName.includes(kw)) ||
     listName === 'admin' ||
-    ADMIN_LIST_NAMES.has(listName)
+    ADMIN_LIST_NAMES.has(listName) ||
+    listName.includes('vip scale') ||
+    listName.includes('xfnite') ||
+    listName.includes('xfinite') ||
+    listName.includes('snaply') ||
+    listName.includes('harmony') ||
+    listName.includes('jenesia')
   );
 }
 
@@ -1469,23 +2319,30 @@ export function isTaskInClientDashboard(
 
 /**
  * Returns true when a task has spreadsheet input recorded for an MA
- * (logged today, recently active without timeOut, or present on a historical snapshot).
+ * (logged on targetDate/today, recently active without timeOut, or present on a historical snapshot).
  */
 export function hasSpreadsheetTaskInput(
   task?: TaskMapItem | null,
-  options?: { isHistory?: boolean; now?: Date }
+  options?: { isHistory?: boolean; now?: Date; targetDate?: Date | string | null }
 ): boolean {
   const prog = task?.progress;
   if (!prog?.maName) return false;
   if (!prog.timeIn && !prog.timeOut && !prog.isMissingTime) return false;
   if (options?.isHistory) return true;
+  const targetDate = options?.targetDate ?? options?.now ?? new Date();
   const now = options?.now ?? new Date();
+  const targetKey = getManilaDateKey(targetDate);
+  const todayKey = getManilaDateKey(now);
+  const isViewingToday = !targetKey || targetKey === todayKey;
+
+  // Recent active live work only applies when viewing today
   const isRecentActive = Boolean(
+    isViewingToday &&
     prog.timeIn &&
     !prog.timeOut &&
     (!prog.updatedAt || now.getTime() - new Date(prog.updatedAt).getTime() <= 14 * 60 * 60 * 1000)
   );
-  return isProgressLoggedToday(prog, now) || isRecentActive;
+  return isProgressLoggedToday(prog, targetDate) || isRecentActive;
 }
 
 export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean {
@@ -2319,8 +3176,12 @@ export function attachDragToScroll(container: HTMLElement): () => void {
 
     if (
       target.closest('button, input, textarea, select, option, label, a') ||
-      target.closest('[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle], [data-in-progress-dropzone], [data-no-drag-scroll]') ||
-      target.closest('[role="dialog"], [role="menu"], [data-portal], [draggable="true"], [aria-roledescription="draggable"], .no-board-drag, .no-drag-scroll')
+      target.closest(
+        '[data-kanban-card], [data-task-id], [data-column-header], [data-group-drag-handle], [data-in-progress-dropzone], [data-no-drag-scroll], [data-task-column], [data-droppable-column], [data-column-body]'
+      ) ||
+      target.closest(
+        '[role="dialog"], [role="menu"], [data-portal], [draggable="true"], [aria-roledescription="draggable"], .no-board-drag, .no-drag-scroll'
+      )
     ) {
       return;
     }
@@ -2352,12 +3213,17 @@ export function attachDragToScroll(container: HTMLElement): () => void {
     const dy = moveEvent.clientY - startY;
 
     if (!isDragging) {
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      // Only initiate board horizontal drag when horizontal movement is dominant and exceeds threshold
+      if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
         isDragging = true;
         prevScrollBehavior = container.style.scrollBehavior;
         container.style.scrollBehavior = 'auto';
         document.body.style.cursor = 'grabbing';
         document.body.style.userSelect = 'none';
+      } else if (Math.abs(dy) > 6 && Math.abs(dy) >= Math.abs(dx)) {
+        // Vertical movement (e.g. scrolling or card dragging within a column) - cancel board horizontal drag
+        isMouseDown = false;
+        return;
       } else {
         return;
       }

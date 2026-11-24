@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
 import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, AuditorRoleOption, isProjectBasedUpwork, subscribeTaskMapSaving } from '@/api/taskMap';
-import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus, Loader2, ArrowUpDown, ArrowDownWideNarrow, ArrowUpNarrowWide } from 'lucide-react';
+import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus, Loader2, ArrowUpDown, ArrowDownWideNarrow, ArrowUpNarrowWide, Table } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { isAaronUser, isProjectManagerOrAdmin } from '@/lib/permissions';
 
@@ -21,8 +21,8 @@ interface Props {
   search: string;
   onSearchChange: (search: string) => void;
   activeUpworkSessions?: UpworkSession[];
-  currentView?: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK';
-  onViewChange?: (view: 'BOARD' | 'AUDITING' | 'CRM') => void;
+  currentView?: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER';
+  onViewChange?: (view: 'BOARD' | 'AUDITING' | 'CRM' | 'DAILY_TRACKER') => void;
   clients?: ClientOption[];
   adminClients?: ClientOption[];
   adminCount?: number;
@@ -922,6 +922,19 @@ export const TaskMapHeader: React.FC<Props> = ({
                   )}
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => onViewChange('DAILY_TRACKER')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  currentView === 'DAILY_TRACKER'
+                    ? 'bg-emerald-600 text-white shadow-sm font-semibold'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
+                }`}
+              >
+                <Table className="size-3.5" />
+                <span>Daily Tracker</span>
+              </button>
             </div>
           )}
 

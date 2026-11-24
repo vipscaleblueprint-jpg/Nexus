@@ -24,12 +24,15 @@ import {
   attachDragToScroll,
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
+  formatManilaTime,
+  getManilaDateKey,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
 import { ClientOtpModal } from '../modals/ClientOtpModal';
+import { TaskDeliverablesModal } from '../modals/TaskDeliverablesModal';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
@@ -99,7 +102,7 @@ import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDo
 import { format } from 'date-fns';
 import { getCurrentLiveTime } from '@/lib/liveClock';
 import { getPriorityConfig } from '@/lib/priority';
-import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted, isSystemUser } from '@/lib/taskTokens';
+import { getAssigneeAvatarColor, CustomCircleDot, CustomCircleDotted, isSystemUser, isClosedStatus } from '@/lib/taskTokens';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import {
   canDragTaskMapCard,
@@ -134,6 +137,8 @@ import {
 interface Props {
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
+  allAvailablePool?: TaskMapItem[];
+  allTasks?: TaskMapItem[];
   options: TaskMapOption[];
   allUsers?: any[];
   shiftUsers?: any[];
@@ -147,8 +152,9 @@ interface Props {
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
-  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string) => Promise<void> | void;
+  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string, taskOverride?: TaskMapItem) => Promise<void> | void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
+  currentDate?: string;
   isHistory?: boolean;
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
@@ -221,7 +227,20 @@ export function getUserRolePriority(roles: string[] = [], isAudit = false): {
 }
 
 // Sort helper: In progress on top -> Urgent tasks -> High priority -> Remaining tasks
+export const isClosedTask = (task?: TaskMapItem | null): boolean => {
+  if (!task) return false;
+  if (task.isClosed) return true;
+  const s = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+  if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(s)) return true;
+  const customStatuses = task.taskMap?.statuses || [];
+  if (customStatuses.some((cs) => ['DONE', 'CLOSED', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes((cs || '').toUpperCase().replace(/[\s_-]+/g, '')))) return true;
+  const progStatus = (task.progress?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+  if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes(progStatus)) return true;
+  return false;
+};
+
 const isTaskInProgress = (task: TaskMapItem) => {
+  if (isClosedTask(task)) return false;
   const customStatuses = task.taskMap?.statuses || [];
   return customStatuses.some(
     (cs) => cs.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS'
@@ -229,9 +248,12 @@ const isTaskInProgress = (task: TaskMapItem) => {
 };
 
 export const isTaskLiveWorking = (task: TaskMapItem, userName?: string, now = new Date()): boolean => {
+  if (isClosedTask(task)) return false;
   const isClosed =
     (task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE';
   if (isClosed) return false;
+  // Handed over tasks can never be live working
+  if (!task.isAssumptionBlock && isTaskHandedOver(task)) return false;
   const statuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
   if (statuses.includes('CLOSED') || statuses.includes('DONE')) return false;
 
@@ -248,18 +270,24 @@ export const isTaskLiveWorking = (task: TaskMapItem, userName?: string, now = ne
 };
 
 export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): boolean => {
+  if (isClosedTask(task)) return false;
   const isClosed =
     (task.status || '').toUpperCase() === 'CLOSED' || (task.status || '').toUpperCase() === 'DONE';
   if (isClosed) return false;
+  // On-hold or handed-over tasks can never be active in-progress
+  if (!task.isAssumptionBlock && isTaskHandedOver(task)) return false;
   const statuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
   if (statuses.includes('CLOSED') || statuses.includes('DONE')) return false;
 
   // 0. Live synthetic assumption block strictly takes the In Progress slot (clocked-out held blocks sit below dropzone until 12 AM)
-  if (task.isAssumptionBlock) return Boolean(!task.progress?.timeOut);
+  if (task.isAssumptionBlock) {
+    if (task.progress?.timeOut) return false;
+    return Boolean(task.progress?.timeIn && !task.progress.timeOut && !task.progress.isMissingTime);
+  }
 
-  // On-hold, handed-over, or paused tasks belong out of In Progress unless live clocked in right now
+  // On-hold or paused tasks belong out of In Progress unless live clocked in right now
+  if (isTaskOnHold(task)) return false;
   if (isTaskLiveWorking(task, userName)) return true;
-  if (isTaskOnHold(task) || isTaskHandedOver(task)) return false;
   if (statuses.includes('PAUSED')) return false;
 
   const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
@@ -267,6 +295,16 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
 
   // 2. Active missing-time session for this user from daily schedule sheet (entered row without Time In)
   if (isMyProg && task.progress?.isMissingTime && !task.progress?.timeOut) {
+    return true;
+  }
+
+  // 3. Task is explicitly set to In Progress for this user
+  const isAssignedToUser = doesProgressMatchUser(task.assignee?.name, userName);
+  const isStatusInProgress =
+    (task.status || '').toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS' ||
+    statuses.some((s) => s.replace(/[\s_-]+/g, '') === 'INPROGRESS');
+
+  if (isAssignedToUser && isStatusInProgress) {
     return true;
   }
 
@@ -382,7 +420,9 @@ const DroppableColumn: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      className={`${className || ''} transition-colors duration-150 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/20 shadow-xl shadow-blue-950/30' : ''
+      data-task-column={id}
+      data-droppable-column="true"
+      className={`${className || ''} cursor-default transition-colors duration-150 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/20 shadow-xl shadow-blue-950/30' : ''
         }`}
     >
       {children}
@@ -412,6 +452,7 @@ const DroppableInProgressSlot: React.FC<{
     <div
       ref={setNodeRef}
       data-in-progress-dropzone="true"
+      data-no-drag-scroll="true"
       className={`rounded-xl transition-colors duration-150 ${
         isOver ? 'ring-2 ring-[#D04A7C] bg-[#D04A7C]/15 shadow-lg shadow-[#D04A7C]/20' : ''
       }`}
@@ -491,13 +532,34 @@ const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   const folderName = (task.list?.folder?.name || '').toLowerCase();
   const desc = (task.description || '').toLowerCase();
   const statuses = (task.taskMap?.statuses || []).map((s: string) => (s || '').toLowerCase());
-  return (
+
+  const basicMatch =
     title.includes(q) ||
     clientName.includes(q) ||
     folderName.includes(q) ||
     desc.includes(q) ||
-    statuses.some((s: string) => s.includes(q))
-  );
+    statuses.some((s: string) => s.includes(q));
+
+  if (basicMatch) return true;
+
+  if (q.includes('admin') || q === 'adm') {
+    return isTaskUnderAdmin(task);
+  }
+
+  if (q.includes('xfinite') || q.includes('xfnite')) {
+    return (
+      title.includes('xfnite') ||
+      title.includes('xfinite') ||
+      clientName.includes('xfnite') ||
+      clientName.includes('xfinite')
+    );
+  }
+
+  if (q.includes('vip')) {
+    return title.includes('vip') || clientName.includes('vip');
+  }
+
+  return false;
 };
 
 const getColumnPriorityCounts = (items: TaskMapItem[]) => {
@@ -1027,6 +1089,8 @@ const CardTransferDropdown: React.FC<{
 export const TaskMapBoardView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
+  allAvailablePool,
+  allTasks,
   options = [],
   allUsers = [],
   shiftUsers = [],
@@ -1042,6 +1106,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   onTaskUpdate,
   onAssignTask,
   onTransferTask,
+  currentDate,
   isHistory = false,
   search = '',
   trackFilter = 'ALL',
@@ -1102,6 +1167,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
     targetUserId: null,
     mode: 'QUEUE',
   });
+
+  const [deliverablesModalTarget, setDeliverablesModalTarget] = useState<{
+    task: TaskMapItem;
+    targetStatus: 'To Review' | 'Hand-over';
+    user?: any;
+    nextStatuses?: string[];
+    realTaskId?: string;
+  } | null>(null);
   const collapsedStorageKey = currentUser?.id
     ? `nexus_taskmap_collapsed_columns_v2_${currentUser.id}`
     : 'nexus_taskmap_collapsed_columns_v2';
@@ -1371,26 +1444,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
     return fallbackUser || { id: userId, name: fallbackUser?.name || 'User' };
   };
 
-  // Helper to check if a task is closed (never show to users on Task Map)
-  const isClosedTask = (task: TaskMapItem) => {
-    if (task.isClosed) return true;
-    const s = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-    if (
-      s === 'CLOSED' ||
-      s === 'DONE' ||
-      s === 'COMPLETE' ||
-      s === 'COMPLETED' ||
-      s === 'RESOLVED' ||
-      s === 'CANCELLED'
-    ) {
-      return true;
-    }
-    const customStatuses = task.taskMap?.statuses || [];
-    return customStatuses.some(
-      (cs) => cs.toUpperCase() === 'DONE' || cs.toUpperCase() === 'CLOSED'
-    );
-  };
-
   // Helper to check if a task has an excluded cadence status for user shift columns:
   // User columns must not show daily, monthly, weekly, or recurring tasks UNLESS an MA is actively working on it or has logged progress!
   const isExcludedCadenceForUser = (task: TaskMapItem) => {
@@ -1557,6 +1610,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       // must NEVER remain in Task Map user/PM columns, even if prior progress exists.
       if (!task.isAssumptionBlock && isOtherBoardWorkflowStatus(task)) return;
 
+      // Handed-over tasks must NEVER remain in user columns or queues
+      if (!task.isAssumptionBlock && isTaskHandedOver(task)) return;
+
       const effectiveHandlerId = isHistory
         ? (task.assignee?.id || task.assigneeId || getEffectiveTaskMapHandlerId(task))
         : getEffectiveTaskMapHandlerId(task);
@@ -1565,16 +1621,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
         : undefined;
       const isAdmin = isTaskUnderAdmin(task);
       const isDev = isDeveloperUser(targetUser, workspaceTeams);
-      const hasSheetInput = hasSpreadsheetTaskInput(task, { isHistory, now: boardTime });
+      const hasSheetInput = hasSpreadsheetTaskInput(task, { isHistory, now: boardTime, targetDate: currentDate });
       if (!effectiveShowAdmin && isAdmin && !isDev && !hasSheetInput) return;
       if (nextPoolIds.has(task.id)) return;
       const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
-      if (isClosedTask(task) && !hasProgress) return;
+      if (isClosedTask(task)) return;
       if (!hasProgress && isExcludedForUser(task)) return;
 
       // For hidden-by-default admin/dormant/startups/HR tasks inputted from the spreadsheet,
-      // attach strictly to the MA column matching the spreadsheet input.
+      // attach strictly to the MA column matching the spreadsheet input IF not handed over.
       if (!effectiveShowAdmin && isAdmin && !isDev && hasSheetInput) {
+        if (isTaskHandedOver(task)) return;
         const workerCol = findColumnForMa(task.progress?.maName);
         if (
           effectiveHandlerId &&
@@ -1592,12 +1649,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
 
       if (effectiveHandlerId && effectiveHandlerId !== 'unassigned' && userColumnsMap[effectiveHandlerId]) {
-        if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
+        if (!isTaskHandedOver(task) && !userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
           userColumnsMap[effectiveHandlerId].tasks.push(task);
         }
       }
 
-      if (task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, boardTime)) {
+      if (!isTaskHandedOver(task) && task.progress?.maName && !task.progress?.timeOut && isTaskLiveWorking(task, task.progress.maName, boardTime)) {
         const workerCol = findColumnForMa(task.progress.maName);
         if (workerCol && (!effectiveHandlerId || effectiveHandlerId === workerCol[0]) && !workerCol[1].tasks.some((t) => t.id === task.id)) {
           workerCol[1].tasks.push(task);
@@ -1640,10 +1697,55 @@ export const TaskMapBoardView: React.FC<Props> = ({
     // 2.5 Ensure user columns reflect their latest MA schedule sheet input
     Object.entries(userColumnsMap).forEach(([userId, col]) => {
       const activeSession = findActiveSessionForUser(col.user.name) as any;
+      const sessionStatusNorm = (activeSession?.status || activeSession?.taskStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
+      const isSessionClosed =
+        ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(sessionStatusNorm) ||
+        Boolean(activeSession?.cleared);
       const hasHeldSession = Boolean(
         activeSession &&
-        (activeSession.active || activeSession.timeIn || activeSession.timeOut || activeSession.client || activeSession.taskName || activeSession.status)
+        !isSessionClosed &&
+        (activeSession.active || activeSession.timeIn || activeSession.timeOut || activeSession.client || activeSession.taskName)
       );
+
+      const rawClient = activeSession?.client;
+      const effectiveClient = rawClient && rawClient.toLowerCase() !== 'general' ? rawClient : 'No client inputted';
+      const rawTask = activeSession?.taskName;
+      const effectiveTask = rawTask && rawTask.toLowerCase() !== 'general task' ? rawTask : 'No task inputted';
+
+      const cleanSessionTask = effectiveTask.replace(/\.{3}$/, '').trim().toLowerCase();
+      const cleanSessionClient = effectiveClient.trim().toLowerCase();
+
+      // Check if col.tasks already has this task (so we don't synthesize duplicate assumption cards)
+      const hasAlreadyInColumn = col.tasks.some((t) => {
+        if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) return true;
+        if (cleanSessionTask && cleanSessionTask !== 'no task inputted') {
+          const tTitle = (t.title || '').trim().toLowerCase();
+          if (tTitle === cleanSessionTask) return true;
+        }
+        return false;
+      });
+
+      // Enrich existing card in col.tasks if it lacks live progress
+      if (hasAlreadyInColumn && activeSession && (activeSession.timeIn || activeSession.timeOut)) {
+        const existing = col.tasks.find((t) =>
+          (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) ||
+          (cleanSessionTask && cleanSessionTask !== 'no task inputted' && (t.title || '').trim().toLowerCase() === cleanSessionTask)
+        );
+        if (existing && !existing.progress) {
+          existing.progress = {
+            maName: col.user.name,
+            timeIn: activeSession.timeIn || null,
+            timeOut: activeSession.timeOut || null,
+            date: activeSession.date || format(boardTime, 'yyyy-MM-dd'),
+            client: activeSession.client || existing.list?.name || null,
+            status: activeSession.status || null,
+            sheetRow: activeSession.rowNumber ? Number(activeSession.rowNumber) : undefined,
+            isMissingTime: false,
+            isUpwork: Boolean(activeSession.isUpwork),
+            timeTracker: null,
+          };
+        }
+      }
 
       // Only suppress the fallback block if col.tasks ALREADY has a live card belonging to THIS user (not another MA's progress)
       const hasActiveAssignedTask = col.tasks.some((t) => {
@@ -1656,14 +1758,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         return Boolean(activeSession?.taskId && t.id === activeSession.taskId);
       });
 
-      if (hasHeldSession && !hasActiveAssignedTask) {
-        const rawClient = activeSession?.client;
-        const effectiveClient = rawClient && rawClient.toLowerCase() !== 'general' ? rawClient : 'No client inputted';
-        const rawTask = activeSession?.taskName;
-        const effectiveTask = rawTask && rawTask.toLowerCase() !== 'general task' ? rawTask : 'No task inputted';
-
-        const cleanSessionTask = effectiveTask.replace(/\.{3}$/, '').trim().toLowerCase();
-        const cleanSessionClient = effectiveClient.trim().toLowerCase();
+      if (hasHeldSession && !hasActiveAssignedTask && !hasAlreadyInColumn) {
         const matchedLocalTask = [...tasks, ...availablePool].find((t) => {
           if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) {
             return true;
@@ -1799,13 +1894,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
             );
             return hasLiveTask || hasLiveSession;
           }
+          const targetDateForTrack = currentDate || boardTime;
           const hasLoggedTaskToday = allItems.some(
-            (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, boardTime)
+            (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, targetDateForTrack)
           );
           const hasLoggedSessionToday = Boolean(
             activeSession &&
             (activeSession.timeIn || activeSession.timeOut) &&
-            isProgressLoggedToday(activeSession, boardTime)
+            isProgressLoggedToday(activeSession, targetDateForTrack)
           );
           return hasLoggedTaskToday || hasLoggedSessionToday;
         }
@@ -2144,21 +2240,22 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
   };
 
-  const handleSelectInProgressTask = async (taskId: string, targetUserId: string) => {
+  const handleSelectInProgressTask = async (taskId: string, targetUserId: string, taskOverride?: TaskMapItem) => {
     if (!canStartInProgressSlot({ isPmUser, currentUserId: currentUser?.id, columnUserId: targetUserId })) {
-      toast.error("Moving a task to In Progress is the assigned MA's action only");
+      toast.error("Only the assigned MA or Project Managers can move tasks to In Progress");
       return;
     }
     const targetUser = getUserProfile(targetUserId);
-    const existingTask = [...tasks, ...availablePool].find((t) => t.id === taskId);
+    const allPoolAndTasks = [...(allTasks || tasks), ...(allAvailablePool || availablePool)];
+    const existingTask = allPoolAndTasks.find((t) => t.id === taskId) || taskOverride;
     const nextRoles = getResolvedRoleRestrictionsForUser(existingTask, targetUser);
     const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((existingTask?.status || '').toUpperCase().trim());
     toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
     try {
       if (onAssignTask) {
-        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
+        await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles, undefined, existingTask);
       } else {
-        const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask!.status) : 'IN PROGRESS';
+        const nextStatus = isCadence ? toCanonicalTaskStatus(existingTask?.status) : 'IN PROGRESS';
         await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
         if (onTaskUpdate) {
           await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
@@ -2312,6 +2409,160 @@ export const TaskMapBoardView: React.FC<Props> = ({
     return list;
   };
 
+  const handleDeliverablesSubmit = async (data: {
+    taskDeliverablesDescription: string;
+    taskUpdateAndDeliverables: string;
+    timeOut: string;
+  }) => {
+    if (!deliverablesModalTarget) return;
+    const { task, targetStatus, user: modalUser, realTaskId } = deliverablesModalTarget;
+    const isHandover = targetStatus.toLowerCase().replace(/[\s_-]+/g, '') === 'handover';
+    const effectiveTaskId = realTaskId || task.id;
+    const nowTimeOut = data.timeOut || formatManilaTime(new Date());
+
+    // 1. If it's an assumption block
+    if (task.isAssumptionBlock) {
+      const targetMainStatus = isHandover ? (toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS') : 'IN REVIEW';
+      task.status = targetMainStatus;
+      task.taskMap = {
+        ...task.taskMap,
+        statuses: [targetStatus],
+        ...(isHandover ? { handedOver: true } : {}),
+      };
+      if (task.progress) {
+        task.progress.timeOut = nowTimeOut;
+        task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
+        task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
+      }
+      const uName = modalUser?.name || task.assignee?.name || currentUser?.name;
+      if (uName) {
+        const sKey = uName.trim().toLowerCase();
+        const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
+        useAppStore.getState().updateMaActiveSession(uName, {
+          ...prevSess,
+          taskStatus: targetMainStatus,
+          status: targetMainStatus,
+          subStatuses: [targetStatus],
+          timeOut: nowTimeOut,
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+          cleared: true,
+        });
+        useAppStore.getState().updateMaActiveSession(uName, null);
+      }
+
+      const linkedId =
+        task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+          ? task.linkedTaskId
+          : null;
+      if (linkedId) {
+        await taskMapApi.updateTaskStatuses(linkedId, [targetStatus], {
+          timeOut: nowTimeOut,
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        }).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(linkedId, {
+            assigneeId: null,
+            status: targetMainStatus,
+          });
+        }
+      }
+
+      // Also trigger sheet schedule row sync
+      taskMapApi.syncScheduleToSpreadsheet({
+        taskId: linkedId || task.id,
+        subtaskId: task.subtaskId || null,
+        taskTitle: task.title,
+        clientName: task.progress?.client || task.list?.name || 'General',
+        status: targetStatus,
+        mode: 'STOP',
+        stoppedAt: new Date(),
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+      }).catch(console.error);
+
+      toast.success(
+        isHandover
+          ? `Task handed over — clocked out at ${nowTimeOut}`
+          : `Deliverables submitted to Review — clocked out at ${nowTimeOut}`
+      );
+      setDeliverablesModalTarget(null);
+      return;
+    }
+
+    // 2. Real task or subtask
+    onStatusChange(effectiveTaskId, [targetStatus]);
+    if (task.progress) {
+      task.progress.timeOut = nowTimeOut;
+      task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
+      task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
+    }
+
+    const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
+    const targetAssigneeUser = modalUser?.name ? modalUser : task.assignee;
+    if (targetAssigneeUser?.name) {
+      useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
+    }
+
+    if (isHandover) {
+      const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+      if (onTaskUpdate) {
+        await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
+      } else {
+        await tasksApi.updateTask(effectiveTaskId, { assigneeId: null } as any).catch(console.error);
+        onDataRefresh();
+      }
+      await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], {
+        timeOut: nowTimeOut,
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+      }).catch(console.error);
+
+      toast.info(`Task handed over — clocked out at ${nowTimeOut}`);
+    } else {
+      // To Review
+      if (ownerId) {
+        setRecentlyMovedToReviewByUser((prev) => {
+          const existing = prev[ownerId] || [];
+          if (existing.some((t) => t.id === effectiveTaskId)) return prev;
+          return {
+            ...prev,
+            [ownerId]: [{ ...task, status: 'IN REVIEW', assigneeId: null }, ...existing],
+          };
+        });
+      }
+      if (onTaskUpdate) {
+        await onTaskUpdate(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null });
+      } else {
+        await tasksApi.updateTask(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null } as any).catch(console.error);
+        onDataRefresh();
+      }
+      await taskMapApi.updateTaskStatuses(effectiveTaskId, ['To Review'], {
+        timeOut: nowTimeOut,
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+      }).catch(console.error);
+
+      toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
+    }
+
+    // Trigger syncScheduleToSpreadsheet
+    taskMapApi.syncScheduleToSpreadsheet({
+      taskId: effectiveTaskId,
+      subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
+      taskTitle: task.title,
+      clientName: task.progress?.client || task.list?.name || 'General',
+      status: targetStatus,
+      mode: 'STOP',
+      stoppedAt: new Date(),
+      taskDeliverablesDescription: data.taskDeliverablesDescription,
+      taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+    }).catch(console.error);
+
+    setDeliverablesModalTarget(null);
+  };
+
   const handleTaskMapSubStatusToggle = async (
     task: TaskMapItem,
     label: string,
@@ -2321,6 +2572,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (task.isAssumptionBlock) {
       const isSelecting = (nextStatuses || []).includes(label);
       const cleanNext = isSelecting ? [label] : [];
+      const norm = label.trim().toLowerCase();
+      const compactNorm = norm.replace(/[\s_-]+/g, '');
+      if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+        setDeliverablesModalTarget({
+          task,
+          targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
+          user,
+          nextStatuses: cleanNext,
+        });
+        return;
+      }
       task.taskMap.statuses = cleanNext;
       if (user?.name) {
         const sKey = (user.name || '').trim().toLowerCase();
@@ -2342,6 +2604,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const isSelecting = (nextStatuses || []).includes(label);
     const cleanNext = isSelecting ? [label] : [];
     const norm = label.trim().toLowerCase();
+    const compactNorm = norm.replace(/[\s_-]+/g, '');
+
+    // Intercept Hand Over & To Review selection for deliverables input & clock out
+    if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+      setDeliverablesModalTarget({
+        task,
+        targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
+        user,
+        nextStatuses: cleanNext,
+      });
+      return;
+    }
 
     // 0. Available Task: unassigns the MA/PM (assigneeId = null), preserves main status, moves back to Available Tasks
     if (norm === 'available task' || norm === 'availabletask') {
@@ -2377,10 +2651,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
     onStatusChange(task.id, cleanNext);
 
     // 1. Hand Over: stays at main status, transfers to Available Tasks so PMs can reassign to other MAs
-    const compactNorm = norm.replace(/[\s_-]+/g, '');
     if (compactNorm === 'handover') {
       if (isSelecting) {
         const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+          task.progress.timeOut = formatManilaTime(new Date());
+        }
         if (onTaskUpdate) {
           await onTaskUpdate(task.id, { assigneeId: null, status: preservedStatus });
         } else {
@@ -2440,6 +2716,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
       if (isSelecting) {
         const targetStatus = 'IN REVIEW';
+        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+          task.progress.timeOut = formatManilaTime(new Date());
+        }
         if (ownerId) {
           setRecentlyMovedToReviewByUser((prev) => {
             const existing = prev[ownerId] || [];
@@ -2891,10 +3170,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   listId={task.listId || task.list?.id}
                                   listStatuses={task.list?.statuses}
                                   onSelect={(newStatus: string) => {
-                                    let effectiveStatus = newStatus;
-                                    if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                      effectiveStatus = 'In Review';
+                                    const normNew = newStatus.toLowerCase().replace(/[\s_-]+/g, '');
+                                    if (normNew === 'toreview' || normNew === 'inreview' || normNew === 'handover') {
+                                      setDeliverablesModalTarget({
+                                        task,
+                                        targetStatus: normNew === 'handover' ? 'Hand-over' : 'To Review',
+                                        realTaskId: task.id,
+                                      });
+                                      return;
                                     }
+                                    let effectiveStatus = newStatus;
                                     if (onTaskUpdate) {
                                       onTaskUpdate(task.id, { status: effectiveStatus });
                                     } else {
@@ -3009,10 +3294,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
             // except the General Task (assumption block) or real tasks inputted by this MA from the spreadsheet!
             const isAdmin = isTaskUnderAdmin(t);
             const hasUserSheetInput = Boolean(
-              hasSpreadsheetTaskInput(t, { isHistory, now: boardTime }) &&
+              hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate }) &&
               doesProgressMatchUser(t.progress?.maName, user.name)
             );
-            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput) return false;
+            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !searchQuery) return false;
 
             // Client filter check: the General Task representing the user's active schedule input is always shown in their column
             if (!t.isAssumptionBlock && userClientFilter !== 'ALL') {
@@ -3242,13 +3527,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
               {(() => {
                 const sorted = sortColumnTasks(filteredUserTasks, user.name);
                 const activeInProgTask = sorted.find((t) => isTaskActiveInProgress(t, user.name));
-                const queuedTasks = sorted.filter((t) => t.id !== activeInProgTask?.id);
+                const queuedTasks = sorted.filter((t) => t.id !== activeInProgTask?.id && !isTaskHandedOver(t) && !isClosedTask(t));
                 const reviewStatusSet = new Set(['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING']);
                 const activeAndQueuedIds = new Set(sorted.map((t) => t.id));
                 const toReviewMap = new Map<string, TaskMapItem>();
-                for (const t of recentlyMovedToReviewByUser[userId] || []) {
-                  if (!activeAndQueuedIds.has(t.id)) {
-                    toReviewMap.set(t.id, t);
+                const isViewingToday = !currentDate || currentDate === getManilaDateKey(new Date());
+                if (isViewingToday) {
+                  for (const t of recentlyMovedToReviewByUser[userId] || []) {
+                    if (!activeAndQueuedIds.has(t.id)) {
+                      toReviewMap.set(t.id, t);
+                    }
                   }
                 }
                 for (const t of tasks) {
@@ -3257,7 +3545,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   if (!reviewStatusSet.has(sNorm)) continue;
                   const matchesWorker =
                     doesProgressMatchUser(t.progress?.maName, user.name) &&
-                    hasSpreadsheetTaskInput(t, { isHistory, now: boardTime });
+                    hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate });
                   if (matchesWorker) {
                     toReviewMap.set(t.id, t);
                   }
@@ -3547,23 +3835,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 listId={realListId || undefined}
                                 listStatuses={task.list?.statuses}
                                 onSelect={(newStatus: string) => {
-                                  let effectiveStatus = newStatus;
-                                  if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                    effectiveStatus = 'In Review';
-                                    setRecentlyMovedToReviewByUser((prev) => {
-                                      const existing = prev[userId] || [];
-                                      if (existing.some((t) => t.id === task.id)) return prev;
-                                      return {
-                                        ...prev,
-                                        [userId]: [{ ...task, status: effectiveStatus, assigneeId: null }, ...existing],
-                                      };
+                                  const normNew = newStatus.toLowerCase().replace(/[\s_-]+/g, '');
+                                  if (normNew === 'toreview' || normNew === 'inreview' || normNew === 'handover') {
+                                    setDeliverablesModalTarget({
+                                      task,
+                                      targetStatus: normNew === 'handover' ? 'Hand-over' : 'To Review',
+                                      user,
+                                      realTaskId: realTaskId || task.id,
                                     });
+                                    return;
                                   }
+                                  let effectiveStatus = newStatus;
+                                  const isClosing = isClosedStatus(effectiveStatus);
                                   if (task.isAssumptionBlock) {
                                     task.status = effectiveStatus;
+                                    if (isClosing) {
+                                      useAppStore.getState().updateMaActiveSession(user.name, null);
+                                    }
                                     syncSessionPatch({
                                       taskStatus: effectiveStatus,
                                       status: effectiveStatus,
+                                      ...(isClosing ? { cleared: true } : {}),
                                     });
                                     if (!realTaskId) {
                                       toast.success(`Status updated to ${effectiveStatus}`);
@@ -3571,7 +3863,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                     }
                                   }
                                   const targetId = realTaskId || task.id;
-                                  const leavesUserColumn = isOtherBoardWorkflowStatus({ status: effectiveStatus });
+                                  const leavesUserColumn = isOtherBoardWorkflowStatus({ status: effectiveStatus }) || isClosing;
                                   const updatePayload: Partial<TaskMapItem> = leavesUserColumn
                                     ? { status: effectiveStatus, assigneeId: null }
                                     : { status: effectiveStatus };
@@ -3673,7 +3965,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   handleTaskMapSubStatusToggle(task, label, nextStatuses, user)
                                 }
                                 onOptionsUpdated={onOptionsUpdated}
-                                readOnly={Boolean(cardOptions?.forceNonDraggable || isLiveWorking || task.isAssumptionBlock)}
+                                readOnly={Boolean(cardOptions?.forceNonDraggable || task.isAssumptionBlock)}
                               />
                             </div>
                           </div>
@@ -3707,7 +3999,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 });
 
                 return (
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
+                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
                     {/* IN PROGRESS SLOT / CARD */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between px-1">
@@ -3767,8 +4059,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           userId={userId}
                           userName={user.name}
                           availableTasks={sortAvailablePoolTasks(availablePool)}
+                          allAvailableTasks={allAvailablePool ? sortAvailablePoolTasks(allAvailablePool) : undefined}
+                          allTasks={allTasks || tasks}
                           queuedTasks={queuedTasks}
-                          onSelectTask={(taskId) => handleSelectInProgressTask(taskId, userId)}
+                          onSelectTask={(taskId, task) => handleSelectInProgressTask(taskId, userId, task)}
                           disabled={false}
                           canBrowse={allowStartInProgress}
                         />
@@ -3941,6 +4235,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
           }
         }}
       />
+
+      {/* Task Deliverables & Clock-Out Submission Modal */}
+      {deliverablesModalTarget && (
+        <TaskDeliverablesModal
+          isOpen={!!deliverablesModalTarget}
+          onClose={() => setDeliverablesModalTarget(null)}
+          onSubmit={handleDeliverablesSubmit}
+          taskTitle={deliverablesModalTarget.task.title}
+          clientName={deliverablesModalTarget.task.progress?.client || deliverablesModalTarget.task.list?.name || ''}
+          targetStatus={deliverablesModalTarget.targetStatus}
+          initialDeliverables={deliverablesModalTarget.task.progress?.taskDeliverablesDescription || deliverablesModalTarget.task.title}
+          initialUpdate={deliverablesModalTarget.task.progress?.taskUpdateAndDeliverables || ''}
+          userName={deliverablesModalTarget.user?.name || deliverablesModalTarget.task.assignee?.name}
+        />
+      )}
     </DndContext>
   );
 };

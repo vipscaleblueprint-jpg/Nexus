@@ -1869,6 +1869,20 @@ export async function createTaskComment(req: Request, res: Response) {
       return res.status(400).json({ error: 'Content cannot be empty' });
     }
 
+    // Resolve taskId/subtaskId if taskId is actually a subtask ID
+    let effectiveTaskId = taskId;
+    let effectiveSubtaskId = subtaskId ? String(subtaskId) : null;
+    if (!effectiveSubtaskId) {
+      const sub = await prisma.subtask.findUnique({
+        where: { id: taskId },
+        select: { id: true, taskId: true },
+      });
+      if (sub) {
+        effectiveTaskId = sub.taskId;
+        effectiveSubtaskId = sub.id;
+      }
+    }
+
     // The comment, its audit log, the author lookup and the parent's reply count are independent writes/reads,
     // so they run in parallel: one ~190 ms DB round trip before the broadcast instead of one per step. Ids are
     // made here so the audit log can reference the comment without waiting for it.
@@ -1880,10 +1894,10 @@ export async function createTaskComment(req: Request, res: Response) {
         data: {
           id: commentId,
           content: content.trim(),
-          taskId,
+          taskId: effectiveTaskId,
           userId: effectiveUserId,
           ...(parentCommentId ? { parentCommentId } : {}),
-          ...(subtaskId ? { subtaskId } : {}),
+          ...(effectiveSubtaskId ? { subtaskId: effectiveSubtaskId } : {}),
         },
       }),
       prisma.user.findUnique({
@@ -1896,9 +1910,9 @@ export async function createTaskComment(req: Request, res: Response) {
           createdAt: loggedAt,
           action: parentCommentId ? 'REPLY' : 'COMMENT',
           entity: 'TASK',
-          entityId: taskId,
+          entityId: effectiveTaskId,
           userId: effectiveUserId,
-          details: { text: content.trim(), commentId, parentCommentId: parentCommentId || null, subtaskId: subtaskId || null },
+          details: { text: content.trim(), commentId, parentCommentId: parentCommentId || null, subtaskId: effectiveSubtaskId || null },
         },
       }),
       // Increment replyCount on parent comment
@@ -1936,22 +1950,22 @@ export async function createTaskComment(req: Request, res: Response) {
       date: log.createdAt,
       user,
       parentCommentId: parentCommentId || null,
-      subtaskId: (subtaskId || null) as any,
+      subtaskId: (effectiveSubtaskId || null) as any,
     };
 
-    const payload = { taskId, comment, activity, subtaskId };
+    const payload = { taskId: effectiveTaskId, comment, activity, subtaskId: effectiveSubtaskId || undefined };
 
     // Drop the cached comment list so the next GET rebuilds it from the DB. Pushing onto it
     // instead started a one-comment list whenever the key had expired or been cleared, which
     // hid every earlier comment (and its images) until the key expired.
-    const redisCommentKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
+    const redisCommentKey = `comments:list:${effectiveTaskId}${effectiveSubtaskId ? `:sub:${effectiveSubtaskId}` : ''}`;
     redis.del(redisCommentKey).catch(() => {});
     // Also invalidate the activity cache since a new comment writes an AuditLog
-    invalidateCache(`task:activities:${taskId}`).catch(() => {});
+    invalidateCache(`task:activities:${effectiveTaskId}`).catch(() => {});
 
     // Broadcast globally so all active views (Activity page, modal, board, dashboard) receive comment in real time
     io.emit('task:comment_added', payload);
-    io.emit('task_activity', { listId: listId || undefined, taskId, activity });
+    io.emit('task_activity', { listId: listId || undefined, taskId: effectiveTaskId, activity });
 
     // Notifications after the broadcast (their own notification_received emits follow each write), so the
     // comment shows for everyone without waiting on the notification queries.
@@ -2465,9 +2479,23 @@ export async function getTaskComments(req: Request, res: Response) {
     const taskId = req.params.id;
     const { subtaskId } = req.query;
 
+    // Resolve taskId/subtaskId if taskId is actually a subtask ID
+    let effectiveTaskId = taskId;
+    let effectiveSubtaskId = subtaskId ? String(subtaskId) : null;
+    if (!effectiveSubtaskId) {
+      const sub = await prisma.subtask.findUnique({
+        where: { id: taskId },
+        select: { id: true, taskId: true },
+      });
+      if (sub) {
+        effectiveTaskId = sub.taskId;
+        effectiveSubtaskId = sub.id;
+      }
+    }
+
     // Redis List key — one list per task (or per subtask).
     // Stored oldest-first via rpush, so lrange 0 -1 is always in chronological order.
-    const redisKey = `comments:list:${taskId}${subtaskId ? `:sub:${subtaskId}` : ''}`;
+    const redisKey = `comments:list:${effectiveTaskId}${effectiveSubtaskId ? `:sub:${effectiveSubtaskId}` : ''}`;
 
     if (isRedisReady()) {
       try {
@@ -2484,9 +2512,9 @@ export async function getTaskComments(req: Request, res: Response) {
       }
     }
 
-    const whereClause: any = { taskId, parentCommentId: null };
-    if (subtaskId) {
-      whereClause.subtaskId = String(subtaskId);
+    const whereClause: any = { taskId: effectiveTaskId, parentCommentId: null };
+    if (effectiveSubtaskId) {
+      whereClause.subtaskId = String(effectiveSubtaskId);
     } else {
       whereClause.subtaskId = null;
     }

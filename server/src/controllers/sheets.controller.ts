@@ -1102,11 +1102,18 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     const hasRealTask = isRealTaskInput(task);
     const cleanTaskStr = hasRealTask ? String(task).trim() : null;
 
-    // Never fall back to link if the user did NOT input a task in their sheet!
+    const explicitSubtaskId =
+      (typeof body.subtaskId === 'string' && body.subtaskId.trim()) ||
+      (typeof body.subtask_id === 'string' && body.subtask_id.trim()) ||
+      undefined;
+
+    const isExplicitDelete = body.action === 'delete' || body.action === 'clear' || Boolean(body.cleared);
+
+    // Never fall back to link if the user did NOT input a task in their sheet or row is being deleted/cleared!
     // Links in Column M are often stale formulas or copied cells. If Column I is empty/unselected,
     // target must remain strictly null so progress is NEVER bound to an unselected task.
-    const link = hasRealTask ? (task_link || taskId || task_id) : null;
-    let target = link ? await findByNexusLink(link) : null;
+    const link = hasRealTask && !isExplicitDelete ? (task_link || taskId || task_id) : null;
+    let target = link ? await findByNexusLink(link, explicitSubtaskId) : null;
 
     // If client given, find client list
     let clientList: { id: string } | null = null;
@@ -1125,8 +1132,45 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       });
       const curTitle = (curTask?.title || '').trim().toLowerCase();
       const desiredTitle = cleanTaskStr.toLowerCase();
-      // If the link points to a completely different task, prioritize the explicit task title the user selected!
-      if (curTitle !== desiredTitle && !curTitle.includes(desiredTitle) && !desiredTitle.includes(curTitle)) {
+
+      // Check if desiredTitle matches the main task
+      const matchesMainTask = curTitle === desiredTitle || curTitle.includes(desiredTitle) || desiredTitle.includes(curTitle);
+      let matchesSubtask = false;
+
+      if (!matchesMainTask) {
+        // If target already points to a subtask, check if it matches the subtask title
+        if (target.subtaskId) {
+          const curSub = await prisma.subtask.findUnique({
+            where: { id: target.subtaskId },
+            select: { id: true, title: true },
+          });
+          const subTitle = (curSub?.title || '').trim().toLowerCase();
+          if (subTitle === desiredTitle || subTitle.includes(desiredTitle) || desiredTitle.includes(subTitle)) {
+            matchesSubtask = true;
+          }
+        }
+
+        // If not matched yet, check if desiredTitle matches any subtask under this parent task
+        if (!matchesSubtask) {
+          const matchingSub = await prisma.subtask.findFirst({
+            where: {
+              taskId: target.taskId,
+              title: { contains: cleanTaskStr, mode: 'insensitive' },
+            },
+            select: { id: true, externalId: true },
+          });
+          if (matchingSub) {
+            target.subtaskId = matchingSub.id;
+            if (!target.clickUpLink && matchingSub.externalId) {
+              target.clickUpLink = clickUpLinkOf(matchingSub.externalId);
+            }
+            matchesSubtask = true;
+          }
+        }
+      }
+
+      // If the link matches neither the main task nor any of its subtasks, override with title match
+      if (!matchesMainTask && !matchesSubtask) {
         console.log(`[Sheets] Link points to "${curTask?.title}", but user selected "${cleanTaskStr}". Overriding with title match.`);
         target = null;
       }
@@ -1135,7 +1179,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     if (!target && cleanTaskStr) {
       // 1. If client given, try finding within client's list first
       if (clientList) {
-        // 1a. Try exact title match first
+        // 1a. Try exact title match first on main task
         let matched = await prisma.task.findFirst({
           where: {
             listId: clientList.id,
@@ -1144,8 +1188,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           select: { id: true, listId: true, externalId: true },
         });
 
-        // 1b. If no exact match, try prefix / contains match ONLY if unambiguous (exactly 1 candidate)
+        // 1b. Check if cleanTaskStr is an exact match for a subtask in this client list
         if (!matched) {
+          const matchedSub = await prisma.subtask.findFirst({
+            where: {
+              task: { listId: clientList.id },
+              title: { equals: cleanTaskStr, mode: 'insensitive' },
+            },
+            select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+          });
+          if (matchedSub) {
+            target = { taskId: matchedSub.taskId, subtaskId: matchedSub.id, listId: matchedSub.task.listId, clickUpLink: clickUpLinkOf(matchedSub.externalId) };
+          }
+        }
+
+        // 1c. If no exact match, try prefix / contains match ONLY if unambiguous (exactly 1 candidate)
+        if (!matched && !target) {
           const candidates = await prisma.task.findMany({
             where: {
               listId: clientList.id,
@@ -1158,6 +1216,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             matched = candidates[0];
           } else if (candidates.length > 1) {
             console.warn(`[Sheets] Ambiguous task title "${cleanTaskStr}" matched ${candidates.length} tasks in client list ${clientList.id}. Skipping ambiguous binding.`);
+          }
+        }
+
+        // 1d. If no task contains match, try subtask contains match in client list
+        if (!matched && !target) {
+          const subCandidates = await prisma.subtask.findMany({
+            where: {
+              task: { listId: clientList.id },
+              title: { contains: cleanTaskStr, mode: 'insensitive' },
+            },
+            select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+            take: 2,
+          });
+          if (subCandidates.length === 1) {
+            const sc = subCandidates[0];
+            target = { taskId: sc.taskId, subtaskId: sc.id, listId: sc.task.listId, clickUpLink: clickUpLinkOf(sc.externalId) };
           }
         }
 
@@ -1175,7 +1249,19 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           select: { id: true, listId: true, externalId: true },
         });
 
-        if (!matched && !effectiveClientStr) {
+        if (!matched) {
+          const matchedSub = await prisma.subtask.findFirst({
+            where: {
+              title: { equals: cleanTaskStr, mode: 'insensitive' },
+            },
+            select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+          });
+          if (matchedSub) {
+            target = { taskId: matchedSub.taskId, subtaskId: matchedSub.id, listId: matchedSub.task.listId, clickUpLink: clickUpLinkOf(matchedSub.externalId) };
+          }
+        }
+
+        if (!matched && !target && !effectiveClientStr) {
           const candidates = await prisma.task.findMany({
             where: {
               title: { contains: cleanTaskStr, mode: 'insensitive' },
@@ -1185,6 +1271,20 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           });
           if (candidates.length === 1) {
             matched = candidates[0];
+          }
+        }
+
+        if (!matched && !target && !effectiveClientStr) {
+          const subCandidates = await prisma.subtask.findMany({
+            where: {
+              title: { contains: cleanTaskStr, mode: 'insensitive' },
+            },
+            select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+            take: 2,
+          });
+          if (subCandidates.length === 1) {
+            const sc = subCandidates[0];
+            target = { taskId: sc.taskId, subtaskId: sc.id, listId: sc.task.listId, clickUpLink: clickUpLinkOf(sc.externalId) };
           }
         }
 
@@ -1348,7 +1448,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           (task_deliverables_description && String(task_deliverables_description).trim()) ||
           (task_update_and_deliverables && String(task_update_and_deliverables).trim())
         );
-        const isRowCleared = !cleanTimeIn && !cleanTimeOut && !effectiveClientStr && !cleanTaskStr && !statusStr && !hasDeliverables;
+        const isRowCleared = isExplicitDelete || (!cleanTimeIn && !cleanTimeOut && !effectiveClientStr && !cleanTaskStr && !statusStr && !hasDeliverables);
         const maKey = maNameStr.toLowerCase().trim();
         const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
         const currentActiveObj = await getMaActiveSession(maKey).catch(() => null);
@@ -1645,6 +1745,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       status: statusStr,
       date: date ? String(date).trim() : null,
       sheetRow: sheet_row ? Number(sheet_row) : undefined,
+      subtaskId: target.subtaskId || null,
       taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
       taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
       startedAt: startedAtIso,
@@ -1941,7 +2042,59 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     let nextAssigneeId: string | null | undefined = didAssignUserToTask ? assignedUser?.id : undefined;
     let nextAssigneeObj: { id: string; name: string } | null | undefined = didAssignUserToTask ? assignedUser : undefined;
 
-    if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
+    const statusNorm = (statusStr || '').toUpperCase().trim().replace(/[\s_-]+/g, '');
+    const isClosedIncoming =
+      ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'].includes(statusNorm) ||
+      ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'].includes(currentTaskStatusNorm);
+
+    if (isClosedIncoming) {
+      const listClosedStatus = targetTaskMeta?.listId
+        ? await prisma.listStatus.findFirst({
+            where: {
+              listId: targetTaskMeta.listId,
+              name: { in: ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'], mode: 'insensitive' },
+            },
+            select: { name: true },
+          }).catch(() => null)
+        : null;
+      nextTaskStatus = listClosedStatus?.name ?? 'CLOSED';
+      await prisma.task.update({
+        where: { id: target.taskId },
+        data: {
+          status: nextTaskStatus,
+          assigneeId: null,
+          assignees: { set: [] },
+        },
+      });
+      if (target.subtaskId) {
+        await prisma.subtask.update({
+          where: { id: target.subtaskId },
+          data: {
+            status: nextTaskStatus,
+            completed: true,
+            assigneeId: null,
+            assignees: { set: [] },
+          },
+        }).catch(() => {});
+      }
+      if (targetTaskMeta) {
+        targetTaskMeta.status = nextTaskStatus;
+      }
+      nextRecordStatuses = ['Closed'];
+      nextHandedOver = false;
+      nextAssigneeId = null;
+      nextAssigneeObj = null;
+
+      io.emit('task:updated', { id: target.taskId, status: nextTaskStatus, assigneeId: null, assignees: [] });
+      if (maNameStr) {
+        const maKey = maNameStr.toLowerCase().trim();
+        await deleteMaActiveSession(maKey).catch(() => {});
+        const clearedPayload = { maName: maNameStr, cleared: true, taskId: target.taskId };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.taskId });
+      }
+    } else if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
       // Live Working: transition any non-closed task into IN PROGRESS
       if (currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
         if (!isCadenceTask && currentTaskStatusNorm !== 'INPROGRESS') {
@@ -2054,7 +2207,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     await invalidateCache(`task:${target.taskId}`, 'task_map:all', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
-    if (maNameStr) {
+    if (maNameStr && !isClosedIncoming) {
       const maSession = {
         maName: maNameStr,
         taskId: target.taskId,

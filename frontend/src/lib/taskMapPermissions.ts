@@ -16,7 +16,8 @@ export function canDragTaskMapCard(params: CanDragTaskMapCardParams): boolean {
   } = params;
 
   if (isAssumptionBlock) return false;
-  if (isFromAvailable) return Boolean(isPmUser);
+  // Available tasks can be dragged by PMs or by any user to assign to themselves
+  if (isFromAvailable) return true;
   if (!columnUserId) return false;
   return Boolean(isPmUser || (currentUserId && columnUserId === currentUserId));
 }
@@ -50,18 +51,19 @@ export function canDropTaskMapCard(
   if (targetColumnId.startsWith('in-progress-')) {
     const targetUserId = targetColumnId.slice('in-progress-'.length);
     if (isPmUser) {
-      return {
-        allowed: false,
-        reason: "Project Managers cannot move tasks into In Progress. Moving a task to In Progress is the MA's action only.",
-      };
+      return { allowed: true, mode: 'IN_PROGRESS', targetUserId };
     }
+    const isTargetingSelf = Boolean(currentUserId && targetUserId === currentUserId);
     if (isFromAvailable) {
+      if (isTargetingSelf) {
+        return { allowed: true, mode: 'IN_PROGRESS', targetUserId };
+      }
       return {
         allowed: false,
-        reason: 'Only Project Managers and Admins can assign tasks from the Available column',
+        reason: 'Only Project Managers and Admins can assign tasks from the Available column to other users',
       };
     }
-    if (!currentUserId || sourceUserId !== currentUserId || targetUserId !== currentUserId) {
+    if (!isTargetingSelf || (sourceUserId && sourceUserId !== currentUserId)) {
       return {
         allowed: false,
         reason: 'You can only move tasks into your own In Progress block',
@@ -73,13 +75,17 @@ export function canDropTaskMapCard(
   if (targetColumnId.startsWith('user-')) {
     const targetUserId = targetColumnId.slice('user-'.length);
     if (!isPmUser) {
+      const isTargetingSelf = Boolean(currentUserId && targetUserId === currentUserId);
       if (isFromAvailable) {
+        if (isTargetingSelf) {
+          return { allowed: true, mode: 'QUEUE', targetUserId };
+        }
         return {
           allowed: false,
-          reason: 'Only Project Managers and Admins can assign tasks from the Available column',
+          reason: 'Only Project Managers and Admins can assign tasks from the Available column to other users',
         };
       }
-      if (!currentUserId || sourceUserId !== currentUserId || targetUserId !== currentUserId) {
+      if (!isTargetingSelf || (sourceUserId && sourceUserId !== currentUserId)) {
         return {
           allowed: false,
           reason: "You cannot move tasks into another MA's column",
@@ -108,8 +114,9 @@ export function canStartInProgressSlot(params: {
   columnUserId?: string | null;
 }): boolean {
   const { isPmUser, currentUserId, columnUserId } = params;
-  if (isPmUser) return false;
-  return Boolean(currentUserId && columnUserId && currentUserId === columnUserId);
+  if (isPmUser) return true;
+  if (!currentUserId || !columnUserId) return false;
+  return currentUserId === columnUserId;
 }
 
 export function canTransferTaskMapCard(isPmUser: boolean): boolean {

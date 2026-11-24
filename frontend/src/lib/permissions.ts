@@ -84,6 +84,7 @@ const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|\bpm\b|senior\s*(?:pm|
 export function isProjectManagerOrAdmin(user: User | null | undefined): boolean {
   if (!user) return false;
   if (user.systemRole === 'ADMIN') return true;
+  if (isAaronUser(user)) return true;
   return (user.roles || []).some((r) => PROJECT_MANAGER_OR_SENIOR_ROLE.test((r || '').trim()));
 }
 

@@ -39,7 +39,7 @@ import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TAS
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { autoQueueQueue } from './queues/autoQueue.queue';
-import { AUTO_QUEUE_JOB } from './workers/autoQueue.worker';
+import { AUTO_QUEUE_JOB, AUTO_QUEUE_DAILY_JOB } from './workers/autoQueue.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 
 const app = express();
@@ -120,7 +120,15 @@ const server = http.createServer(app);
     removeOnFail: 50,
   });
 
-  // Task Map auto-queue (Available tasks -> on-shift MAs), every 5 minutes. No-op unless AUTO_QUEUE_MODE is set.
+  // Task Map auto-queue. Both are no-ops unless AUTO_QUEUE_MODE is set (services/autoQueue/config.ts).
+  // 5:00 AM Manila: hand out the whole Available pool to everyone scheduled today, balanced by hours.
+  await autoQueueQueue.add(AUTO_QUEUE_DAILY_JOB, {}, {
+    repeat: { pattern: '0 5 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-auto-queue-5am',
+    attempts: 5, // retried if a PM is mid Reset/Distribute at 5:00
+    backoff: { type: 'fixed', delay: 2 * 60 * 1000 },
+  });
+  // Every 5 minutes: top up MAs on shift right now who have worked through their queue.
   await autoQueueQueue.add(AUTO_QUEUE_JOB, {}, {
     repeat: { every: 5 * 60 * 1000 },
     jobId: 'task-map-auto-queue',

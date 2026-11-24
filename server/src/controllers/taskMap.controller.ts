@@ -825,6 +825,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             assigneeId: subAssigneeId,
             assigneeRoleRestrictions: st.assigneeRoleRestrictions || [],
             teamAssignAccessRole: st.teamAssignAccessRole || null,
+            teamId: st.teamId || null,
+            estimatedHours: st.estimatedHours ?? null,
             list: task.list,
             assignee: subAssignee,
             assignees: subAssignees,

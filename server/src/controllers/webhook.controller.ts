@@ -17,6 +17,7 @@ import { autoAssignAudits } from '../services/auditAutoAssign';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 import { parseEstimatedHours } from '../utils/estimatedHours';
+import { shouldPoolGalaxyRoleTasks } from '../services/autoQueue/config';
 
 
 // Galaxy-created tasks/subtasks are authored by this system account rather than
@@ -304,6 +305,9 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
   try {
     const { clients, prompt, priority, assignee, task_link, listed_by, audits } = req.body;
     const estimatedHours = parseEstimatedHours(req.body.estimated_hours);
+    // While auto-queue assigns, Galaxy's picked role becomes the task's requirement and the task
+    // waits in Available tasks for one matching MA, instead of going to everyone with that role.
+    const poolRoleTasks = shouldPoolGalaxyRoleTasks();
 
     const clientName = typeof clients?.name === 'string' ? clients.name.trim() : '';
     if (!clientName) {
@@ -405,7 +409,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         // 0. Role assignment — store as restriction AND map the individual users
         if (a.type === 'role' || (a.id && String(a.id).startsWith('role_'))) {
           roleNamesSet.add(aName.toUpperCase());
-          if (a.userIds && Array.isArray(a.userIds)) {
+          if (!poolRoleTasks && a.userIds && Array.isArray(a.userIds)) {
             a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
           }
           continue;
@@ -415,7 +419,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
         if (a.type === 'teamrole' || (a.id && String(a.id).startsWith('teamrole_'))) {
           roleNamesSet.add(aName); // Keep original casing for TeamRole names
           if (a.teamId && !resolvedTeamId) resolvedTeamId = a.teamId;
-          if (a.userIds && Array.isArray(a.userIds)) {
+          if (!poolRoleTasks && a.userIds && Array.isArray(a.userIds)) {
             a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
           }
           continue;
@@ -614,7 +618,8 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     const notifyUserIds = new Set<string>(finalAssigneeIds);
 
     // Only notify all members of the resolved team if no individual assignees were assigned
-    if (resolvedTeamId && finalAssigneeIds.length === 0) {
+    // (not while pooling: the MA auto-queue picks is notified when it's queued to them)
+    if (resolvedTeamId && finalAssigneeIds.length === 0 && !poolRoleTasks) {
       const teamMembers = await prisma.user.findMany({
         where: { teamId: resolvedTeamId },
         select: { id: true }
@@ -727,6 +732,8 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
   try {
     const { task_link, listed_by, priority, assignee } = req.body;
     const estimatedHours = parseEstimatedHours(req.body.estimated_hours);
+    // See handleGalaxyTask: while auto-queue assigns, the picked role waits in Available tasks.
+    const poolRoleTasks = shouldPoolGalaxyRoleTasks();
 
     if (!task_link) return res.status(400).json({ error: 'task_link required' });
 
@@ -840,7 +847,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         // 0. Role assignment — store as restriction AND map the individual users
         if (a.type === 'role' || (a.id && String(a.id).startsWith('role_'))) {
           roleNamesSet.add(aName.toUpperCase());
-          if (a.userIds && Array.isArray(a.userIds)) {
+          if (!poolRoleTasks && a.userIds && Array.isArray(a.userIds)) {
             a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
           }
           continue;
@@ -850,7 +857,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         if (a.type === 'teamrole' || (a.id && String(a.id).startsWith('teamrole_'))) {
           roleNamesSet.add(aName); // Keep original casing for TeamRole names
           if (a.teamId && !resolvedTeamId) resolvedTeamId = a.teamId;
-          if (a.userIds && Array.isArray(a.userIds)) {
+          if (!poolRoleTasks && a.userIds && Array.isArray(a.userIds)) {
             a.userIds.forEach((id: string) => assigneeIdsSet.add(id));
           }
           continue;

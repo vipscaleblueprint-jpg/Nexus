@@ -14,6 +14,7 @@ export interface QueueUser {
   systemRole?: string | null;
   isActive?: boolean;
   starRating?: number | null;
+  teamId?: string | null;
 }
 
 export interface ShiftWindow {
@@ -47,6 +48,11 @@ export interface BoardItem {
   isAdminTask?: boolean;
   isClosed?: boolean;
   recurringConfig?: unknown;
+  /** Hands-on hours (Galaxy estimate / PM edit / ClickUp time estimate); null when unknown. */
+  estimatedHours?: number | null;
+  /** Role(s) the task needs, e.g. Galaxy's picked role. Any one of them qualifies. */
+  assigneeRoleRestrictions?: string[] | null;
+  teamId?: string | null;
   progress?: { timeIn?: string | null; timeOut?: string | null } | null;
   taskMap?: {
     statuses?: string[] | null;
@@ -60,6 +66,8 @@ export interface MaLoad {
   active: number;
   /** Open MA work not yet started: what the queue cap applies to. */
   queued: number;
+  /** Estimated hours of the open MA work (unknown estimates count as the default). */
+  hours: number;
 }
 
 const norm = (s?: string | null) => (s || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
@@ -108,6 +116,41 @@ export function isUserOnShiftNow(user: QueueUser, shifts: ShiftWindow[], minuteO
   return shifts.some((s) => s.isActive !== false && isShiftMember(user, s) && isWithinWindow(s, minuteOfDay));
 }
 
+/**
+ * Hours the user is scheduled today: the union of the shifts they belong to, so overlapping
+ * shifts (e.g. 12:00-18:30 and 17:00-01:00) aren't counted twice. 0 = not scheduled.
+ * Shifts are the same every day (Nexus has no days off yet).
+ */
+export function scheduledShiftHours(user: QueueUser, shifts: ShiftWindow[]): number {
+  const covered = new Array<boolean>(48 * 60).fill(false); // two days, for shifts past midnight
+  for (const s of shifts) {
+    if (s.isActive === false || !isShiftMember(user, s)) continue;
+    const start = s.startHour * 60 + (s.startMinute || 0);
+    let end = s.endHour * 60 + (s.endMinute || 0);
+    if (end <= start) end += 24 * 60;
+    for (let m = start; m < end; m++) covered[m] = true;
+  }
+  return covered.filter(Boolean).length / 60;
+}
+
+// ---------------------------------------------------------------------------
+// Role match
+// ---------------------------------------------------------------------------
+
+const roleKey = (r: string) => (r || '').trim().toLowerCase();
+
+/**
+ * Whether the user has a role the task asks for (e.g. Galaxy's picked "TECH" or "Designer"),
+ * or is in the task's team (team roles). A task with no role or team can go to any MA.
+ */
+export function canUserTakeTask(user: QueueUser, item: BoardItem): boolean {
+  const required = (item.assigneeRoleRestrictions || []).map(roleKey).filter(Boolean);
+  if (required.length === 0 && !item.teamId) return true;
+  if (item.teamId && user.teamId === item.teamId) return true;
+  const userRoles = new Set(lowerRoles(user).map(roleKey));
+  return required.some((r) => userRoles.has(r));
+}
+
 // ---------------------------------------------------------------------------
 // Task classification
 // ---------------------------------------------------------------------------
@@ -149,18 +192,28 @@ export function getBoardItemOwnerId(item: BoardItem): string | null {
   });
 }
 
-export function computeMaLoads(items: BoardItem[], userIds: string[]): Map<string, MaLoad> {
-  const loads = new Map<string, MaLoad>(userIds.map((id) => [id, { active: 0, queued: 0 }]));
+export function computeMaLoads(items: BoardItem[], userIds: string[], defaultHours = DEFAULT_ESTIMATED_HOURS): Map<string, MaLoad> {
+  const loads = new Map<string, MaLoad>(userIds.map((id) => [id, { active: 0, queued: 0, hours: 0 }]));
   for (const it of items) {
     if (!isMaWorkItem(it)) continue;
     const owner = getBoardItemOwnerId(it);
     const load = owner ? loads.get(owner) : undefined;
     if (!load) continue;
     load.active++;
+    load.hours += itemHours(it, defaultHours);
     if (!isStarted(it)) load.queued++;
   }
   return loads;
 }
+
+/** Hours a task counts for when balancing: its estimate, or the default when it has none. */
+export const DEFAULT_ESTIMATED_HOURS = 3;
+export function itemHours(item: BoardItem, defaultHours = DEFAULT_ESTIMATED_HOURS): number {
+  const h = Number(item.estimatedHours);
+  return Number.isFinite(h) && h > 0 ? h : defaultHours;
+}
+
+export { isStarted as isBoardItemStarted };
 
 // ---------------------------------------------------------------------------
 // Ordering

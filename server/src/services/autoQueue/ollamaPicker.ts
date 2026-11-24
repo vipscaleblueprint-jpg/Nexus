@@ -15,6 +15,7 @@ export interface PickTask {
   priority?: string | null;
   dueDate?: string | Date | null;
   description?: string | null;
+  estimatedHours?: number | null;
 }
 
 export interface PickCandidate {
@@ -22,6 +23,8 @@ export interface PickCandidate {
   name: string;
   active: number;
   queued: number;
+  /** 5 AM plan only: shift hours today minus estimated hours already held. */
+  freeHours?: number;
   starRating?: number | null;
   /** Clients of the open tasks already in their column. */
   currentClients: string[];
@@ -55,7 +58,7 @@ Decide in this order:
 1. Someone who worked on this exact task before should get it back.
 2. Prefer someone already working for the same client.
 3. For URGENT or HIGH priority tasks, prefer a higher star rating.
-4. Otherwise, prefer the person with the fewest open tasks.
+4. Otherwise, prefer the person with the most free hours, then the fewest open tasks.
 Reply with JSON only: {"candidate": "<label>", "reason": "<one short sentence>"}.`;
 
 const label = (i: number) => `c${i + 1}`;
@@ -82,6 +85,7 @@ export function buildPickRequest(task: PickTask, candidates: PickCandidate[], mo
     `Client: ${task.client || 'unknown'}`,
     `Priority: ${task.priority || 'MEDIUM'}`,
     `Due: ${formatDue(task.dueDate)}`,
+    task.estimatedHours ? `Estimated time: ${task.estimatedHours}h` : null,
     task.description ? `Description: ${cleanText(task.description, MAX_DESCRIPTION_CHARS)}` : null,
   ].filter(Boolean);
 
@@ -89,9 +93,10 @@ export function buildPickRequest(task: PickTask, candidates: PickCandidate[], mo
     const parts = [
       `${label(i)}: ${c.name}`,
       `open tasks ${c.active} (${c.queued} not started)`,
+      c.freeHours !== undefined ? `free hours today ${Math.max(0, c.freeHours).toFixed(1)}` : null,
       `star rating ${c.starRating ?? 'n/a'}`,
       `current clients: ${c.currentClients.length ? c.currentClients.join(', ') : 'none'}`,
-    ];
+    ].filter(Boolean) as string[];
     if (c.workedOnThisBefore) parts.push('WORKED ON THIS TASK BEFORE');
     return `- ${parts.join('; ')}`;
   });

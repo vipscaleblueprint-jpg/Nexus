@@ -23,6 +23,7 @@ import {
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
   applyLiveWorkingTaskStatus,
+  formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import dynamic from 'next/dynamic';
@@ -57,6 +58,7 @@ import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { hasCrmAccess, canTransitionTaskStatus } from '@/lib/permissions';
+import { isClosedStatus } from '@/lib/taskTokens';
 import { isOtherBoardWorkflowStatus } from '@/lib/taskMapPermissions';
 
 const getTodayDateStr = () => {
@@ -657,13 +659,25 @@ export const TaskMapContainer: React.FC = () => {
       if (pendingUpdatesRef.current.has(taskId)) {
         return;
       }
+      const isClosed = task.isClosed || isClosedStatus(task.status);
       // Patch the task in memory to avoid triggering a full network reload
       setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, ...task } : t))
+        prev.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                ...task,
+                ...(isClosed ? { isClosed: true, assigneeId: null, assignee: null, assignees: [] } : {}),
+              }
+            : t
+        )
       );
-      setAvailablePool((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, ...task } : t))
-      );
+      setAvailablePool((prev) => {
+        if (isClosed) {
+          return prev.filter((t) => t.id !== taskId);
+        }
+        return prev.map((t) => (t.id === taskId ? { ...t, ...task } : t));
+      });
     };
 
     const handleTaskMapUpdated = (e: any) => {
@@ -956,7 +970,19 @@ export const TaskMapContainer: React.FC = () => {
         t.id === taskId
           ? {
             ...t,
-            ...(isHandoverSelected ? { assigneeId: null, assignee: null } : {}),
+            ...(isHandoverSelected
+              ? {
+                  assigneeId: null,
+                  assignee: null,
+                  assignees: [],
+                  progress: t.progress
+                    ? {
+                        ...t.progress,
+                        timeOut: t.progress.timeOut || formatManilaTime(new Date()),
+                      }
+                    : null,
+                }
+              : {}),
             upworkStartedAt: optimisticStartedAt,
             upworkSession: optimisticSession,
             ...(isSentWaitingSelected && !t.crmWaitingMeta
@@ -1046,7 +1072,19 @@ export const TaskMapContainer: React.FC = () => {
         return [
           {
             ...existingTask,
-            ...(isHandoverSelected ? { assigneeId: null, assignee: null, assignees: [] } : {}),
+            ...(isHandoverSelected
+              ? {
+                  assigneeId: null,
+                  assignee: null,
+                  assignees: [],
+                  progress: existingTask.progress
+                    ? {
+                        ...existingTask.progress,
+                        timeOut: existingTask.progress.timeOut || formatManilaTime(new Date()),
+                      }
+                    : null,
+                }
+              : {}),
             upworkStartedAt: optimisticStartedAt,
             upworkSession: optimisticSession,
             taskMap: {
@@ -1179,6 +1217,10 @@ export const TaskMapContainer: React.FC = () => {
 
     // 1. Optimistically update local tasks & availablePool while tracking previous status for undo/misclick support
     const nextStatusUp = toCanonicalTaskStatus(normalizedFields.status);
+    const isClosing = isClosedStatus(nextStatusUp) || isClosedStatus(normalizedFields.status);
+    if (isClosing) {
+      normalizedFields.assigneeId = null;
+    }
     const isMovingToAvailable =
       normalizedFields.assigneeId === null || nextStatusUp === 'ON-HOLD' || nextStatusUp === 'ONHOLD';
     const isMovingOutOfAvailable =
@@ -1218,8 +1260,17 @@ export const TaskMapContainer: React.FC = () => {
       return {
         ...t,
         ...normalizedFields,
-        ...(isMovingToAvailable ? { assigneeId: null, assignee: null, assignees: [] } : {}),
-        ...(matchedTargetUser
+        ...(isClosing
+          ? {
+              isClosed: true,
+              assigneeId: null,
+              assignee: null,
+              assignees: [],
+            }
+          : isMovingToAvailable
+          ? { assigneeId: null, assignee: null, assignees: [] }
+          : {}),
+        ...(matchedTargetUser && !isClosing
           ? {
               assigneeId: matchedTargetUser.id,
               assignee: matchedTargetUser,
@@ -1231,18 +1282,26 @@ export const TaskMapContainer: React.FC = () => {
           : {}),
         taskMap: {
           ...syncedTaskMap,
-          ...(nextHandedOverState !== undefined ? { handedOver: nextHandedOverState } : {}),
+          ...(isClosing
+            ? { statuses: ['Closed'], handedOver: false }
+            : nextHandedOverState !== undefined
+            ? { handedOver: nextHandedOverState }
+            : {}),
         },
         _previousStatus: resolvePrevStatus(t),
-      } as TaskMapItem;
+      } as unknown as TaskMapItem;
     };
 
     if (currentTask) {
-      pendingAssignRef.current.set(taskId, {
-        task: buildUpdatedTaskItem(currentTask),
-        targetUserId: normalizedFields.assigneeId !== undefined ? normalizedFields.assigneeId : currentTask.assigneeId || null,
-        timestamp: Date.now(),
-      });
+      if (isClosing) {
+        pendingAssignRef.current.delete(taskId);
+      } else {
+        pendingAssignRef.current.set(taskId, {
+          task: buildUpdatedTaskItem(currentTask),
+          targetUserId: normalizedFields.assigneeId !== undefined ? normalizedFields.assigneeId : currentTask.assigneeId || null,
+          timestamp: Date.now(),
+        });
+      }
     }
 
     const isParentBecomingOnHold =
@@ -1270,7 +1329,7 @@ export const TaskMapContainer: React.FC = () => {
 
     setAvailablePool((prev) => {
       const cascadedPrev = isParentBecomingOnHold ? prev.map(cascadeOnHoldChild) : prev;
-      if (isMovingOutOfAvailable) {
+      if (isClosing || isMovingOutOfAvailable) {
         return cascadedPrev.filter((t) => t.id !== taskId);
       }
       const exists = cascadedPrev.some((t) => t.id === taskId);

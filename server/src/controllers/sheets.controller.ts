@@ -1107,10 +1107,12 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       (typeof body.subtask_id === 'string' && body.subtask_id.trim()) ||
       undefined;
 
-    // Never fall back to link if the user did NOT input a task in their sheet!
+    const isExplicitDelete = body.action === 'delete' || body.action === 'clear' || Boolean(body.cleared);
+
+    // Never fall back to link if the user did NOT input a task in their sheet or row is being deleted/cleared!
     // Links in Column M are often stale formulas or copied cells. If Column I is empty/unselected,
     // target must remain strictly null so progress is NEVER bound to an unselected task.
-    const link = hasRealTask ? (task_link || taskId || task_id) : null;
+    const link = hasRealTask && !isExplicitDelete ? (task_link || taskId || task_id) : null;
     let target = link ? await findByNexusLink(link, explicitSubtaskId) : null;
 
     // If client given, find client list
@@ -1446,7 +1448,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           (task_deliverables_description && String(task_deliverables_description).trim()) ||
           (task_update_and_deliverables && String(task_update_and_deliverables).trim())
         );
-        const isRowCleared = !cleanTimeIn && !cleanTimeOut && !effectiveClientStr && !cleanTaskStr && !statusStr && !hasDeliverables;
+        const isRowCleared = isExplicitDelete || (!cleanTimeIn && !cleanTimeOut && !effectiveClientStr && !cleanTaskStr && !statusStr && !hasDeliverables);
         const maKey = maNameStr.toLowerCase().trim();
         const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
         const currentActiveObj = await getMaActiveSession(maKey).catch(() => null);
@@ -2040,7 +2042,59 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     let nextAssigneeId: string | null | undefined = didAssignUserToTask ? assignedUser?.id : undefined;
     let nextAssigneeObj: { id: string; name: string } | null | undefined = didAssignUserToTask ? assignedUser : undefined;
 
-    if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
+    const statusNorm = (statusStr || '').toUpperCase().trim().replace(/[\s_-]+/g, '');
+    const isClosedIncoming =
+      ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'].includes(statusNorm) ||
+      ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'].includes(currentTaskStatusNorm);
+
+    if (isClosedIncoming) {
+      const listClosedStatus = targetTaskMeta?.listId
+        ? await prisma.listStatus.findFirst({
+            where: {
+              listId: targetTaskMeta.listId,
+              name: { in: ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'], mode: 'insensitive' },
+            },
+            select: { name: true },
+          }).catch(() => null)
+        : null;
+      nextTaskStatus = listClosedStatus?.name ?? 'CLOSED';
+      await prisma.task.update({
+        where: { id: target.taskId },
+        data: {
+          status: nextTaskStatus,
+          assigneeId: null,
+          assignees: { set: [] },
+        },
+      });
+      if (target.subtaskId) {
+        await prisma.subtask.update({
+          where: { id: target.subtaskId },
+          data: {
+            status: nextTaskStatus,
+            completed: true,
+            assigneeId: null,
+            assignees: { set: [] },
+          },
+        }).catch(() => {});
+      }
+      if (targetTaskMeta) {
+        targetTaskMeta.status = nextTaskStatus;
+      }
+      nextRecordStatuses = ['Closed'];
+      nextHandedOver = false;
+      nextAssigneeId = null;
+      nextAssigneeObj = null;
+
+      io.emit('task:updated', { id: target.taskId, status: nextTaskStatus, assigneeId: null, assignees: [] });
+      if (maNameStr) {
+        const maKey = maNameStr.toLowerCase().trim();
+        await deleteMaActiveSession(maKey).catch(() => {});
+        const clearedPayload = { maName: maNameStr, cleared: true, taskId: target.taskId };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.taskId });
+      }
+    } else if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
       // Live Working: transition any non-closed task into IN PROGRESS
       if (currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
         if (!isCadenceTask && currentTaskStatusNorm !== 'INPROGRESS') {
@@ -2153,7 +2207,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     await invalidateCache(`task:${target.taskId}`, 'task_map:all', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
-    if (maNameStr) {
+    if (maNameStr && !isClosedIncoming) {
       const maSession = {
         maName: maNameStr,
         taskId: target.taskId,

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap } from '../services/redisService';
+import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap, deleteMaActiveSession } from '../services/redisService';
 import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
@@ -1669,7 +1669,10 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
       ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND'].includes(norm)
     );
-    const shouldClearAssignee = isHandoverSubStatus || isWorkflowTransferOut;
+    const isClosedSubStatus = normSubStatuses.some((norm) =>
+      ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(norm)
+    );
+    const shouldClearAssignee = isHandoverSubStatus || isWorkflowTransferOut || isClosedSubStatus;
 
     const target = parseTaskMapTargetId(id);
 
@@ -1780,7 +1783,26 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         }
 
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
-        if (subtask.assigneeId || (subtask.assignees && subtask.assignees.length > 0)) {
+        for (const r of pmReviews) {
+          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id && r.timeIn && !r.timeOut) {
+            try {
+              r.timeOut = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Manila',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              }).format(new Date());
+            } catch {
+              r.timeOut = '11:59 PM';
+            }
+          }
+        }
+        if (isClosedSubStatus) {
+          await prisma.subtask.update({
+            where: { id: subtask.id },
+            data: { status: 'CLOSED', completed: true, assigneeId: null, assignees: { set: [] } },
+          });
+        } else if (subtask.assigneeId || (subtask.assignees && subtask.assignees.length > 0)) {
           await prisma.subtask.update({
             where: { id: subtask.id },
             data: { assigneeId: null, assignees: { set: [] } },
@@ -2039,8 +2061,63 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       }
       if (Array.isArray(pmReviews)) {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
+        // Clock out any open sheet progress and close Upwork session on handover / transfer
+        for (const r of pmReviews) {
+          if (r?.type === 'SHEET_PROGRESS' && r.timeIn && !r.timeOut) {
+            try {
+              r.timeOut = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Manila',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              }).format(new Date());
+            } catch {
+              r.timeOut = '11:59 PM';
+            }
+          }
+          if (r?.type === 'UPWORK_SESSION' && r.active) {
+            r.active = false;
+            r.stoppedAt = new Date().toISOString();
+          }
+        }
       }
-      if (currentTask?.assigneeId || (currentTask?.assignees && currentTask.assignees.length > 0)) {
+      const namesToClear = [actorDisplayName, currentTask?.assignee?.name].filter(Boolean) as string[];
+      for (const n of namesToClear) {
+        await deleteMaActiveSession(n).catch(() => {});
+        const clearedPayload = { maName: n, cleared: true, taskId: id };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: id });
+      }
+      if (isRedisReady()) {
+        await redis.hdel('task_map:upwork_active', id).catch(() => {});
+      }
+      if (isClosedSubStatus) {
+        const taskWithList = await prisma.task.findUnique({
+          where: { id },
+          select: { listId: true },
+        });
+        const listClosedStatus = taskWithList?.listId
+          ? await prisma.listStatus.findFirst({
+              where: {
+                listId: taskWithList.listId,
+                name: { in: ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED'], mode: 'insensitive' },
+              },
+              select: { name: true },
+            }).catch(() => null)
+          : null;
+        const targetClosedStatus = listClosedStatus?.name ?? 'CLOSED';
+
+        await prisma.task.update({
+          where: { id },
+          data: {
+            status: targetClosedStatus,
+            assigneeId: null,
+            assignees: { set: [] },
+          },
+        });
+        io.emit('task:updated', { id, status: targetClosedStatus, assigneeId: null, assignees: [] });
+      } else if (currentTask?.assigneeId || (currentTask?.assignees && currentTask.assignees.length > 0)) {
         await prisma.task.update({
           where: { id },
           data: { assigneeId: null, assignees: { set: [] } },

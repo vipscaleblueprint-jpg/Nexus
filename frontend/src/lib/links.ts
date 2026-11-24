@@ -1,4 +1,5 @@
 import type { Root, Element, ElementContent, Parent, Text } from 'hast';
+import { useAppStore } from './store';
 
 /**
  * Turns user-entered link targets into absolute URLs. Without a protocol the browser
@@ -146,15 +147,15 @@ function escapeRegex(str: string) {
 }
 
 /**
- * Normalizes mention links: if text inside <a href="mention://..."> extends beyond the @username,
+ * Normalizes mention links: if text inside <a href="mention://..."> extends beyond the user's name,
  * pulls the trailing text outside the <a> tag so only the user mention chip is linked.
- * Also flattens any accidental nested mention links.
+ * Also flattens any accidental nested mention links and repairs split mentions.
  */
 export function normalizeMentionLinks(content: string): string {
   if (!content || !content.includes('mention://')) return content;
 
   // 1. Flatten any accidental nested mention links: <a href="mention://id1"><a href="mention://id2">@Name</a></a> -> <a href="mention://id1">@Name</a>
-  const cleaned = content.replace(
+  let cleaned = content.replace(
     /<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>\s*<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/a>/gi,
     (_full, id1, id2, inner) => {
       const chosenId = id1 && !id1.startsWith('unknown') ? id1 : id2;
@@ -162,18 +163,74 @@ export function normalizeMentionLinks(content: string): string {
     }
   );
 
-  // 2. Pull trailing text outside the anchor
-  return cleaned.replace(
-    /(<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>)([\s\S]*?)(<\/a>)/gi,
-    (_full, openTag, _userId, innerText, closeTag) => {
-      const mentionMatch = innerText.match(/^(\s*@[^\s<]+)([\s\S]*)$/);
-      if (mentionMatch) {
-        const mentionLabel = mentionMatch[1];
-        const trailingText = mentionMatch[2];
-        if (trailingText) {
-          return `${openTag}${mentionLabel}${closeTag}${trailingText}`;
+  let usersIndex: Record<string, { id: string; name?: string }> = {};
+  let usersList: { id: string; name?: string }[] = [];
+  try {
+    const state = useAppStore.getState?.();
+    if (state?.workspaceUsersIndex) usersIndex = state.workspaceUsersIndex;
+    if (state?.workspaceUsers) usersList = state.workspaceUsers;
+  } catch {
+    // Store unavailable
+  }
+
+  const sortedUsers = [...usersList].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+
+  // 2. Repair any split mentions where the anchor only has the first part of a multi-word name
+  // e.g. <a href="mention://id">@Bea</a> Bianca -> <a href="mention://id">@Bea Bianca</a>
+  cleaned = cleaned.replace(
+    /(<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>)([\s\S]*?)(<\/a>)(\s+[^\s<]+)/gi,
+    (full, openTag, userId, innerText, closeTag, followingText) => {
+      const cleanId = userId.startsWith('unknown') ? 'unknown' : userId;
+      const user = usersIndex[cleanId] || sortedUsers.find(u => u.id === cleanId);
+      if (user?.name) {
+        const fullExpected = user.name.trim();
+        const innerClean = innerText.replace(/^\s*@/, '').trim();
+        const combined = `${innerClean}${followingText}`.trim();
+        if (combined.toLowerCase() === fullExpected.toLowerCase()) {
+          const hasAt = innerText.trimStart().startsWith('@');
+          return `${openTag}${hasAt ? '@' : ''}${fullExpected}${closeTag}`;
         }
       }
+      return full;
+    }
+  );
+
+  // 3. Pull trailing text outside the anchor ONLY if it extends beyond the user's actual name
+  return cleaned.replace(
+    /(<a\b[^>]*\bhref=["']mention:\/\/([^"']+)["'][^>]*>)([\s\S]*?)(<\/a>)/gi,
+    (_full, openTag, userId, innerText, closeTag) => {
+      const cleanId = userId.startsWith('unknown') ? 'unknown' : userId;
+      let user: { id: string; name?: string } | undefined =
+        usersIndex[cleanId] || sortedUsers.find(u => u.id === cleanId);
+
+      if (!user && userId.startsWith('unknown?name=')) {
+        const queryName = decodeURIComponent(userId.split('name=')[1] || '').trim();
+        if (queryName) {
+          user = sortedUsers.find(u => u.name?.toLowerCase() === queryName.toLowerCase()) || { id: 'unknown', name: queryName };
+        }
+      }
+
+      if (!user) {
+        const innerClean = innerText.replace(/^\s*@/, '').trimStart();
+        user = sortedUsers.find(u => u.name && innerClean.toLowerCase().startsWith(u.name.trim().toLowerCase()));
+      }
+
+      if (user?.name) {
+        const targetName = user.name.trim();
+        const trimmed = innerText.trimStart();
+        const hasAt = trimmed.startsWith('@');
+        const prefix = hasAt ? `@${targetName}` : targetName;
+
+        if (trimmed.toLowerCase().startsWith(prefix.toLowerCase())) {
+          const trailingText = trimmed.slice(prefix.length);
+          if (trailingText) {
+            return `${openTag}${trimmed.slice(0, prefix.length)}${closeTag}${trailingText}`;
+          }
+          return `${openTag}${innerText}${closeTag}`;
+        }
+      }
+
+      // If user isn't found, do NOT blindly split at whitespace (which breaks multi-word names like "Bea Bianca")!
       return `${openTag}${innerText}${closeTag}`;
     }
   );

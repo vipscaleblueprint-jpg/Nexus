@@ -58,24 +58,66 @@ export function UserMentionChip({ userId, children }: UserMentionChipProps) {
     return text;
   };
 
-  // Split children if text extends beyond the mention name (e.g. "@Pau2x to double check")
+  // Sort workspaceUsers by name length descending so multi-word names match first
+  const sortedWorkspaceUsers = React.useMemo(
+    () => [...workspaceUsers].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0)),
+    [workspaceUsers]
+  );
+
+  // Resolve user first so we know their full name (which can be multi-word like "Bea Bianca")
+  const rawText = typeof children === 'string' ? children.trim() : '';
+  const cleanRawText = typeof rawText === 'string' ? rawText.replace(/^\s*@/, '').trim() : '';
+
+  const user = userFromIndex || (
+    cleanRawText
+      ? sortedWorkspaceUsers.find(u => {
+          if (!u.name) return false;
+          const uName = u.name.trim().toLowerCase();
+          return cleanRawText.toLowerCase() === uName || cleanRawText.toLowerCase().startsWith(uName + ' ');
+        })
+      : undefined
+  );
+
   let mentionText: React.ReactNode = children;
   let trailingText: React.ReactNode = null;
 
   if (typeof children === 'string') {
-    const match = children.match(/^(\s*@[^\s<]+)([\s\S]*)$/);
-    if (match) {
-      mentionText = match[1];
-      trailingText = match[2];
+    const trimmed = children.trimStart();
+    const hasAt = trimmed.startsWith('@');
+    const targetName = user?.name?.trim();
+
+    if (targetName) {
+      const prefix = hasAt ? `@${targetName}` : targetName;
+      if (trimmed.toLowerCase().startsWith(prefix.toLowerCase())) {
+        mentionText = trimmed.slice(0, prefix.length);
+        const rem = trimmed.slice(prefix.length);
+        trailingText = rem.length > 0 ? rem : null;
+      } else {
+        mentionText = children;
+        trailingText = null;
+      }
+    } else {
+      // If user isn't found in index, check if any workspace user's name matches the prefix
+      const matched = sortedWorkspaceUsers.find(u => {
+        if (!u.name) return false;
+        const prefix = hasAt ? `@${u.name.trim()}` : u.name.trim();
+        return trimmed.toLowerCase().startsWith(prefix.toLowerCase());
+      });
+
+      if (matched?.name) {
+        const prefix = hasAt ? `@${matched.name.trim()}` : matched.name.trim();
+        mentionText = trimmed.slice(0, prefix.length);
+        const rem = trimmed.slice(prefix.length);
+        trailingText = rem.length > 0 ? rem : null;
+      } else {
+        // Do NOT split at first space - keep the full text so multi-word names aren't chopped!
+        mentionText = children;
+        trailingText = null;
+      }
     }
   }
 
   const cleanMentionName = stripLeadingAt(mentionText);
-  const user = userFromIndex || (
-    typeof cleanMentionName === 'string' && cleanMentionName.trim()
-      ? workspaceUsers.find(u => u.name && u.name.trim().toLowerCase() === cleanMentionName.trim().toLowerCase())
-      : undefined
-  );
   const displayName = user?.name || cleanMentionName || 'User';
 
   // Check if this mention is directed to the logged in user

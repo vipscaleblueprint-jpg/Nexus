@@ -44,6 +44,10 @@ const TaskMapUpworkView = dynamic(
   () => import('./TaskMapUpworkView').then((m) => m.TaskMapUpworkView),
   { ssr: false }
 );
+const TaskMapDailyTrackerView = dynamic(
+  () => import('./TaskMapDailyTrackerView').then((m) => m.TaskMapDailyTrackerView),
+  { ssr: false }
+);
 import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
 
 const TaskDetailModal = dynamic(
@@ -161,7 +165,7 @@ export const TaskMapContainer: React.FC = () => {
     }
     return getTodayDateStr();
   });
-  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK'>('BOARD');
+  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER'>('BOARD');
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -894,7 +898,7 @@ export const TaskMapContainer: React.FC = () => {
   }, [loadData, currentDate, historyDates]);
 
   const handleViewChange = useCallback(
-    (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK') => {
+    (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER') => {
       setCurrentView(nextView);
       if (nextView === 'BOARD') {
         setSelectedTaskModal(null);
@@ -2014,6 +2018,15 @@ export const TaskMapContainer: React.FC = () => {
               showAdminTasks={showAdminTasks}
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
               search={search}
+            />
+          ) : currentView === 'DAILY_TRACKER' ? (
+            <TaskMapDailyTrackerView
+              tasks={displayedTasks.filter((t) => !t.isSubtask)}
+              allTasks={tasks}
+              allUsers={allUsers}
+              clients={clients}
+              onOpenDetail={handleOpenTaskDetail}
+              onRefresh={() => loadData(true)}
             />
           ) : (
             <TaskMapUpworkView

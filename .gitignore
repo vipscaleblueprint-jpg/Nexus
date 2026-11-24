@@ -292,3 +292,4 @@ Nexus/nexus-database.env
 Nexus/nexus.env
 frontend/scripts/scratch/nexus-sync-to-spreadsheet.n8n.json
 frontend/scripts/scratch/AutoInputSpreadsheet.json
+frontend/scripts/scratch/Nexus.code-workspace

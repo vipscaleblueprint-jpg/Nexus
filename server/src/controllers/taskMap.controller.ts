@@ -127,7 +127,12 @@ async function triggerN8nStartTaskWebhook(params: {
   taskLink?: string | null;
   status?: string;
   timeIn?: string;
+  timeOut?: string | null;
+  taskDeliverablesDescription?: string | null;
+  taskUpdateAndDeliverables?: string | null;
+  description?: string | null;
   date?: string;
+  mode?: 'START' | 'STOP' | 'UPDATE';
 }) {
   const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
   try {
@@ -136,7 +141,7 @@ async function triggerN8nStartTaskWebhook(params: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
-    logger.info(`[n8n Sync] Triggered n8n start task webhook for ${params.userName}: HTTP ${res.status}`);
+    logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);
   } catch (err: any) {
     logger.warn(`[n8n Sync] Warning: failed to trigger n8n webhook: ${err.message}`);
   }
@@ -1645,7 +1650,7 @@ const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
 export const updateTaskStatuses = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { statuses } = req.body;
+    const { statuses, taskDeliverablesDescription, taskUpdateAndDeliverables, timeOut } = req.body;
     const user = (req as any).user;
 
     if (!Array.isArray(statuses)) {
@@ -1657,10 +1662,19 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const actorUser = user?.id
       ? await prisma.user.findUnique({
           where: { id: user.id },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, dailySheetUrl: true },
         })
       : null;
     const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
+
+    const nowManilaTime = timeOut
+      ? String(timeOut).trim()
+      : new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        }).format(new Date());
 
     const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
     const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
@@ -1733,9 +1747,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       const subtask = await prisma.subtask.findUnique({
         where: { id: target.entityId },
         include: {
-          assignees: { select: { id: true, name: true, roles: true } },
-          User: { select: { id: true, name: true, roles: true } },
-          task: { select: { id: true, title: true } },
+          assignees: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
+          User: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
+          task: { select: { id: true, title: true, listId: true, list: { select: { id: true, name: true } } } },
         },
       });
       if (!subtask) {
@@ -1785,17 +1799,42 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
         for (const r of pmReviews) {
           if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id && r.timeIn && !r.timeOut) {
-            try {
-              r.timeOut = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'Asia/Manila',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              }).format(new Date());
-            } catch {
-              r.timeOut = '11:59 PM';
-            }
+            r.timeOut = nowManilaTime;
+            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
           }
+          if (r?.type === 'UPWORK_SESSION' && r?.subtaskId === subtask.id && r.active) {
+            r.active = false;
+            r.stoppedAt = new Date().toISOString();
+          }
+        }
+        const subUser = subtask.User || (subtask.assignees && subtask.assignees[0]);
+        const subNamesToClear = [actorDisplayName, subUser?.name].filter(Boolean) as string[];
+        for (const n of subNamesToClear) {
+          await deleteMaActiveSession(n).catch(() => {});
+          const clearedPayload = { maName: n, cleared: true, taskId: target.rawId };
+          io.emit('ma:session_updated', clearedPayload);
+          io.emit('task_map:ma_progress_changed', clearedPayload);
+          io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.rawId });
+        }
+        if (isHandoverSubStatus || isWorkflowTransferOut) {
+          triggerN8nStartTaskWebhook({
+            userId: subtask.assigneeId || subUser?.id || user?.id,
+            userName: subUser?.name || actorDisplayName,
+            userEmail: (subUser as any)?.email || actorUser?.email,
+            dailySheetUrl: (subUser as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
+            taskId: subtask.taskId,
+            subtaskId: subtask.id,
+            taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
+            clientName: (subtask.task as any)?.list?.name || 'General',
+            taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
+            status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+            timeOut: nowManilaTime,
+            taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+            taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
+            description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : subtask.title || '',
+            mode: 'STOP',
+          });
         }
         if (isClosedSubStatus) {
           await prisma.subtask.update({
@@ -1883,9 +1922,11 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       where: { id },
       select: {
         title: true,
+        listId: true,
+        list: { select: { id: true, name: true } },
         assigneeId: true,
-        assignees: { select: { id: true, name: true, roles: true } },
-        assignee: { select: { id: true, name: true, email: true, roles: true } },
+        assignees: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
+        assignee: { select: { id: true, name: true, email: true, roles: true, dailySheetUrl: true } },
       },
     });
 
@@ -2063,19 +2104,12 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
         // Clock out any open sheet progress and close Upwork session on handover / transfer
         for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && r.timeIn && !r.timeOut) {
-            try {
-              r.timeOut = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'Asia/Manila',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              }).format(new Date());
-            } catch {
-              r.timeOut = '11:59 PM';
-            }
+          if (r?.type === 'SHEET_PROGRESS' && !r?.subtaskId && r.timeIn && !r.timeOut) {
+            r.timeOut = nowManilaTime;
+            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
           }
-          if (r?.type === 'UPWORK_SESSION' && r.active) {
+          if (r?.type === 'UPWORK_SESSION' && !r?.subtaskId && r.active) {
             r.active = false;
             r.stoppedAt = new Date().toISOString();
           }
@@ -2088,6 +2122,25 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         io.emit('ma:session_updated', clearedPayload);
         io.emit('task_map:ma_progress_changed', clearedPayload);
         io.emit('task_map:updated', { maSession: clearedPayload, taskId: id });
+      }
+      if (isHandoverSubStatus || isWorkflowTransferOut) {
+        const primaryAssignee = currentTask?.assignee || (currentTask?.assignees && currentTask.assignees[0]);
+        triggerN8nStartTaskWebhook({
+          userId: currentTask?.assigneeId || primaryAssignee?.id || user?.id,
+          userName: primaryAssignee?.name || actorDisplayName,
+          userEmail: primaryAssignee?.email || actorUser?.email,
+          dailySheetUrl: (primaryAssignee as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
+          taskId: id,
+          taskTitle: currentTask?.title || 'Task',
+          clientName: (currentTask as any)?.list?.name || 'General',
+          taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
+          status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+          timeOut: nowManilaTime,
+          taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+          taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
+          description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : currentTask?.title || '',
+          mode: 'STOP',
+        });
       }
       if (isRedisReady()) {
         await redis.hdel('task_map:upwork_active', id).catch(() => {});
@@ -4933,4 +4986,174 @@ export const getClientLockStatusHandler = async (req: Request, res: Response) =>
   const status = await checkClientLockStatus(clientName);
   return res.json(status);
 };
+
+/**
+ * Returns the daily schedule spreadsheet configuration for the given or current user.
+ * Resolves `dailySheetUrl` directly from the User record in PostgreSQL.
+ */
+export const getUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const targetUserId = (req.query.userId as string) || user?.id;
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, name: true, email: true, dailySheetUrl: true, avatarUrl: true, roles: true },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const rawUrl = targetUser.dailySheetUrl || '';
+    const match = rawUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    const spreadsheetId = match ? match[1] : null;
+
+    return res.json({
+      success: true,
+      userId: targetUser.id,
+      userName: targetUser.name,
+      userEmail: targetUser.email,
+      dailySheetUrl: targetUser.dailySheetUrl || null,
+      spreadsheetId,
+      hasSpreadsheetLink: Boolean(targetUser.dailySheetUrl && targetUser.dailySheetUrl.trim()),
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * Handles explicit schedule row sync from frontend to spreadsheet / n8n
+ */
+export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => {
+  try {
+    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, userId } = req.body;
+    const user = (req as any).user;
+
+    const targetUserId = userId || user?.id;
+    const actorUser = targetUserId
+      ? await prisma.user.findUnique({
+          where: { id: targetUserId },
+          select: { id: true, name: true, email: true, dailySheetUrl: true },
+        })
+      : null;
+    const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
+
+    const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+
+    // Strict validation: Select client and task first before time in and out
+    if (targetRow) {
+      const hasTime = Boolean(
+        (targetRow.timeIn && String(targetRow.timeIn).trim()) ||
+        (targetRow.timeOut && String(targetRow.timeOut).trim())
+      );
+      const clientStr = (targetRow.client || '').toString().trim();
+      const taskStr = (targetRow.task || '').toString().trim();
+      const hasClient = Boolean(clientStr && clientStr.toLowerCase() !== 'general' && clientStr.toLowerCase() !== 'no client inputted');
+      const hasTask = Boolean(taskStr && taskStr.toLowerCase() !== 'task' && taskStr.toLowerCase() !== 'no task inputted');
+
+      if (hasTime && (!hasClient || !hasTask)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Select client and task first before time in and out',
+          fieldErrors: {
+            ...(!hasClient ? { client: 'Client must be selected first' } : {}),
+            ...(!hasTask ? { task: 'Task must be selected first' } : {}),
+          },
+        });
+      }
+    }
+
+    const cleanTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
+    if (cleanTaskId) {
+      const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
+      let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
+
+      if (targetRow) {
+        const nowTimeOut = targetRow.timeOut || new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        }).format(new Date());
+
+        let matched = false;
+        for (const r of pmReviews) {
+          if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
+            if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
+              r.timeOut = nowTimeOut;
+              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+              matched = true;
+            } else if (!r.timeOut) {
+              r.timeOut = nowTimeOut;
+              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+              matched = true;
+            }
+          }
+        }
+        if (!matched && mode === 'STOP') {
+          pmReviews.push({
+            type: 'SHEET_PROGRESS',
+            taskId: cleanTaskId,
+            subtaskId: subtaskId || null,
+            timeIn: targetRow.timeIn || '',
+            timeOut: nowTimeOut,
+            client: targetRow.client || 'General',
+            task: targetRow.task || 'Task',
+            taskDeliverables: targetRow.taskDeliverablesDescription || null,
+            taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        await updateTaskMapRecord(cleanTaskId, { pmReviews });
+      }
+
+      if (mode === 'STOP') {
+        await deleteMaActiveSession(actorDisplayName).catch(() => {});
+        const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
+      }
+    }
+
+    // Always forward row to n8n webhook for realtime spreadsheet update based on user's dailySheetUrl from database
+    if (targetRow) {
+      triggerN8nStartTaskWebhook({
+        userId: actorUser?.id || user?.id,
+        userName: actorDisplayName,
+        userEmail: actorUser?.email,
+        dailySheetUrl: actorUser?.dailySheetUrl,
+        taskId: cleanTaskId || taskId || 'general-task',
+        subtaskId: subtaskId || null,
+        taskTitle: targetRow.task || 'Task',
+        clientName: targetRow.client || 'General',
+        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : ''),
+        status: targetRow.taskStatus || mode,
+        timeIn: targetRow.timeIn,
+        timeOut: targetRow.timeOut,
+        taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
+        description: targetRow.taskDeliverablesDescription || targetRow.task,
+        date: targetRow.date,
+        mode: mode || (targetRow.timeOut ? 'STOP' : 'START'),
+      });
+    }
+
+    return res.json({
+      success: true,
+      rows: rows || [],
+      isSplitAcrossMidnight: Boolean(isSplitAcrossMidnight),
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in syncSpreadsheetRowHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 

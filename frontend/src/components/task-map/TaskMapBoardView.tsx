@@ -32,6 +32,7 @@ import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
 import { ClientOtpModal } from '../modals/ClientOtpModal';
+import { TaskDeliverablesModal } from '../modals/TaskDeliverablesModal';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
@@ -1166,6 +1167,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
     targetUserId: null,
     mode: 'QUEUE',
   });
+
+  const [deliverablesModalTarget, setDeliverablesModalTarget] = useState<{
+    task: TaskMapItem;
+    targetStatus: 'To Review' | 'Hand-over';
+    user?: any;
+    nextStatuses?: string[];
+    realTaskId?: string;
+  } | null>(null);
   const collapsedStorageKey = currentUser?.id
     ? `nexus_taskmap_collapsed_columns_v2_${currentUser.id}`
     : 'nexus_taskmap_collapsed_columns_v2';
@@ -2400,6 +2409,160 @@ export const TaskMapBoardView: React.FC<Props> = ({
     return list;
   };
 
+  const handleDeliverablesSubmit = async (data: {
+    taskDeliverablesDescription: string;
+    taskUpdateAndDeliverables: string;
+    timeOut: string;
+  }) => {
+    if (!deliverablesModalTarget) return;
+    const { task, targetStatus, user: modalUser, realTaskId } = deliverablesModalTarget;
+    const isHandover = targetStatus.toLowerCase().replace(/[\s_-]+/g, '') === 'handover';
+    const effectiveTaskId = realTaskId || task.id;
+    const nowTimeOut = data.timeOut || formatManilaTime(new Date());
+
+    // 1. If it's an assumption block
+    if (task.isAssumptionBlock) {
+      const targetMainStatus = isHandover ? (toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS') : 'IN REVIEW';
+      task.status = targetMainStatus;
+      task.taskMap = {
+        ...task.taskMap,
+        statuses: [targetStatus],
+        ...(isHandover ? { handedOver: true } : {}),
+      };
+      if (task.progress) {
+        task.progress.timeOut = nowTimeOut;
+        task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
+        task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
+      }
+      const uName = modalUser?.name || task.assignee?.name || currentUser?.name;
+      if (uName) {
+        const sKey = uName.trim().toLowerCase();
+        const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
+        useAppStore.getState().updateMaActiveSession(uName, {
+          ...prevSess,
+          taskStatus: targetMainStatus,
+          status: targetMainStatus,
+          subStatuses: [targetStatus],
+          timeOut: nowTimeOut,
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+          cleared: true,
+        });
+        useAppStore.getState().updateMaActiveSession(uName, null);
+      }
+
+      const linkedId =
+        task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+          ? task.linkedTaskId
+          : null;
+      if (linkedId) {
+        await taskMapApi.updateTaskStatuses(linkedId, [targetStatus], {
+          timeOut: nowTimeOut,
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        }).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(linkedId, {
+            assigneeId: null,
+            status: targetMainStatus,
+          });
+        }
+      }
+
+      // Also trigger sheet schedule row sync
+      taskMapApi.syncScheduleToSpreadsheet({
+        taskId: linkedId || task.id,
+        subtaskId: task.subtaskId || null,
+        taskTitle: task.title,
+        clientName: task.progress?.client || task.list?.name || 'General',
+        status: targetStatus,
+        mode: 'STOP',
+        stoppedAt: new Date(),
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+      }).catch(console.error);
+
+      toast.success(
+        isHandover
+          ? `Task handed over — clocked out at ${nowTimeOut}`
+          : `Deliverables submitted to Review — clocked out at ${nowTimeOut}`
+      );
+      setDeliverablesModalTarget(null);
+      return;
+    }
+
+    // 2. Real task or subtask
+    onStatusChange(effectiveTaskId, [targetStatus]);
+    if (task.progress) {
+      task.progress.timeOut = nowTimeOut;
+      task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
+      task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
+    }
+
+    const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
+    const targetAssigneeUser = modalUser?.name ? modalUser : task.assignee;
+    if (targetAssigneeUser?.name) {
+      useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
+    }
+
+    if (isHandover) {
+      const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+      if (onTaskUpdate) {
+        await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
+      } else {
+        await tasksApi.updateTask(effectiveTaskId, { assigneeId: null } as any).catch(console.error);
+        onDataRefresh();
+      }
+      await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], {
+        timeOut: nowTimeOut,
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+      }).catch(console.error);
+
+      toast.info(`Task handed over — clocked out at ${nowTimeOut}`);
+    } else {
+      // To Review
+      if (ownerId) {
+        setRecentlyMovedToReviewByUser((prev) => {
+          const existing = prev[ownerId] || [];
+          if (existing.some((t) => t.id === effectiveTaskId)) return prev;
+          return {
+            ...prev,
+            [ownerId]: [{ ...task, status: 'IN REVIEW', assigneeId: null }, ...existing],
+          };
+        });
+      }
+      if (onTaskUpdate) {
+        await onTaskUpdate(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null });
+      } else {
+        await tasksApi.updateTask(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null } as any).catch(console.error);
+        onDataRefresh();
+      }
+      await taskMapApi.updateTaskStatuses(effectiveTaskId, ['To Review'], {
+        timeOut: nowTimeOut,
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+      }).catch(console.error);
+
+      toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
+    }
+
+    // Trigger syncScheduleToSpreadsheet
+    taskMapApi.syncScheduleToSpreadsheet({
+      taskId: effectiveTaskId,
+      subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
+      taskTitle: task.title,
+      clientName: task.progress?.client || task.list?.name || 'General',
+      status: targetStatus,
+      mode: 'STOP',
+      stoppedAt: new Date(),
+      taskDeliverablesDescription: data.taskDeliverablesDescription,
+      taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+    }).catch(console.error);
+
+    setDeliverablesModalTarget(null);
+  };
+
   const handleTaskMapSubStatusToggle = async (
     task: TaskMapItem,
     label: string,
@@ -2409,6 +2572,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (task.isAssumptionBlock) {
       const isSelecting = (nextStatuses || []).includes(label);
       const cleanNext = isSelecting ? [label] : [];
+      const norm = label.trim().toLowerCase();
+      const compactNorm = norm.replace(/[\s_-]+/g, '');
+      if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+        setDeliverablesModalTarget({
+          task,
+          targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
+          user,
+          nextStatuses: cleanNext,
+        });
+        return;
+      }
       task.taskMap.statuses = cleanNext;
       if (user?.name) {
         const sKey = (user.name || '').trim().toLowerCase();
@@ -2430,6 +2604,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const isSelecting = (nextStatuses || []).includes(label);
     const cleanNext = isSelecting ? [label] : [];
     const norm = label.trim().toLowerCase();
+    const compactNorm = norm.replace(/[\s_-]+/g, '');
+
+    // Intercept Hand Over & To Review selection for deliverables input & clock out
+    if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+      setDeliverablesModalTarget({
+        task,
+        targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
+        user,
+        nextStatuses: cleanNext,
+      });
+      return;
+    }
 
     // 0. Available Task: unassigns the MA/PM (assigneeId = null), preserves main status, moves back to Available Tasks
     if (norm === 'available task' || norm === 'availabletask') {
@@ -2465,7 +2651,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
     onStatusChange(task.id, cleanNext);
 
     // 1. Hand Over: stays at main status, transfers to Available Tasks so PMs can reassign to other MAs
-    const compactNorm = norm.replace(/[\s_-]+/g, '');
     if (compactNorm === 'handover') {
       if (isSelecting) {
         const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
@@ -2985,10 +3170,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   listId={task.listId || task.list?.id}
                                   listStatuses={task.list?.statuses}
                                   onSelect={(newStatus: string) => {
-                                    let effectiveStatus = newStatus;
-                                    if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                      effectiveStatus = 'In Review';
+                                    const normNew = newStatus.toLowerCase().replace(/[\s_-]+/g, '');
+                                    if (normNew === 'toreview' || normNew === 'inreview' || normNew === 'handover') {
+                                      setDeliverablesModalTarget({
+                                        task,
+                                        targetStatus: normNew === 'handover' ? 'Hand-over' : 'To Review',
+                                        realTaskId: task.id,
+                                      });
+                                      return;
                                     }
+                                    let effectiveStatus = newStatus;
                                     if (onTaskUpdate) {
                                       onTaskUpdate(task.id, { status: effectiveStatus });
                                     } else {
@@ -3644,18 +3835,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 listId={realListId || undefined}
                                 listStatuses={task.list?.statuses}
                                 onSelect={(newStatus: string) => {
-                                  let effectiveStatus = newStatus;
-                                  if (newStatus.toLowerCase() === 'to review' || newStatus.toLowerCase() === 'to_review') {
-                                    effectiveStatus = 'In Review';
-                                    setRecentlyMovedToReviewByUser((prev) => {
-                                      const existing = prev[userId] || [];
-                                      if (existing.some((t) => t.id === task.id)) return prev;
-                                      return {
-                                        ...prev,
-                                        [userId]: [{ ...task, status: effectiveStatus, assigneeId: null }, ...existing],
-                                      };
+                                  const normNew = newStatus.toLowerCase().replace(/[\s_-]+/g, '');
+                                  if (normNew === 'toreview' || normNew === 'inreview' || normNew === 'handover') {
+                                    setDeliverablesModalTarget({
+                                      task,
+                                      targetStatus: normNew === 'handover' ? 'Hand-over' : 'To Review',
+                                      user,
+                                      realTaskId: realTaskId || task.id,
                                     });
+                                    return;
                                   }
+                                  let effectiveStatus = newStatus;
                                   const isClosing = isClosedStatus(effectiveStatus);
                                   if (task.isAssumptionBlock) {
                                     task.status = effectiveStatus;
@@ -4045,6 +4235,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
           }
         }}
       />
+
+      {/* Task Deliverables & Clock-Out Submission Modal */}
+      {deliverablesModalTarget && (
+        <TaskDeliverablesModal
+          isOpen={!!deliverablesModalTarget}
+          onClose={() => setDeliverablesModalTarget(null)}
+          onSubmit={handleDeliverablesSubmit}
+          taskTitle={deliverablesModalTarget.task.title}
+          clientName={deliverablesModalTarget.task.progress?.client || deliverablesModalTarget.task.list?.name || ''}
+          targetStatus={deliverablesModalTarget.targetStatus}
+          initialDeliverables={deliverablesModalTarget.task.progress?.taskDeliverablesDescription || deliverablesModalTarget.task.title}
+          initialUpdate={deliverablesModalTarget.task.progress?.taskUpdateAndDeliverables || ''}
+          userName={deliverablesModalTarget.user?.name || deliverablesModalTarget.task.assignee?.name}
+        />
+      )}
     </DndContext>
   );
 };

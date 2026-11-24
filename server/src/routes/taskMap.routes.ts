@@ -31,6 +31,8 @@ import {
   getMyDailyOtpHandler,
   verifyClientOtpHandler,
   getClientLockStatusHandler,
+  syncSpreadsheetRowHandler,
+  getUserDailyScheduleConfigHandler,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -76,3 +78,7 @@ taskMapRouter.post('/crm/follow-ups/:id/respond', respondCrmFollowUpHandler);
 taskMapRouter.get('/my-daily-otp', getMyDailyOtpHandler);
 taskMapRouter.post('/verify-client-otp', verifyClientOtpHandler);
 taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);
+
+// Spreadsheet Schedule Row Sync & User Config
+taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
+taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);

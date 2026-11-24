@@ -180,7 +180,9 @@ async function applyDecisions(opts: {
       }
       const res = await invokeHandler(assignTaskMapTask, {
         params: { id: d.taskId },
-        body: { assigneeId: d.userId, mode: 'QUEUE' },
+        // Pass the task's roles as they are: otherwise the assign handler adds the assignee's first
+        // role (e.g. Leo's "Harmony") to the task, and later runs would only match that role.
+        body: { assigneeId: d.userId, mode: 'QUEUE', assigneeRoleRestrictions: item.assigneeRoleRestrictions || [] },
         user: opts.bot,
       });
       if (res.status !== 200 || !res.body?.success) {

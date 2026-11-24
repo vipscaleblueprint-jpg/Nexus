@@ -229,6 +229,8 @@ const time = (d?: string | Date | null) => (d ? new Date(d).getTime() : NaN);
 export function orderPoolForQueue(pool: BoardItem[]): BoardItem[] {
   return pool
     .filter(isMaWorkItem)
+    // Already started (e.g. handed over mid-work): queueing would reset it to Pending, so PMs place these
+    .filter((t) => !isStarted(t))
     .slice()
     .sort((a, b) => {
       const pa = PRIORITY_RANK[norm(a.priority)] ?? 2;

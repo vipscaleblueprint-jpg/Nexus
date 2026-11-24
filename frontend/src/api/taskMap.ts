@@ -644,16 +644,23 @@ export function applyOptimisticTaskMapAssignment(
     ...(task.assignees || []).filter((u: any) => u && u.id !== targetUser.id),
   ];
 
-  const sameWorkerProgress = Boolean(
-    task.progress?.maName &&
-    targetUser.name &&
-    task.progress.maName.trim().toLowerCase() === targetUser.name.trim().toLowerCase()
-  );
   const nextProgress =
     mode === 'IN_PROGRESS'
-      ? sameWorkerProgress
-        ? task.progress
-        : null
+      ? {
+          timeIn: formatManilaTime(new Date()),
+          timeOut: null,
+          isMissingTime: false,
+          isUpwork: Boolean(task.progress?.isUpwork),
+          client: task.progress?.client || task.list?.name || 'General',
+          timeTracker: task.progress?.timeTracker || 'No Need to Track',
+          maName: targetUser.name || 'Team Member',
+          status: 'In Progress',
+          date: formatManilaDateLong(new Date()),
+          taskDeliverables: task.title,
+          taskUpdateAndDeliverables: '',
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
       : task.progress
         ? {
           ...task.progress,

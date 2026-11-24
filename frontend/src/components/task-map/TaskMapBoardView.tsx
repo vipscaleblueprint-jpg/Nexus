@@ -273,6 +273,16 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
     return true;
   }
 
+  // 3. Task is explicitly set to In Progress for this user
+  const isAssignedToUser = doesProgressMatchUser(task.assignee?.name, userName);
+  const isStatusInProgress =
+    (task.status || '').toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS' ||
+    statuses.some((s) => s.replace(/[\s_-]+/g, '') === 'INPROGRESS');
+
+  if (isAssignedToUser && isStatusInProgress) {
+    return true;
+  }
+
   return false;
 };
 

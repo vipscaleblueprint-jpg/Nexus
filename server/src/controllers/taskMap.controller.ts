@@ -2329,6 +2329,50 @@ async function executeTaskMapAssignment(
           updatedSubtask.User?.id === assigneeId
             ? updatedSubtask.User
             : (updatedSubtask.assignees || []).find((u: any) => u.id === assigneeId);
+
+        if (mode === 'IN_PROGRESS') {
+          const nowManilaTime = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Manila',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          }).format(new Date());
+
+          const nowManilaDate = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Manila',
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          }).format(new Date());
+
+          const existingSubProgIdx = reviewsList.findIndex(
+            (r: any) => r?.type === 'SHEET_PROGRESS' && r?.subtaskId === currentSubtask.id
+          );
+          const liveSubProg = {
+            type: 'SHEET_PROGRESS',
+            subtaskId: currentSubtask.id,
+            timeIn: nowManilaTime,
+            timeOut: null,
+            isMissingTime: false,
+            isUpwork: false,
+            client: currentSubtask.task?.list?.name || 'General',
+            timeTracker: 'No Need to Track',
+            maName: targetSubUser?.name || actorName,
+            status: 'In progress',
+            date: nowManilaDate,
+            taskDeliverables: currentSubtask.title,
+            taskUpdateAndDeliverables: null,
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          if (existingSubProgIdx !== -1) {
+            reviewsList[existingSubProgIdx] = { ...reviewsList[existingSubProgIdx], ...liveSubProg };
+          } else {
+            reviewsList.push(liveSubProg);
+          }
+        }
+
         if (!isReviewOrCrmSub && targetSubUser && !isNonMaReviewerOnlyRole(targetSubUser as any)) {
           reviewsList = upsertOriginalMaEntry(reviewsList, {
             userId: targetSubUser.id,
@@ -2749,6 +2793,46 @@ async function executeTaskMapAssignment(
         mode: mode || 'QUEUE',
         assignedAt: new Date().toISOString(),
       });
+
+      if (mode === 'IN_PROGRESS') {
+        const nowManilaTime = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        }).format(new Date());
+
+        const nowManilaDate = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }).format(new Date());
+
+        const existingProgIdx = reviewsList.findIndex((r: any) => r?.type === 'SHEET_PROGRESS' && !r?.subtaskId);
+        const liveProg = {
+          type: 'SHEET_PROGRESS',
+          timeIn: nowManilaTime,
+          timeOut: null,
+          isMissingTime: false,
+          isUpwork: false,
+          client: updatedTask.list?.name || 'General',
+          timeTracker: 'No Need to Track',
+          maName: updatedTask.assignee?.name || actorName,
+          status: 'In progress',
+          date: nowManilaDate,
+          taskDeliverables: updatedTask.title,
+          taskUpdateAndDeliverables: null,
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (existingProgIdx !== -1) {
+          reviewsList[existingProgIdx] = { ...reviewsList[existingProgIdx], ...liveProg };
+        } else {
+          reviewsList.push(liveProg);
+        }
+      }
 
       const taskStatusNorm = (updatedTask.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       const isReviewOrCrmTask = [

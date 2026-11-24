@@ -25,6 +25,7 @@ import {
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
   formatManilaTime,
+  getManilaDateKey,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -152,6 +153,7 @@ interface Props {
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
   onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string, taskOverride?: TaskMapItem) => Promise<void> | void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
+  currentDate?: string;
   isHistory?: boolean;
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
@@ -1081,6 +1083,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   onTaskUpdate,
   onAssignTask,
   onTransferTask,
+  currentDate,
   isHistory = false,
   search = '',
   trackFilter = 'ALL',
@@ -1596,6 +1599,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       // must NEVER remain in Task Map user/PM columns, even if prior progress exists.
       if (!task.isAssumptionBlock && isOtherBoardWorkflowStatus(task)) return;
 
+      // Handed-over tasks must NEVER remain in user columns or queues
+      if (!task.isAssumptionBlock && isTaskHandedOver(task)) return;
+
       const effectiveHandlerId = isHistory
         ? (task.assignee?.id || task.assigneeId || getEffectiveTaskMapHandlerId(task))
         : getEffectiveTaskMapHandlerId(task);
@@ -1604,7 +1610,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         : undefined;
       const isAdmin = isTaskUnderAdmin(task);
       const isDev = isDeveloperUser(targetUser, workspaceTeams);
-      const hasSheetInput = hasSpreadsheetTaskInput(task, { isHistory, now: boardTime });
+      const hasSheetInput = hasSpreadsheetTaskInput(task, { isHistory, now: boardTime, targetDate: currentDate });
       if (!effectiveShowAdmin && isAdmin && !isDev && !hasSheetInput) return;
       if (nextPoolIds.has(task.id)) return;
       const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
@@ -1612,8 +1618,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (!hasProgress && isExcludedForUser(task)) return;
 
       // For hidden-by-default admin/dormant/startups/HR tasks inputted from the spreadsheet,
-      // attach strictly to the MA column matching the spreadsheet input.
+      // attach strictly to the MA column matching the spreadsheet input IF not handed over.
       if (!effectiveShowAdmin && isAdmin && !isDev && hasSheetInput) {
+        if (isTaskHandedOver(task)) return;
         const workerCol = findColumnForMa(task.progress?.maName);
         if (
           effectiveHandlerId &&
@@ -1631,7 +1638,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
 
       if (effectiveHandlerId && effectiveHandlerId !== 'unassigned' && userColumnsMap[effectiveHandlerId]) {
-        if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
+        if (!isTaskHandedOver(task) && !userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
           userColumnsMap[effectiveHandlerId].tasks.push(task);
         }
       }
@@ -1838,13 +1845,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
             );
             return hasLiveTask || hasLiveSession;
           }
+          const targetDateForTrack = currentDate || boardTime;
           const hasLoggedTaskToday = allItems.some(
-            (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, boardTime)
+            (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, targetDateForTrack)
           );
           const hasLoggedSessionToday = Boolean(
             activeSession &&
             (activeSession.timeIn || activeSession.timeOut) &&
-            isProgressLoggedToday(activeSession, boardTime)
+            isProgressLoggedToday(activeSession, targetDateForTrack)
           );
           return hasLoggedTaskToday || hasLoggedSessionToday;
         }
@@ -3055,7 +3063,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             // except the General Task (assumption block) or real tasks inputted by this MA from the spreadsheet!
             const isAdmin = isTaskUnderAdmin(t);
             const hasUserSheetInput = Boolean(
-              hasSpreadsheetTaskInput(t, { isHistory, now: boardTime }) &&
+              hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate }) &&
               doesProgressMatchUser(t.progress?.maName, user.name)
             );
             if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !searchQuery) return false;
@@ -3288,13 +3296,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
               {(() => {
                 const sorted = sortColumnTasks(filteredUserTasks, user.name);
                 const activeInProgTask = sorted.find((t) => isTaskActiveInProgress(t, user.name));
-                const queuedTasks = sorted.filter((t) => t.id !== activeInProgTask?.id);
+                const queuedTasks = sorted.filter((t) => t.id !== activeInProgTask?.id && !isTaskHandedOver(t));
                 const reviewStatusSet = new Set(['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING']);
                 const activeAndQueuedIds = new Set(sorted.map((t) => t.id));
                 const toReviewMap = new Map<string, TaskMapItem>();
-                for (const t of recentlyMovedToReviewByUser[userId] || []) {
-                  if (!activeAndQueuedIds.has(t.id)) {
-                    toReviewMap.set(t.id, t);
+                const isViewingToday = !currentDate || currentDate === getManilaDateKey(new Date());
+                if (isViewingToday) {
+                  for (const t of recentlyMovedToReviewByUser[userId] || []) {
+                    if (!activeAndQueuedIds.has(t.id)) {
+                      toReviewMap.set(t.id, t);
+                    }
                   }
                 }
                 for (const t of tasks) {
@@ -3303,7 +3314,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   if (!reviewStatusSet.has(sNorm)) continue;
                   const matchesWorker =
                     doesProgressMatchUser(t.progress?.maName, user.name) &&
-                    hasSpreadsheetTaskInput(t, { isHistory, now: boardTime });
+                    hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate });
                   if (matchesWorker) {
                     toReviewMap.set(t.id, t);
                   }

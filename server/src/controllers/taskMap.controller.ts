@@ -112,6 +112,37 @@ const CLOSED_OR_EXCLUDED_STATUS_VARIANTS = [
 const inFlightTaskMapQueries = new Map<string, Promise<any>>();
 
 /**
+ * Asynchronously triggers the n8n webhook to append the newly started task row
+ * into the MA's personal Daily Schedule spreadsheet.
+ */
+async function triggerN8nStartTaskWebhook(params: {
+  userId: string;
+  userName: string;
+  userEmail?: string | null;
+  dailySheetUrl?: string | null;
+  taskId: string;
+  subtaskId?: string | null;
+  taskTitle: string;
+  clientName: string;
+  taskLink?: string | null;
+  status?: string;
+  timeIn?: string;
+  date?: string;
+}) {
+  const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
+  try {
+    const res = await fetch(n8nUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    logger.info(`[n8n Sync] Triggered n8n start task webhook for ${params.userName}: HTTP ${res.status}`);
+  } catch (err: any) {
+    logger.warn(`[n8n Sync] Warning: failed to trigger n8n webhook: ${err.message}`);
+  }
+}
+
+/**
  * Fetch all client lists residing under any "Client Dashboard" folder/space in PostgreSQL (cached briefly).
  */
 async function fetchClientDashboardLists(): Promise<Array<{ id: string; name: string }>> {
@@ -430,8 +461,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             },
           },
         },
-        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
         subtasks: {
           where: { completed: false },
@@ -2248,7 +2279,7 @@ async function executeTaskMapAssignment(
       if (assigneeId) {
         const targetUser = await prisma.user.findUnique({
           where: { id: assigneeId },
-          select: { id: true, name: true, roles: true, systemRole: true },
+          select: { id: true, name: true, roles: true, systemRole: true, dailySheetUrl: true, email: true },
         });
         if (!targetUser) {
           return res.status(404).json({ error: 'Target user not found' });
@@ -2281,8 +2312,8 @@ async function executeTaskMapAssignment(
         where: { id: currentSubtask.id },
         data: updateSubData,
         include: {
-          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
         },
       });
 
@@ -2371,6 +2402,22 @@ async function executeTaskMapAssignment(
           } else {
             reviewsList.push(liveSubProg);
           }
+
+          // Trigger n8n webhook asynchronously to append row to MA Daily Schedule
+          triggerN8nStartTaskWebhook({
+            userId: assigneeId,
+            userName: targetSubUser?.name || actorName,
+            userEmail: targetSubUser?.email || actorUser?.email,
+            dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
+            taskId: currentSubtask.taskId,
+            subtaskId: currentSubtask.id,
+            taskTitle: `${currentSubtask.title} (${currentSubtask.task?.title || 'Subtask'})`,
+            clientName: currentSubtask.task?.list?.name || 'General',
+            taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
+            status: 'In Progress',
+            timeIn: nowManilaTime,
+            date: nowManilaDate,
+          });
         }
 
         if (!isReviewOrCrmSub && targetSubUser && !isNonMaReviewerOnlyRole(targetSubUser as any)) {
@@ -2701,7 +2748,7 @@ async function executeTaskMapAssignment(
     if (assigneeId) {
       const targetUser = await prisma.user.findUnique({
         where: { id: assigneeId },
-        select: { id: true, name: true, roles: true, systemRole: true },
+        select: { id: true, name: true, roles: true, systemRole: true, dailySheetUrl: true, email: true },
       });
 
       if (!targetUser) {
@@ -2761,8 +2808,8 @@ async function executeTaskMapAssignment(
             },
           },
         },
-        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
         creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
       },
     });
@@ -2832,6 +2879,21 @@ async function executeTaskMapAssignment(
         } else {
           reviewsList.push(liveProg);
         }
+
+        // Trigger n8n webhook asynchronously to append row to MA Daily Schedule
+        triggerN8nStartTaskWebhook({
+          userId: assigneeId,
+          userName: updatedTask.assignee?.name || actorName,
+          userEmail: updatedTask.assignee?.email || actorUser?.email,
+          dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
+          taskId: id,
+          taskTitle: updatedTask.title,
+          clientName: updatedTask.list?.name || 'General',
+          taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
+          status: 'In Progress',
+          timeIn: nowManilaTime,
+          date: nowManilaDate,
+        });
       }
 
       const taskStatusNorm = (updatedTask.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');

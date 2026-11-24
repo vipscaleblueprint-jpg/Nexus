@@ -221,15 +221,17 @@ export interface TaskMapItem {
 export type TrackFilter = 'ALL' | 'LIVE' | 'ACTIVE';
 
 /**
- * True when a progress/daily-log row is dated today (Manila). Accepts YYYY-MM-DD, ISO strings,
- * or M/D/YYYY sheet dates; falls back to `updatedAt` when the row has no date.
+ * True when a progress/daily-log row is dated for the target date (Manila, defaults to today).
+ * Accepts YYYY-MM-DD, ISO strings, or M/D/YYYY sheet dates; falls back to `updatedAt` when the row has no date.
  */
 export function isProgressLoggedToday(
   prog?: { date?: string | null; updatedAt?: string | null } | null,
-  now: Date = new Date()
+  nowOrTargetDate: Date | string = new Date()
 ): boolean {
   if (!prog) return false;
-  const today = getManilaDateKey(now);
+  const targetDateKey = getManilaDateKey(nowOrTargetDate);
+  if (!targetDateKey) return false;
+
   let key: string | null = null;
   const raw = (prog.date || '').trim();
   const sheet = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -247,7 +249,7 @@ export function isProgressLoggedToday(
   if (!key && prog.updatedAt) {
     key = getManilaDateKey(prog.updatedAt);
   }
-  return !!key && key === today;
+  return !!key && key === targetDateKey;
 }
 
 export interface ShiftUser {
@@ -1773,23 +1775,30 @@ export function isTaskInClientDashboard(
 
 /**
  * Returns true when a task has spreadsheet input recorded for an MA
- * (logged today, recently active without timeOut, or present on a historical snapshot).
+ * (logged on targetDate/today, recently active without timeOut, or present on a historical snapshot).
  */
 export function hasSpreadsheetTaskInput(
   task?: TaskMapItem | null,
-  options?: { isHistory?: boolean; now?: Date }
+  options?: { isHistory?: boolean; now?: Date; targetDate?: Date | string | null }
 ): boolean {
   const prog = task?.progress;
   if (!prog?.maName) return false;
   if (!prog.timeIn && !prog.timeOut && !prog.isMissingTime) return false;
   if (options?.isHistory) return true;
+  const targetDate = options?.targetDate ?? options?.now ?? new Date();
   const now = options?.now ?? new Date();
+  const targetKey = getManilaDateKey(targetDate);
+  const todayKey = getManilaDateKey(now);
+  const isViewingToday = !targetKey || targetKey === todayKey;
+
+  // Recent active live work only applies when viewing today
   const isRecentActive = Boolean(
+    isViewingToday &&
     prog.timeIn &&
     !prog.timeOut &&
     (!prog.updatedAt || now.getTime() - new Date(prog.updatedAt).getTime() <= 14 * 60 * 60 * 1000)
   );
-  return isProgressLoggedToday(prog, now) || isRecentActive;
+  return isProgressLoggedToday(prog, targetDate) || isRecentActive;
 }
 
 export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean {

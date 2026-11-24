@@ -1617,7 +1617,7 @@ export const TaskMapContainer: React.FC = () => {
             t.progress?.maName &&
             !t.progress?.timeOut &&
             t.progress?.timeIn &&
-            hasSpreadsheetTaskInput(t, { isHistory: isHistoryView })
+            hasSpreadsheetTaskInput(t, { isHistory: isHistoryView, targetDate: currentDate })
           );
           return isLiveSheet && matchesClientFilter(t);
         }
@@ -1625,7 +1625,7 @@ export const TaskMapContainer: React.FC = () => {
         const handlerUser =
           (t.assignee && t.assignee.id === handlerId ? t.assignee : null) ||
           allUsers.find((u: any) => u.id === handlerId);
-        const hasSheetInput = hasSpreadsheetTaskInput(t, { isHistory: isHistoryView });
+        const hasSheetInput = hasSpreadsheetTaskInput(t, { isHistory: isHistoryView, targetDate: currentDate });
         const isInProgress =
           (t.status || '').toUpperCase().includes('PROGRESS') ||
           (t.taskMap?.statuses || []).some((s: string) => s.toUpperCase().includes('PROGRESS')) ||
@@ -1637,7 +1637,7 @@ export const TaskMapContainer: React.FC = () => {
 
       return matchesClientFilter(t);
     },
-    [showAdminTasks, isHistoryView, allUsers, workspaceTeams, matchesClientFilter]
+    [showAdminTasks, isHistoryView, currentDate, allUsers, workspaceTeams, matchesClientFilter]
   );
 
   const displayedTasks = React.useMemo(() => {
@@ -1895,6 +1895,8 @@ export const TaskMapContainer: React.FC = () => {
               allUsers={allUsers}
               shiftUsers={shiftUsers}
               currentShift={currentShift}
+              currentDate={currentDate}
+              isHistory={isHistoryView}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
               onOpenDetail={handleOpenTaskDetail}

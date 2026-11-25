@@ -1884,6 +1884,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       // Check if col.tasks already has this task (so we don't synthesize duplicate assumption cards)
       const hasAlreadyInColumn = col.tasks.some((t) => {
         if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) return true;
+        if (activeSession?.subtaskId && t.subtaskId === activeSession.subtaskId) return true;
         if (cleanSessionTask && cleanSessionTask !== 'no task inputted') {
           const tTitle = (t.title || '').trim().toLowerCase();
           if (tTitle === cleanSessionTask) return true;
@@ -1895,6 +1896,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (hasAlreadyInColumn && activeSession && (activeSession.timeIn || activeSession.timeOut)) {
         const existing = col.tasks.find((t) =>
           (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) ||
+          (activeSession?.subtaskId && t.subtaskId === activeSession.subtaskId) ||
           (cleanSessionTask && cleanSessionTask !== 'no task inputted' && (t.title || '').trim().toLowerCase() === cleanSessionTask)
         );
         if (existing && !existing.progress) {
@@ -1927,6 +1929,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (hasHeldSession && !hasActiveAssignedTask && !hasAlreadyInColumn) {
         const matchedLocalTask = [...tasks, ...availablePool].find((t) => {
           if (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) {
+            return true;
+          }
+          if (activeSession?.subtaskId && t.subtaskId === activeSession.subtaskId) {
             return true;
           }
           if (!cleanSessionTask || cleanSessionTask === 'no task inputted') return false;
@@ -2267,8 +2272,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUserId = targetColumnId.replace('in-progress-', '');
       const targetUser = getUserProfile(targetUserId);
 
-      // If already assigned to this user and already active in progress, no-op!
-      if (currentAssigneeId === targetUserId && isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
+      // If already assigned to this user and already live working, no-op!
+      if (currentAssigneeId === targetUserId && isTaskLiveWorking(currentTask as any, targetUser?.name, boardTime)) {
         return;
       }
 

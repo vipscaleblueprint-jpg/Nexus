@@ -7,5 +7,6 @@ Read memory/index.md first. Open only the notes relevant to the task. Do not sea
 - **Workflow & Discipline**: `.agents/rules/core-workflow.mdc` (plan before editing, test and self-review before completing).
 - **Anti-Hallucination**: `.agents/rules/anti-hallucination.mdc` (verify paths and APIs in active source files before claiming facts; never guess).
 - **Frontend Design System**: `frontend/DESIGN.md` (single source of truth for dark-first theme, zinc palette, and component patterns).
+- **Task Map Session & Sheet Sync**: Always read and follow `.agents/skills/task-map-session-sync/SKILL.md` before modifying Task Map start/In-Progress, subtask progress, clock-out, `DailySheetLog`, or n8n spreadsheet sync.
 
 All other topic guides, architecture overviews, security rules, and gotchas are indexed in [[memory/index|memory/index.md]].

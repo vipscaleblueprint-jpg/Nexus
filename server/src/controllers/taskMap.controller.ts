@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
 import { logger } from '../config/logger';
-import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap, deleteMaActiveSession } from '../services/redisService';
+import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap, getMaActiveSession, setMaActiveSession, deleteMaActiveSession } from '../services/redisService';
 import { isReviewStatus } from '../utils/auditChecklist';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
@@ -115,6 +115,139 @@ const CLOSED_OR_EXCLUDED_STATUS_VARIANTS = [
 ];
 
 const inFlightTaskMapQueries = new Map<string, Promise<any>>();
+
+function buildProgressFromSheetLog(sheetLog: any) {
+  if (!sheetLog) return null;
+  return {
+    type: 'SHEET_PROGRESS',
+    dailySheetLogId: sheetLog.id,
+    timeIn: sheetLog.timeIn,
+    timeOut: sheetLog.timeOut,
+    isMissingTime: sheetLog.isMissingTime,
+    isUpwork: sheetLog.isUpwork,
+    client: sheetLog.client,
+    timeTracker: sheetLog.timeTracker,
+    maName: sheetLog.maName,
+    status: sheetLog.status,
+    date: sheetLog.dateDisplay || sheetLog.dateKey,
+    dateKey: sheetLog.dateKey,
+    sheetRow: sheetLog.sheetRow ?? undefined,
+    subtaskId: sheetLog.subtaskId || null,
+    taskDeliverables: sheetLog.taskDeliverables,
+    taskUpdateAndDeliverables: sheetLog.taskUpdateAndDeliverables,
+    isLive: sheetLog.isLive,
+    startedAt: sheetLog.startedAt ? new Date(sheetLog.startedAt).toISOString() : null,
+    updatedAt: sheetLog.submittedAt ? new Date(sheetLog.submittedAt).toISOString() : new Date().toISOString(),
+  };
+}
+
+/**
+ * Closes any older open SHEET_PROGRESS sessions on other TaskMapRecords for the same MA
+ * when starting a new IN_PROGRESS task from the board so no previous card lingers as Live Working.
+ */
+async function closeOtherOpenBoardSessionsForMa(
+  maName: string,
+  excludeTaskId: string,
+  excludeSubtaskId: string | null,
+  closeTimeOut: string
+) {
+  const maKey = (maName || '').trim().toLowerCase();
+  if (!maKey) return;
+  try {
+    const recordsWithReviews = await prisma.taskMapRecord.findMany({
+      where: { pmReviews: { not: null as any } },
+      select: { taskId: true, statuses: true, pmReviews: true },
+    });
+    for (const rec of recordsWithReviews) {
+      let revs = parsePmReviewsArray(rec.pmReviews);
+      let modified = false;
+      let closedMainProgress = false;
+      const closedSubtaskIds: string[] = [];
+
+      revs = revs.map((r: any) => {
+        if (!r || r.type !== 'SHEET_PROGRESS' || !r.timeIn || r.timeOut) return r;
+        const rMa = (r.maName || '').trim().toLowerCase();
+        if (rMa !== maKey) return r;
+        const isCurrentTarget =
+          rec.taskId === excludeTaskId &&
+          (excludeSubtaskId ? r.subtaskId === excludeSubtaskId : !r.subtaskId);
+        if (isCurrentTarget) return r;
+        modified = true;
+        if (r.subtaskId) {
+          closedSubtaskIds.push(r.subtaskId);
+        } else {
+          closedMainProgress = true;
+        }
+        return { ...r, timeOut: closeTimeOut, isLive: false, updatedAt: new Date().toISOString() };
+      });
+
+      if (!modified) continue;
+
+      let nextStatuses = Array.isArray(rec.statuses) ? [...rec.statuses] : [];
+      if (closedMainProgress) {
+        nextStatuses = nextStatuses.filter(
+          (s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+        );
+      }
+      if (closedSubtaskIds.length > 0) {
+        revs = revs.map((r: any) => {
+          if (r?.type === 'SUBTASK_STATE' && closedSubtaskIds.includes(r.subtaskId) && Array.isArray(r.statuses)) {
+            return {
+              ...r,
+              statuses: r.statuses.filter((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'),
+            };
+          }
+          return r;
+        });
+      }
+
+      await prisma.$executeRawUnsafe(
+        `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "statuses" = $2::text[], "updatedAt" = NOW() WHERE "taskId" = $3`,
+        JSON.stringify(revs),
+        nextStatuses,
+        rec.taskId
+      );
+      await invalidateCache(`task:${rec.taskId}`, 'task_map:*').catch(() => {});
+      if (closedMainProgress) {
+        io.emit('task_map:updated', {
+          taskId: rec.taskId,
+          statuses: nextStatuses,
+          progress: revs.find((r: any) => r?.type === 'SHEET_PROGRESS' && !r?.subtaskId) || null,
+        });
+      }
+      for (const subId of closedSubtaskIds) {
+        const subState = revs.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subId);
+        io.emit('task_map:updated', {
+          taskId: `subtask:${subId}`,
+          subtaskId: subId,
+          parentTaskId: rec.taskId,
+          statuses: subState?.statuses,
+          progress: revs.find((r: any) => r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subId) || null,
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed closing older open board sessions for MA');
+  }
+}
+
+async function hasLiveSheetSessionForTarget(maName: string, taskId: string, subtaskId?: string | null): Promise<boolean> {
+  const maKey = (maName || '').trim().toLowerCase();
+  if (!maKey) return false;
+  const dateKey = getManilaDateStr();
+  const live = await prisma.dailySheetLog.findFirst({
+    where: {
+      dateKey,
+      maKey,
+      taskId,
+      subtaskId: subtaskId || null,
+      isLive: true,
+      timeOut: null,
+    },
+    select: { id: true },
+  }).catch(() => null);
+  return Boolean(live);
+}
 
 /**
  * Asynchronously triggers the n8n webhook to append the newly started task row
@@ -806,28 +939,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       // Check sheet progress: prefer today's DailySheetLog entry as the source of truth, fallback to pmReviews SHEET_PROGRESS
       const sheetLog = dailySheetIndex.byTaskId.get(task.id);
       let progress: any = sheetLog
-        ? {
-            type: 'SHEET_PROGRESS',
-            dailySheetLogId: sheetLog.id,
-            timeIn: sheetLog.timeIn,
-            timeOut: sheetLog.timeOut,
-            isMissingTime: sheetLog.isMissingTime,
-            isUpwork: sheetLog.isUpwork,
-            client: sheetLog.client,
-            timeTracker: sheetLog.timeTracker,
-            maName: sheetLog.maName,
-            status: sheetLog.status,
-            date: sheetLog.dateDisplay || sheetLog.dateKey,
-            dateKey: sheetLog.dateKey,
-            sheetRow: sheetLog.sheetRow ?? undefined,
-            subtaskId: sheetLog.subtaskId || null,
-            taskDeliverables: sheetLog.taskDeliverables,
-            taskUpdateAndDeliverables: sheetLog.taskUpdateAndDeliverables,
-            isLive: sheetLog.isLive,
-            startedAt: sheetLog.startedAt ? sheetLog.startedAt.toISOString() : null,
-            updatedAt: sheetLog.submittedAt ? sheetLog.submittedAt.toISOString() : new Date().toISOString(),
-          }
-        : reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+        ? buildProgressFromSheetLog(sheetLog)
+        : reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS' && !r.subtaskId) || null;
 
       const clientOrListName = `${task.list?.name || ''} ${progress?.client || ''}`.toLowerCase();
       const isLauren = clientOrListName.includes('lauren');
@@ -941,11 +1054,23 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             : (st.User ? [st.User] : []);
           const subAssigneeId = st.assigneeId || null;
           const subHasAssignee = Boolean(subAssigneeId || subAssignees.length > 0 || subPmAssignments.length > 0);
-          const subStatuses: string[] = parentIsOnHold
+          const subSheetLog = dailySheetIndex.bySubtaskId.get(st.id);
+          const subProgress: any = subSheetLog
+            ? buildProgressFromSheetLog(subSheetLog)
+            : reviewsList.find((r: any) => r?.type === 'SHEET_PROGRESS' && r?.subtaskId === st.id) || null;
+          const subHasLiveWork = Boolean(
+            subProgress?.timeIn && !subProgress?.timeOut && !subProgress?.isMissingTime
+          );
+          let subStatuses: string[] = parentIsOnHold
             ? ['On-hold']
             : Array.isArray(subState?.statuses)
-              ? subState.statuses
+              ? [...subState.statuses]
               : deriveDefaultMapStatuses(subStatus, subHasAssignee && !subState?.handedOver);
+          if (subHasLiveWork && !subStatuses.some((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+            subStatuses.push('In progress');
+          } else if (!subHasLiveWork && subStatuses.some((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+            subStatuses = subStatuses.filter((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS');
+          }
           const subAssignee =
             (subAssigneeId && st.User?.id === subAssigneeId ? st.User : null) ||
             (subAssigneeId ? subAssignees.find((u: any) => u.id === subAssigneeId) : null) ||
@@ -1004,7 +1129,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             isAdminTask,
             upworkStartedAt: null,
             upworkSession: null,
-            progress: null,
+            progress: subProgress,
             createdAt: st.createdAt,
             updatedAt: st.updatedAt,
           });
@@ -2622,13 +2747,22 @@ async function executeTaskMapAssignment(
 
       const currentSubStatusNorm = (currentSubtask.status || '').toUpperCase().replace(/[\s_-]+/g, '');
       const isCurrentlyInProgressOrHold = currentSubStatusNorm === 'INPROGRESS' || currentSubStatusNorm === 'ONHOLD';
+      const existingSubOwnerName =
+        (currentSubtask.User?.id === assigneeId ? currentSubtask.User?.name : null) ||
+        (currentSubtask.assignees || []).find((a: any) => a.id === assigneeId)?.name ||
+        '';
+      const hasActiveLiveSub =
+        mode === 'IN_PROGRESS' && existingSubOwnerName
+          ? await hasLiveSheetSessionForTarget(existingSubOwnerName, currentSubtask.taskId, currentSubtask.id)
+          : false;
       const isAlreadyAssigned =
         assigneeId &&
         (currentSubtask.assigneeId === assigneeId ||
           (currentSubtask.assignees || []).some((a) => a.id === assigneeId)) &&
         existingSubPmAssignment &&
         existingSubPmAssignment.mode === mode &&
-        !(mode === 'QUEUE' && isCurrentlyInProgressOrHold);
+        !(mode === 'QUEUE' && isCurrentlyInProgressOrHold) &&
+        !(mode === 'IN_PROGRESS' && !hasActiveLiveSub);
       if (isAlreadyAssigned) {
         return res.json({ success: true, task: currentSubtask, taskMap: parentRecord });
       }
@@ -2656,8 +2790,11 @@ async function executeTaskMapAssignment(
             updateSubData.assigneeRoleRestrictions = [...existingRestrictions, targetRole];
           }
         }
-        if (mode === 'IN_PROGRESS' && !isCadenceSubtask) {
-          updateSubData.status = 'IN PROGRESS';
+        if (mode === 'IN_PROGRESS') {
+          updateSubData.completed = false;
+          if (!isCadenceSubtask) {
+            updateSubData.status = 'IN PROGRESS';
+          }
         } else if (mode === 'QUEUE' && !isCadenceSubtask && (isCurrentlyInProgressOrHold || !currentSubtask.status)) {
           updateSubData.status = 'PENDING';
         }
@@ -2683,6 +2820,8 @@ async function executeTaskMapAssignment(
           ? [...reviewsList[subStateIdx].statuses]
           : [];
       let subHandedOver = subStateIdx !== -1 ? Boolean(reviewsList[subStateIdx].handedOver) : false;
+      let subProgressPayload: any = null;
+      let subMaSession: any = null;
 
       if (assigneeId) {
         subStatuses = subStatuses.filter((s) => {
@@ -2741,18 +2880,22 @@ async function executeTaskMapAssignment(
           const existingSubProgIdx = reviewsList.findIndex(
             (r: any) => r?.type === 'SHEET_PROGRESS' && r?.subtaskId === currentSubtask.id
           );
+          const subMaName = targetSubUser?.name || actorName;
+          const subClientForSheet = currentSubtask.task?.list?.name || 'General';
           const liveSubProg = {
             type: 'SHEET_PROGRESS',
             subtaskId: currentSubtask.id,
             timeIn: nowManilaTime,
             timeOut: null,
+            sheetRow: null,
             isMissingTime: false,
             isUpwork: false,
-            client: currentSubtask.task?.list?.name || 'General',
+            client: subClientForSheet,
             timeTracker: 'No Need to Track',
-            maName: targetSubUser?.name || actorName,
+            maName: subMaName,
             status: 'In progress',
             date: nowManilaDate,
+            isLive: true,
             taskDeliverables: currentSubtask.title,
             taskUpdateAndDeliverables: null,
             startedAt: new Date().toISOString(),
@@ -2766,8 +2909,6 @@ async function executeTaskMapAssignment(
 
           // Persist DailySheetLog & trigger n8n webhook to append row to MA Daily Schedule
           const subTaskTitleForSheet = `${currentSubtask.title} (${currentSubtask.task?.title || 'Subtask'})`;
-          const subClientForSheet = currentSubtask.task?.list?.name || 'General';
-          const subMaName = targetSubUser?.name || actorName;
 
           const [savedSubLog] = await Promise.all([
             upsertDailySheetLog({
@@ -2776,6 +2917,7 @@ async function executeTaskMapAssignment(
               userId: assigneeId,
               taskId: currentSubtask.taskId,
               subtaskId: currentSubtask.id,
+              sheetRow: null,
               client: subClientForSheet,
               taskName: subTaskTitleForSheet,
               timeIn: nowManilaTime,
@@ -2810,6 +2952,32 @@ async function executeTaskMapAssignment(
               mode: 'START',
             }),
           ]);
+          await closeOtherOpenBoardSessionsForMa(subMaName, currentSubtask.taskId, currentSubtask.id, nowManilaTime);
+          subProgressPayload = savedSubLog ? buildProgressFromSheetLog(savedSubLog) : liveSubProg;
+          subMaSession = {
+            maName: subMaName,
+            taskId: target.rawId,
+            subtaskId: currentSubtask.id,
+            listId: currentSubtask.task?.listId || null,
+            taskStatus: updatedSubtask.status || 'IN PROGRESS',
+            priority: updatedSubtask.priority || null,
+            subStatuses,
+            timeIn: nowManilaTime,
+            timeOut: null,
+            client: subClientForSheet,
+            taskName: currentSubtask.title,
+            date: savedSubLog?.dateKey || getManilaDateStr(),
+            status: 'In progress',
+            isUpwork: false,
+            isMissingTime: false,
+            rowNumber: savedSubLog?.sheetRow ?? null,
+            startedAt: liveSubProg.startedAt,
+            updatedAt: liveSubProg.updatedAt,
+            active: true,
+          };
+          await setMaActiveSession(subMaName.toLowerCase().trim(), subMaSession).catch(() => {});
+          io.emit('ma:session_updated', subMaSession);
+          io.emit('task_map:ma_progress_changed', subMaSession);
           if (savedSubLog) {
             io.emit('daily_sheet_log:updated', { log: savedSubLog });
           }
@@ -2925,6 +3093,7 @@ async function executeTaskMapAssignment(
         assigneeId,
         statuses: subStatuses,
         handedOver: subHandedOver,
+        ...(subProgressPayload ? { progress: subProgressPayload } : {}),
       });
       io.emit('task_activity', {
         listId: currentSubtask.task?.listId,
@@ -3000,7 +3169,13 @@ async function executeTaskMapAssignment(
         }
       }
 
-      return res.json({ success: true, task: updatedSubtask, taskMap: updatedRecord });
+      return res.json({
+        success: true,
+        task: updatedSubtask,
+        taskMap: updatedRecord,
+        ...(subProgressPayload ? { progress: subProgressPayload } : {}),
+        ...(subMaSession ? { maSession: subMaSession } : {}),
+      });
     }
 
     const currentTask = await prisma.task.findUnique({
@@ -3105,6 +3280,14 @@ async function executeTaskMapAssignment(
 
     const currentStatusNorm = (currentTask.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const isCurrentlyInProgressOrHold = currentStatusNorm === 'INPROGRESS' || currentStatusNorm === 'ONHOLD';
+    const existingOwnerName =
+      (currentTask.assignee?.id === assigneeId ? currentTask.assignee?.name : null) ||
+      (currentTask.assignees || []).find((a: any) => a.id === assigneeId)?.name ||
+      '';
+    const hasActiveLiveMain =
+      mode === 'IN_PROGRESS' && existingOwnerName
+        ? await hasLiveSheetSessionForTarget(existingOwnerName, id, null)
+        : false;
 
     // Guard: If task is already assigned to this user and has matching PM assignment mode, return early
     const isAlreadyAssigned =
@@ -3113,7 +3296,8 @@ async function executeTaskMapAssignment(
         (currentTask.assignees || []).some((a) => a.id === assigneeId)) &&
       existingPmAssignment &&
       existingPmAssignment.mode === mode &&
-      !(mode === 'QUEUE' && isCurrentlyInProgressOrHold);
+      !(mode === 'QUEUE' && isCurrentlyInProgressOrHold) &&
+      !(mode === 'IN_PROGRESS' && !hasActiveLiveMain);
     if (isAlreadyAssigned) {
       return res.json({
         success: true,
@@ -3213,6 +3397,8 @@ async function executeTaskMapAssignment(
     let newStatuses = record.statuses || [];
     let reviewsModified = false;
     let handedOver = record.handedOver;
+    let mainProgressPayload: any = null;
+    let mainMaSession: any = null;
 
     if (assigneeId) {
       newStatuses = newStatuses.filter((s) => {
@@ -3253,17 +3439,21 @@ async function executeTaskMapAssignment(
         }).format(new Date());
 
         const existingProgIdx = reviewsList.findIndex((r: any) => r?.type === 'SHEET_PROGRESS' && !r?.subtaskId);
+        const mainMaName = updatedTask.assignee?.name || actorName;
+        const mainClientForSheet = updatedTask.list?.name || 'General';
         const liveProg = {
           type: 'SHEET_PROGRESS',
           timeIn: nowManilaTime,
           timeOut: null,
+          sheetRow: null,
           isMissingTime: false,
           isUpwork: false,
-          client: updatedTask.list?.name || 'General',
+          client: mainClientForSheet,
           timeTracker: 'No Need to Track',
-          maName: updatedTask.assignee?.name || actorName,
+          maName: mainMaName,
           status: 'In progress',
           date: nowManilaDate,
+          isLive: true,
           taskDeliverables: updatedTask.title,
           taskUpdateAndDeliverables: null,
           startedAt: new Date().toISOString(),
@@ -3276,14 +3466,13 @@ async function executeTaskMapAssignment(
         }
 
         // Persist DailySheetLog & trigger n8n webhook to append row to MA Daily Schedule
-        const mainMaName = updatedTask.assignee?.name || actorName;
-        const mainClientForSheet = updatedTask.list?.name || 'General';
         const [savedMainLog] = await Promise.all([
           upsertDailySheetLog({
             date: nowManilaDate,
             maName: mainMaName,
             userId: assigneeId,
             taskId: id,
+            sheetRow: null,
             client: mainClientForSheet,
             taskName: updatedTask.title,
             timeIn: nowManilaTime,
@@ -3317,6 +3506,33 @@ async function executeTaskMapAssignment(
             mode: 'START',
           }),
         ]);
+        await closeOtherOpenBoardSessionsForMa(mainMaName, id, null, nowManilaTime);
+        mainProgressPayload = savedMainLog ? buildProgressFromSheetLog(savedMainLog) : liveProg;
+        mainMaSession = {
+          maName: mainMaName,
+          taskId: id,
+          listId: updatedTask.listId || null,
+          listName: updatedTask.list?.name || null,
+          listStatuses: Array.isArray(updatedTask.list?.statuses) ? updatedTask.list.statuses : undefined,
+          taskStatus: updatedTask.status || 'IN PROGRESS',
+          priority: updatedTask.priority || null,
+          subStatuses: newStatuses,
+          timeIn: nowManilaTime,
+          timeOut: null,
+          client: mainClientForSheet,
+          taskName: updatedTask.title,
+          date: savedMainLog?.dateKey || getManilaDateStr(),
+          status: 'In progress',
+          isUpwork: false,
+          isMissingTime: false,
+          rowNumber: savedMainLog?.sheetRow ?? null,
+          startedAt: liveProg.startedAt,
+          updatedAt: liveProg.updatedAt,
+          active: true,
+        };
+        await setMaActiveSession(mainMaName.toLowerCase().trim(), mainMaSession).catch(() => {});
+        io.emit('ma:session_updated', mainMaSession);
+        io.emit('task_map:ma_progress_changed', mainMaSession);
         if (savedMainLog) {
           io.emit('daily_sheet_log:updated', { log: savedMainLog });
         }
@@ -3476,6 +3692,7 @@ async function executeTaskMapAssignment(
       assigneeId,
       handedOver,
       statuses: newStatuses,
+      ...(mainProgressPayload ? { progress: mainProgressPayload } : {}),
     });
     io.emit('task_activity', {
       listId: updatedTask.listId,
@@ -3545,7 +3762,13 @@ async function executeTaskMapAssignment(
       }
     }
 
-    return res.json({ success: true, task: updatedTask, taskMap: updatedRecord });
+    return res.json({
+      success: true,
+      task: updatedTask,
+      taskMap: updatedRecord,
+      ...(mainProgressPayload ? { progress: mainProgressPayload } : {}),
+      ...(mainMaSession ? { maSession: mainMaSession } : {}),
+    });
   } catch (error: any) {
     logger.error({ error }, 'Error assigning task in Task Map');
     return res.status(500).json({ error: 'Failed to assign task' });

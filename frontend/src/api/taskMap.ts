@@ -1061,10 +1061,10 @@ export const taskMapApi = {
     assigneeId: string | null,
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
     options?: { assigneeRoleRestrictions?: string[]; role?: string; otp?: string }
-  ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
+  ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/assign`, {
+      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }>(`/api/task-map/tasks/${taskId}/assign`, {
         method: 'PATCH',
         body: JSON.stringify({ assigneeId, mode, ...options }),
       });

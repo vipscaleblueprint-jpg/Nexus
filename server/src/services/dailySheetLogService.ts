@@ -106,11 +106,15 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
         dateKey,
         maKey,
         taskId: input.taskId,
+        subtaskId: input.subtaskId || null,
         ...(cleanTimeOut ? {} : { timeOut: null }),
       },
       orderBy: { submittedAt: 'desc' },
     });
   }
+
+  const resolvedSheetRow =
+    input.sheetRow === null ? null : (sheetRow ?? existing?.sheetRow ?? null);
 
   const dataPayload = {
     dateKey,
@@ -120,7 +124,7 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
     userId: input.userId !== undefined ? input.userId : existing?.userId || null,
     taskId: input.taskId !== undefined ? input.taskId : existing?.taskId || null,
     subtaskId: input.subtaskId !== undefined ? input.subtaskId : existing?.subtaskId || null,
-    sheetRow: sheetRow ?? existing?.sheetRow ?? null,
+    sheetRow: resolvedSheetRow,
     spreadsheetId: input.spreadsheetId !== undefined ? input.spreadsheetId : existing?.spreadsheetId || null,
     client: input.client !== undefined ? input.client : existing?.client || null,
     taskName: input.taskName !== undefined ? input.taskName : existing?.taskName || null,
@@ -245,13 +249,19 @@ export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
   const logs = await getDailySheetLogsForDate(dateKey);
 
   const byTaskId = new Map<string, (typeof logs)[number]>();
+  const bySubtaskId = new Map<string, (typeof logs)[number]>();
   const liveByMaKey = new Map<string, (typeof logs)[number]>();
 
   for (const log of logs) {
     if (log.isLive && !liveByMaKey.has(log.maKey)) {
       liveByMaKey.set(log.maKey, log);
     }
-    if (log.taskId) {
+    if (log.subtaskId) {
+      const existingSub = bySubtaskId.get(log.subtaskId);
+      if (!existingSub || (!existingSub.isLive && log.isLive)) {
+        bySubtaskId.set(log.subtaskId, log);
+      }
+    } else if (log.taskId) {
       const existing = byTaskId.get(log.taskId);
       // Prefer live entry first, then most recently submitted
       if (!existing || (!existing.isLive && log.isLive)) {
@@ -260,5 +270,5 @@ export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
     }
   }
 
-  return { dateKey, logs, byTaskId, liveByMaKey };
+  return { dateKey, logs, byTaskId, bySubtaskId, liveByMaKey };
 }

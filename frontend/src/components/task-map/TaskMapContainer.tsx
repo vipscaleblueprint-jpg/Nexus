@@ -532,7 +532,7 @@ export const TaskMapContainer: React.FC = () => {
             if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
               enrichedSessions[key] = {
                 maName: l.maName,
-                taskId: l.taskId || null,
+                taskId: l.subtaskId ? `subtask:${l.subtaskId}` : (l.taskId || null),
                 subtaskId: l.subtaskId || null,
                 timeIn: l.timeIn,
                 timeOut: null,
@@ -878,12 +878,14 @@ export const TaskMapContainer: React.FC = () => {
     const handleDailySheetLogUpdated = (e: any) => {
       const data = e?.detail || e;
       const log = data?.log;
+      const targetItemId = log?.subtaskId ? `subtask:${log.subtaskId}` : (log?.taskId || null);
       if (log?.maName) {
         useAppStore.getState().updateMaActiveSession(log.maName, {
           maName: log.maName,
           client: log.client || null,
           taskName: log.taskName || null,
-          taskId: log.taskId || null,
+          taskId: targetItemId,
+          subtaskId: log.subtaskId || null,
           timeIn: log.timeIn || null,
           timeOut: log.timeOut || null,
           date: log.dateKey || currentDate,
@@ -894,7 +896,7 @@ export const TaskMapContainer: React.FC = () => {
           active: Boolean(log.timeIn && !log.timeOut && !log.isMissingTime),
         });
       }
-      if (log?.taskId) {
+      if (targetItemId) {
         const nextProgress = {
           maName: log.maName,
           timeIn: log.timeIn || null,
@@ -908,7 +910,7 @@ export const TaskMapContainer: React.FC = () => {
           timeTracker: log.timeTracker || null,
         };
         const patchLog = (t: TaskMapItem) =>
-          t.id === log.taskId ? applyLiveWorkingTaskStatus({ ...t, progress: nextProgress }) : t;
+          t.id === targetItemId ? applyLiveWorkingTaskStatus({ ...t, progress: nextProgress }) : t;
         setTasks((prev) => prev.map(patchLog));
         setAvailablePool((prev) => prev.map(patchLog));
       }
@@ -1569,6 +1571,29 @@ export const TaskMapContainer: React.FC = () => {
       timestamp: Date.now(),
     });
 
+    if (mode === 'IN_PROGRESS' && targetUser?.name) {
+      useAppStore.getState().updateMaActiveSession(targetUser.name, {
+        maName: targetUser.name,
+        taskId,
+        subtaskId: currentTask.subtaskId || null,
+        listId: currentTask.listId || currentTask.list?.id || null,
+        listName: currentTask.list?.name || null,
+        taskStatus: optimisticTask.status || 'IN PROGRESS',
+        priority: currentTask.priority || null,
+        subStatuses: optimisticTask.taskMap?.statuses,
+        timeIn: optimisticTask.progress?.timeIn || formatManilaTime(new Date()),
+        timeOut: null,
+        client: optimisticTask.progress?.client || currentTask.list?.name || 'General',
+        taskName: currentTask.title,
+        date: currentDate,
+        status: 'In progress',
+        isUpwork: Boolean(optimisticTask.progress?.isUpwork),
+        rowNumber: null,
+        updatedAt: new Date().toISOString(),
+        active: true,
+      });
+    }
+
     // Helper: if dropping into IN_PROGRESS slot for targetUserId, demote any previous IN_PROGRESS task of that user to QUEUE
     const demoteDisplacedInProgress = (item: TaskMapItem): TaskMapItem => {
       if (mode !== 'IN_PROGRESS' || !targetUserId || item.id === taskId) return item;
@@ -1629,7 +1654,7 @@ export const TaskMapContainer: React.FC = () => {
 
     // 2. Persist to backend via taskMapApi.assignTask (which automatically tracks saving state in taskMap.ts)
     try {
-      await taskMapApi.assignTask(
+      const assignRes = await taskMapApi.assignTask(
         taskId,
         targetUserId,
         mode,
@@ -1638,11 +1663,37 @@ export const TaskMapContainer: React.FC = () => {
           ...(otp ? { otp } : {}),
         }
       );
+
+      if (assignRes?.maSession?.maName) {
+        useAppStore.getState().updateMaActiveSession(assignRes.maSession.maName, assignRes.maSession);
+      }
+
+      if (assignRes?.progress || assignRes?.taskMap) {
+        const syncedTask: TaskMapItem = applyLiveWorkingTaskStatus({
+          ...optimisticTask,
+          ...(assignRes.progress ? { progress: assignRes.progress } : {}),
+          ...(assignRes.taskMap
+            ? {
+                taskMap: {
+                  ...optimisticTask.taskMap,
+                  ...assignRes.taskMap,
+                },
+              }
+            : {}),
+        });
+        pendingAssignRef.current.set(taskId, {
+          task: syncedTask,
+          targetUserId,
+          timestamp: Date.now(),
+        });
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? syncedTask : t)));
+      }
+
+      await loadData(true);
       setTimeout(() => {
         pendingAssignRef.current.delete(taskId);
         displacedIds.forEach((dId) => pendingAssignRef.current.delete(dId));
-      }, 2500);
-      loadData(true);
+      }, 1000);
     } catch (err: any) {
       pendingAssignRef.current.delete(taskId);
       displacedIds.forEach((dId) => pendingAssignRef.current.delete(dId));

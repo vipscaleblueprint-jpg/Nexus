@@ -125,14 +125,16 @@ async function triggerN8nStartTaskWebhook(params: {
   userName: string;
   userEmail?: string | null;
   dailySheetUrl?: string | null;
-  taskId: string;
+  taskId?: string | null;
   subtaskId?: string | null;
+  sheetRow?: number | null;
   taskTitle: string;
   clientName: string;
   taskLink?: string | null;
   status?: string;
   timeIn?: string;
   timeOut?: string | null;
+  timeTracker?: string | null;
   taskDeliverablesDescription?: string | null;
   taskUpdateAndDeliverables?: string | null;
   description?: string | null;
@@ -5107,7 +5109,7 @@ export const getClientLockStatusHandler = async (req: Request, res: Response) =>
  */
 export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => {
   try {
-    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight } = req.body;
+    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, source } = req.body;
     const user = (req as any).user;
 
     const actorUser = user?.id
@@ -5118,114 +5120,134 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       : null;
     const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
 
+    const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    if (targetRow && (targetRow.timeIn || targetRow.timeOut)) {
+      if (!String(targetRow.client || '').trim() || !String(targetRow.task || '').trim()) {
+        return res.status(400).json({
+          error: 'Client and Task are required before logging Time In or Time Out.',
+        });
+      }
+    }
+
     const cleanTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
-    if (cleanTaskId) {
+    const nowTimeOut = targetRow?.timeOut || new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date());
+    const effectiveTimeOut = mode === 'STOP' ? nowTimeOut : (targetRow?.timeOut || null);
+    let resolvedSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+
+    if (cleanTaskId && targetRow) {
       const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
       let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
 
-      const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-      if (targetRow) {
-        const nowTimeOut = targetRow.timeOut || new Intl.DateTimeFormat('en-US', {
-          timeZone: 'Asia/Manila',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        }).format(new Date());
-
-        let matched = false;
-        for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
-            if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
-              r.timeOut = nowTimeOut;
-              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
-              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
-              matched = true;
-            } else if (!r.timeOut) {
-              r.timeOut = nowTimeOut;
-              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
-              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
-              matched = true;
-            }
+      let matched = false;
+      for (const r of pmReviews) {
+        if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
+          if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
+            r.timeOut = effectiveTimeOut || '';
+            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+            if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
+            matched = true;
+          } else if (!r.timeOut) {
+            r.timeOut = effectiveTimeOut || '';
+            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+            if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
+            matched = true;
           }
         }
-        if (!matched && mode === 'STOP') {
-          pmReviews.push({
-            type: 'SHEET_PROGRESS',
-            taskId: cleanTaskId,
-            subtaskId: subtaskId || null,
-            timeIn: targetRow.timeIn || '',
-            timeOut: nowTimeOut,
-            client: targetRow.client || 'General',
-            task: targetRow.task || 'Task',
-            taskDeliverables: targetRow.taskDeliverablesDescription || null,
-            taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        await updateTaskMapRecord(cleanTaskId, { pmReviews });
-
-        // Persist Nexus livework / clock-out submission into DailySheetLog
-        const savedNexusLog = await upsertDailySheetLog({
-          date: targetRow.date || getManilaDateStr(),
-          maName: actorDisplayName,
-          userId: actorUser?.id || user?.id || null,
+      }
+      if (!matched && mode === 'STOP') {
+        pmReviews.push({
+          type: 'SHEET_PROGRESS',
           taskId: cleanTaskId,
           subtaskId: subtaskId || null,
-          sheetRow: sheetRow ? Number(sheetRow) : null,
+          timeIn: targetRow.timeIn || '',
+          timeOut: nowTimeOut,
           client: targetRow.client || 'General',
-          taskName: targetRow.task || 'Task',
-          timeIn: targetRow.timeIn || null,
-          timeOut: mode === 'STOP' ? nowTimeOut : (targetRow.timeOut || null),
-          isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
-          timeTracker: targetRow.timeTracker || null,
-          status: targetRow.taskStatus || mode || 'In progress',
+          task: targetRow.task || 'Task',
           taskDeliverables: targetRow.taskDeliverablesDescription || null,
           taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
-          taskLink: targetRow.taskLink || `https://nexus.vipscaleph.com/task/${cleanTaskId}`,
-          source: 'NEXUS_BOARD',
-        }).catch((err) => {
-          logger.warn({ err }, 'Failed to upsert DailySheetLog from syncSpreadsheetRowHandler');
-          return null;
-        });
-        if (savedNexusLog) {
-          io.emit('daily_sheet_log:updated', { log: savedNexusLog });
-        }
-      }
-
-      if (mode === 'STOP') {
-        await deleteMaActiveSession(actorDisplayName).catch(() => {});
-        const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
-        io.emit('ma:session_updated', clearedPayload);
-        io.emit('task_map:ma_progress_changed', clearedPayload);
-        io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
-      }
-
-      // Forward to n8n webhook
-      if (targetRow) {
-        triggerN8nStartTaskWebhook({
-          userId: user?.id,
-          userName: actorDisplayName,
-          userEmail: actorUser?.email,
-          dailySheetUrl: actorUser?.dailySheetUrl,
-          taskId: cleanTaskId,
-          subtaskId: subtaskId || null,
-          taskTitle: targetRow.task || 'Task',
-          clientName: targetRow.client || 'General',
-          taskLink: targetRow.taskLink || `https://nexus.vipscaleph.com/task/${cleanTaskId}`,
-          status: targetRow.taskStatus || mode,
-          timeIn: targetRow.timeIn,
-          timeOut: targetRow.timeOut,
-          taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
-          description: targetRow.taskDeliverablesDescription || targetRow.task,
-          mode: mode || 'UPDATE',
+          updatedAt: new Date().toISOString(),
         });
       }
+      await updateTaskMapRecord(cleanTaskId, { pmReviews });
+    }
+
+    let savedLog = null;
+    if (targetRow) {
+      savedLog = await upsertDailySheetLog({
+        date: targetRow.date || getManilaDateStr(),
+        maName: actorDisplayName,
+        userId: actorUser?.id || user?.id || null,
+        taskId: cleanTaskId || null,
+        subtaskId: subtaskId || null,
+        sheetRow: resolvedSheetRow,
+        client: targetRow.client || 'General',
+        taskName: targetRow.task || 'Task',
+        timeIn: targetRow.timeIn || null,
+        timeOut: effectiveTimeOut,
+        isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
+        timeTracker: targetRow.timeTracker || null,
+        status: targetRow.taskStatus || (mode === 'STOP' ? 'Completed' : 'In Progress'),
+        taskDeliverables: targetRow.taskDeliverablesDescription || null,
+        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
+        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
+        source: source || (cleanTaskId ? 'NEXUS_BOARD' : 'NEXUS_DAILY_TRACKER'),
+      }).catch((err) => {
+        logger.warn({ err }, 'Failed to upsert DailySheetLog from syncSpreadsheetRowHandler');
+        return null;
+      });
+      if (!resolvedSheetRow && savedLog?.sheetRow) {
+        resolvedSheetRow = Number(savedLog.sheetRow);
+      }
+      if (savedLog) {
+        io.emit('daily_sheet_log:updated', { log: savedLog });
+      }
+      await invalidateCache('task_map:*').catch(() => {});
+    }
+
+    if (cleanTaskId && mode === 'STOP') {
+      await deleteMaActiveSession(actorDisplayName).catch(() => {});
+      const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
+      io.emit('ma:session_updated', clearedPayload);
+      io.emit('task_map:ma_progress_changed', clearedPayload);
+      io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
+    }
+
+    // Forward to n8n webhook to update the user's personal Google Spreadsheet
+    if (targetRow) {
+      triggerN8nStartTaskWebhook({
+        userId: user?.id,
+        userName: actorDisplayName,
+        userEmail: actorUser?.email,
+        dailySheetUrl: actorUser?.dailySheetUrl,
+        taskId: cleanTaskId || null,
+        subtaskId: subtaskId || null,
+        sheetRow: resolvedSheetRow,
+        taskTitle: targetRow.task || 'Task',
+        clientName: targetRow.client || 'General',
+        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
+        status: targetRow.taskStatus || mode,
+        date: targetRow.date,
+        timeIn: targetRow.timeIn,
+        timeOut: effectiveTimeOut,
+        timeTracker: targetRow.timeTracker || null,
+        taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
+        description: targetRow.taskDeliverablesDescription || targetRow.task,
+        mode: mode || 'UPDATE',
+      });
     }
 
     return res.json({
       success: true,
       rows: rows || [],
+      log: savedLog,
       isSplitAcrossMidnight: Boolean(isSplitAcrossMidnight),
     });
   } catch (err: any) {

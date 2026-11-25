@@ -1011,6 +1011,9 @@ export const taskMapApi = {
       taskDeliverablesDescription?: string | null;
       taskUpdateAndDeliverables?: string | null;
       timeOut?: string | null;
+      timeIn?: string | null;
+      sheetRow?: number | null;
+      skipN8nSync?: boolean;
     }
   ): Promise<{
     success: boolean;
@@ -1330,38 +1333,46 @@ export const taskMapApi = {
   ): Promise<{
     success: boolean;
     rows: SpreadsheetScheduleRow[];
+    log?: DailySheetLogItem | null;
     isSplitAcrossMidnight: boolean;
     message?: string;
   }> => {
-    const start = params.startedAt ? new Date(params.startedAt) : new Date();
-    const end = params.stoppedAt ? new Date(params.stoppedAt) : params.mode === 'STOP' ? new Date() : null;
+    let rows: SpreadsheetScheduleRow[];
+    if (params.explicitRow) {
+      rows = [params.explicitRow];
+    } else {
+      const start = params.startedAt ? new Date(params.startedAt) : new Date();
+      const end = params.stoppedAt ? new Date(params.stoppedAt) : params.mode === 'STOP' ? new Date() : null;
 
-    const rows = splitMidnightScheduleRows({
-      start,
-      end,
-      client: params.clientName,
-      task: params.taskTitle,
-      taskLink: params.taskLink,
-      status: params.status,
-      timeTracker: params.timeTracker || (params.isUpwork ? 'Upwork' : 'No Need to Track'),
-      taskDeliverablesDescription: params.taskDeliverablesDescription || params.taskTitle,
-      taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
-    });
+      rows = splitMidnightScheduleRows({
+        start,
+        end,
+        client: params.clientName,
+        task: params.taskTitle,
+        taskLink: params.taskLink,
+        status: params.status,
+        timeTracker: params.timeTracker || (params.isUpwork ? 'Upwork' : 'No Need to Track'),
+        taskDeliverablesDescription: params.taskDeliverablesDescription || params.taskTitle,
+        taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
+      });
+    }
 
     const isSplitAcrossMidnight = rows.length > 1;
 
     return apiClient<{
       success: boolean;
       rows: SpreadsheetScheduleRow[];
+      log?: DailySheetLogItem | null;
       isSplitAcrossMidnight: boolean;
       message?: string;
     }>('/api/task-map/sheets/sync-row', {
       method: 'POST',
       body: JSON.stringify({
-        taskId: params.taskId,
-        subtaskId: params.subtaskId,
+        taskId: params.taskId || null,
+        subtaskId: params.subtaskId || null,
         mode: params.mode,
         sheetRow: params.sheetRow,
+        source: params.source,
         rows,
         isSplitAcrossMidnight,
       }),
@@ -1404,6 +1415,17 @@ export const taskMapApi = {
       body: JSON.stringify(payload),
     });
   },
+
+  getDailyScheduleConfig: async (userId?: string): Promise<{
+    success: boolean;
+    userId: string;
+    userName: string | null;
+    dailySheetUrl: string | null;
+    spreadsheetId: string | null;
+  }> => {
+    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+    return apiClient(`/api/task-map/sheets/user-config${q}`);
+  },
 };
 
 // ===========================================================================
@@ -1434,7 +1456,7 @@ export interface SpreadsheetScheduleRow {
 }
 
 export interface SyncScheduleToSpreadsheetParams {
-  taskId: string;
+  taskId?: string | null;
   subtaskId?: string | null;
   taskTitle: string;
   clientName: string;
@@ -1448,6 +1470,8 @@ export interface SyncScheduleToSpreadsheetParams {
   timeTracker?: string | null;
   isUpwork?: boolean;
   sheetRow?: number | null;
+  source?: string;
+  explicitRow?: SpreadsheetScheduleRow;
 }
 
 /** Formats a Date object into Manila 12-hour time format: "h:mm A" (e.g. "8:40 AM", "11:59 PM", "12:00 AM") */
@@ -1469,6 +1493,58 @@ export function formatManilaDateLong(date: Date): string {
     day: 'numeric',
     year: 'numeric',
   }).format(date);
+}
+
+/**
+ * Converts a Manila date string (e.g. "Wednesday, November 25, 2026" or "2026-11-25")
+ * and 12-hour time string (e.g. "8:30 AM") into an ISO timestamp string.
+ */
+export function parseManilaTimeToIso(
+  dateStr?: string | null,
+  timeStr?: string | null
+): string | null {
+  if (!timeStr) return null;
+  const timeMatch = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!timeMatch) return null;
+  let hours = parseInt(timeMatch[1], 10);
+  const minutes = parseInt(timeMatch[2], 10);
+  const ampm = timeMatch[3].toUpperCase();
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+
+  let dateKey: string;
+  if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+    dateKey = dateStr.trim();
+  } else if (dateStr) {
+    const parsed = new Date(dateStr);
+    if (!isNaN(parsed.getTime())) {
+      dateKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(parsed);
+    } else {
+      dateKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    }
+  } else {
+    dateKey = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }
+
+  const dt = new Date(
+    `${dateKey}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00+08:00`
+  );
+  return isNaN(dt.getTime()) ? null : dt.toISOString();
 }
 
 /**

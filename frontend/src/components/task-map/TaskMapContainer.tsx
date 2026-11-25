@@ -2057,7 +2057,9 @@ export const TaskMapContainer: React.FC = () => {
             <TaskMapDailyTrackerView
               tasks={displayedTasks.filter((t) => !t.isSubtask)}
               allTasks={tasks}
-              allUsers={allUsers}
+              currentUser={currentUser}
+              initialDate={currentDate}
+              initialLogs={dailySheetLogs}
               clients={clients}
               onOpenDetail={handleOpenTaskDetail}
               onRefresh={() => loadData(true)}

@@ -4312,6 +4312,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           initialDeliverables={deliverablesModalTarget.task.progress?.taskDeliverablesDescription || deliverablesModalTarget.task.title}
           initialUpdate={deliverablesModalTarget.task.progress?.taskUpdateAndDeliverables || ''}
           userName={deliverablesModalTarget.user?.name || deliverablesModalTarget.task.assignee?.name}
+          timeIn={deliverablesModalTarget.task.progress?.timeIn || ''}
         />
       )}
     </DndContext>

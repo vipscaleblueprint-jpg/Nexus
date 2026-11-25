@@ -18,6 +18,7 @@ export interface TaskDeliverablesModalProps {
   initialDeliverables?: string;
   initialUpdate?: string;
   userName?: string;
+  timeIn?: string;
 }
 
 export function TaskDeliverablesModal({
@@ -29,7 +30,7 @@ export function TaskDeliverablesModal({
   targetStatus,
   initialDeliverables = '',
   initialUpdate = '',
-  userName,
+  timeIn = '',
 }: TaskDeliverablesModalProps) {
   const [deliverablesDescription, setDeliverablesDescription] = useState(initialDeliverables || taskTitle || '');
   const [updateAndDeliverables, setUpdateAndDeliverables] = useState(initialUpdate || '');
@@ -91,16 +92,17 @@ export function TaskDeliverablesModal({
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950/50">
-          <div className="flex items-center gap-2.5">
-            <div className={`p-2 rounded-lg border ${statusBadgeColor}`}>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className={`p-2 rounded-lg border shrink-0 ${statusBadgeColor}`}>
               <FileCheck className="size-4 shrink-0" />
             </div>
-            <div>
-              <h3 id="deliverables-modal-title" className="text-sm font-semibold text-zinc-100">
-                {isHandover ? 'Hand Over Task & Deliverables' : 'Submit Deliverables (To Review)'}
+            <div className="min-w-0">
+              <h3 id="deliverables-modal-title" className="text-sm font-semibold text-zinc-100 truncate" title={clientName ? `${clientName} — ${taskTitle}` : taskTitle}>
+                {clientName ? `${clientName} — ${taskTitle}` : taskTitle}
               </h3>
-              <p className="text-[11px] text-zinc-400">
-                Syncs deliverables to your MA Daily Schedule spreadsheet and clocks you out.
+              <p className="text-[11px] font-mono text-zinc-400 flex items-center gap-1.5 mt-0.5">
+                <Clock className="size-3 text-amber-400 shrink-0" />
+                <span>{timeIn ? `${timeIn} - ${currentTimeOut}` : currentTimeOut}</span>
               </p>
             </div>
           </div>
@@ -108,7 +110,7 @@ export function TaskDeliverablesModal({
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50"
+            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50 shrink-0"
             title="Cancel and close"
           >
             <X className="size-4" />
@@ -117,51 +119,10 @@ export function TaskDeliverablesModal({
 
         {/* Content & Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Target Status & Clock-out Context Banner */}
-          <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-2 min-w-0">
-                {clientName && (
-                  <span className="text-[11px] font-bold text-zinc-300 bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700/60 truncate">
-                    {clientName}
-                  </span>
-                )}
-                <span className="text-xs font-semibold text-zinc-200 truncate" title={taskTitle}>
-                  {taskTitle}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[10px] font-medium text-zinc-400">Status:</span>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${statusBadgeColor}`}>
-                  {targetStatus}
-                </span>
-              </div>
-            </div>
-
-            {/* Time Out Notice */}
-            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/50 text-xs">
-              <div className="flex items-center gap-1.5 text-zinc-300">
-                <Clock className="size-3.5 text-amber-400 shrink-0" />
-                <span className="text-[11px] text-zinc-400">
-                  {userName ? `${userName}'s ` : ''}Clock-Out Time (Manila):
-                </span>
-                <span className="font-mono font-semibold text-amber-300">
-                  {currentTimeOut}
-                </span>
-              </div>
-              <span className="text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                Auto-Stop Session
-              </span>
-            </div>
-          </div>
-
-          {/* Field 1: Task Deliverables Description (Col K in Spreadsheet) */}
+          {/* Field 1: Task Deliverables Description */}
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-zinc-200">
               Task Deliverables Description:
-              <span className="text-[11px] font-normal text-zinc-400 ml-1.5">
-                (Spreadsheet Column K)
-              </span>
             </label>
             <input
               type="text"
@@ -171,19 +132,13 @@ export function TaskDeliverablesModal({
               placeholder="e.g. Completed initial design overhaul, resolved audit flags"
               className="w-full px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
             />
-            <p className="text-[10px] text-zinc-500">
-              High-level scope of the deliverables or deliverables label.
-            </p>
           </div>
 
-          {/* Field 2: Task Update and Deliverables (Col L in Spreadsheet) */}
+          {/* Field 2: Task Update and Deliverables */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-semibold text-zinc-200">
                 Task Update and Deliverables:
-                <span className="text-[11px] font-normal text-zinc-400 ml-1.5">
-                  (Spreadsheet Column L)
-                </span>
               </label>
               <span className="text-[10px] text-zinc-500">Required</span>
             </div>
@@ -195,9 +150,6 @@ export function TaskDeliverablesModal({
               placeholder="Provide a detailed update of what you completed, deliverables links, what was tested, and any handover instructions..."
               className="w-full px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors resize-y leading-relaxed"
             />
-            <p className="text-[10px] text-zinc-500">
-              Detailed outcome to record in your schedule spreadsheet and pass to the reviewing PM/Auditor.
-            </p>
           </div>
 
           {/* Actions */}

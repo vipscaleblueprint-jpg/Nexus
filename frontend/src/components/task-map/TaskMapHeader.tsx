@@ -854,6 +854,19 @@ export const TaskMapHeader: React.FC<Props> = ({
             <div className="flex items-center gap-1 bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-semibold shadow-xs">
               <button
                 type="button"
+                onClick={() => onViewChange('DAILY_TRACKER')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  currentView === 'DAILY_TRACKER'
+                    ? 'bg-emerald-600 text-white shadow-sm font-semibold'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
+                }`}
+              >
+                <Table className="size-3.5" />
+                <span>Daily Tracker</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => onViewChange('BOARD')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${currentView === 'BOARD'
                   ? 'bg-blue-600 text-white shadow-sm font-semibold'
@@ -922,19 +935,6 @@ export const TaskMapHeader: React.FC<Props> = ({
                   )}
                 </button>
               )}
-
-              <button
-                type="button"
-                onClick={() => onViewChange('DAILY_TRACKER')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  currentView === 'DAILY_TRACKER'
-                    ? 'bg-emerald-600 text-white shadow-sm font-semibold'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
-                }`}
-              >
-                <Table className="size-3.5" />
-                <span>Daily Tracker</span>
-              </button>
 
               <button
                 type="button"

@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import {
   Table as TableIcon,
   Plus,
@@ -9,157 +10,374 @@ import {
   Download,
   ExternalLink,
   RefreshCw,
-  Clock,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  User,
-  Filter,
-  Layers,
-  Sparkles,
-  Link as LinkIcon,
+  Lock,
+  Save,
+  Square,
+  Trash2,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
-import { TaskMapItem, formatManilaTime, formatManilaDateLong, SpreadsheetScheduleRow } from '@/api/taskMap';
+import {
+  TaskMapItem,
+  DailySheetLogItem,
+  taskMapApi,
+  formatManilaTime,
+  formatManilaDateLong,
+  calculateScheduleDuration,
+} from '@/api/taskMap';
 import { toast } from '@/lib/toast';
 
 interface Props {
   tasks: TaskMapItem[];
   allTasks?: TaskMapItem[];
-  allUsers?: any[];
-  clients?: any[];
+  currentUser?: {
+    id?: string;
+    name?: string | null;
+    email?: string | null;
+    dailySheetUrl?: string | null;
+  } | null;
+  initialDate?: string;
+  initialLogs?: DailySheetLogItem[];
+  clients?: Array<{ id?: string; name: string }>;
   onOpenDetail?: (task: TaskMapItem) => void;
   onRefresh?: () => void;
 }
 
-interface TrackerRowItem extends SpreadsheetScheduleRow {
-  id: string;
-  taskId?: string;
-  isDraft?: boolean;
-  assignedMa?: string;
+interface EditableTrackerRow {
+  localId: string;
+  logId?: string;
+  taskId?: string | null;
+  subtaskId?: string | null;
+  sheetRow?: number | null;
+  date: string;
+  timeIn: string;
+  timeOut: string;
+  client: string;
+  timeTracker: string;
+  task: string;
+  taskDeliverablesDescription: string;
+  taskUpdateAndDeliverables: string;
+  taskLink: string;
+  taskStatus: string;
+  isDraft: boolean;
+  isDirty: boolean;
+  isLive: boolean;
+}
+
+function getTodayManilaKey(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+}
+
+function shiftDateKey(dateKey: string, deltaDays: number): string {
+  const d = new Date(`${dateKey}T12:00:00+08:00`);
+  if (isNaN(d.getTime())) return dateKey;
+  d.setDate(d.getDate() + deltaDays);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+function logToEditableRow(log: DailySheetLogItem, fallbackDateLong: string): EditableTrackerRow {
+  return {
+    localId: log.id,
+    logId: log.id,
+    taskId: log.taskId || null,
+    subtaskId: log.subtaskId || null,
+    sheetRow: log.sheetRow ?? null,
+    date: fallbackDateLong,
+    timeIn: log.timeIn || '',
+    timeOut: log.timeOut || '',
+    client: log.client || '',
+    timeTracker: log.timeTracker || (log.isUpwork ? 'Upwork' : 'No Need to Track'),
+    task: log.taskName || '',
+    taskDeliverablesDescription: log.taskDeliverables || '',
+    taskUpdateAndDeliverables: log.taskUpdateAndDeliverables || '',
+    taskLink: log.taskLink || '',
+    taskStatus: log.status || (log.isLive ? 'In Progress' : 'Completed'),
+    isDraft: false,
+    isDirty: false,
+    isLive: Boolean(log.isLive),
+  };
 }
 
 export const TaskMapDailyTrackerView: React.FC<Props> = ({
   tasks = [],
   allTasks = [],
-  allUsers = [],
+  currentUser,
+  initialDate,
+  initialLogs,
   clients = [],
   onOpenDetail,
   onRefresh,
 }) => {
-  const [selectedMa, setSelectedMa] = useState<string>('ALL');
+  const [dateKey, setDateKey] = useState<string>(() => initialDate || getTodayManilaKey());
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
-  const [draftRows, setDraftRows] = useState<TrackerRowItem[]>([]);
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: string } | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [savingRowIds, setSavingRowIds] = useState<Record<string, boolean>>({});
+  const [dailySheetUrl, setDailySheetUrl] = useState<string | null>(
+    currentUser?.dailySheetUrl || null
+  );
+
+  const myDisplayName = useMemo(
+    () => (currentUser?.name || currentUser?.email || '').trim(),
+    [currentUser?.name, currentUser?.email]
+  );
 
   const formattedDateHeader = useMemo(() => {
-    return formatManilaDateLong(currentDate);
-  }, [currentDate]);
+    const d = new Date(`${dateKey}T12:00:00+08:00`);
+    return isNaN(d.getTime()) ? dateKey : formatManilaDateLong(d);
+  }, [dateKey]);
 
-  // Extract schedule rows from active tasks and their progress records
-  const scheduleRows = useMemo(() => {
-    const rows: TrackerRowItem[] = [];
-    const sourceTasks = allTasks.length > 0 ? allTasks : tasks;
+  const filterPrivateLogs = useCallback(
+    (incoming: DailySheetLogItem[]): DailySheetLogItem[] => {
+      if (!currentUser?.id && !myDisplayName) return [];
+      const myNameLower = myDisplayName.toLowerCase();
+      return incoming.filter((log) => {
+        if (currentUser?.id && log.userId && log.userId === currentUser.id) return true;
+        if (myNameLower && (log.maName || '').trim().toLowerCase() === myNameLower) return true;
+        return false;
+      });
+    },
+    [currentUser?.id, myDisplayName]
+  );
 
-    sourceTasks.forEach((task, index) => {
-      // 1. Check direct progress
-      const p = task.progress;
-      const maName = task.assignee?.name || p?.maName || 'General';
-      const pmReviews = Array.isArray((task as any).taskMap?.pmReviews) ? (task as any).taskMap.pmReviews : [];
+  const [rows, setRows] = useState<EditableTrackerRow[]>(() => {
+    if (!initialLogs) return [];
+    return filterPrivateLogs(initialLogs).map((l) => logToEditableRow(l, formattedDateHeader));
+  });
 
-      // Extract SHEET_PROGRESS entries if available
-      const sheetProgressEntries = pmReviews.filter((r: any) => r?.type === 'SHEET_PROGRESS');
+  // Fetch user's personal dailySheetUrl config
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let active = true;
+    taskMapApi
+      .getDailyScheduleConfig(currentUser.id)
+      .then((res) => {
+        if (active && res?.success) {
+          setDailySheetUrl(res.dailySheetUrl || null);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.id]);
 
-      if (sheetProgressEntries.length > 0) {
-        sheetProgressEntries.forEach((entry: any, eIdx: number) => {
-          rows.push({
-            id: `progress-${task.id}-${eIdx}`,
-            taskId: task.id,
-            rowNumber: rows.length + 2,
-            date: entry.date || formattedDateHeader,
-            timeIn: entry.timeIn || '',
-            timeOut: entry.timeOut || '',
-            durationHours: entry.timeIn && entry.timeOut ? 'Tracked' : '--',
-            client: entry.client || p?.client || task.list?.name || 'General',
-            timeTracker: entry.timeTracker || (p?.isUpwork ? 'Upwork' : 'No Need to Track'),
-            task: entry.task || task.title,
-            taskDeliverablesDescription: entry.taskDeliverables || (task as any).description || '',
-            taskUpdateAndDeliverables: entry.taskUpdateAndDeliverables || '',
-            taskLink: `https://nexus.vipscaleph.com/task/${task.id}`,
-            taskStatus: entry.status || task.status || 'In Progress',
-            wasDeliverablesSubmitted: entry.taskDeliverables ? 'Yes' : 'None',
-            isRecorded: 'Yes',
-            doubleCheckedBy: '',
-            assignedMa: maName,
+  const fetchMyLogs = useCallback(
+    async (targetDate: string) => {
+      if (!myDisplayName && !currentUser?.id) return;
+      setLoading(true);
+      try {
+        const res = await taskMapApi.getDailySheetLogs({
+          date: targetDate,
+          maName: myDisplayName || undefined,
+        });
+        if (res?.success) {
+          const d = new Date(`${targetDate}T12:00:00+08:00`);
+          const dateLong = isNaN(d.getTime()) ? targetDate : formatManilaDateLong(d);
+          const myLogs = filterPrivateLogs(res.logs || []);
+          setRows((prev) => {
+            const unsavedDrafts = prev.filter((r) => r.isDraft);
+            const persisted = myLogs.map((l) => {
+              const existingDirty = prev.find((p) => !p.isDraft && p.logId === l.id && p.isDirty);
+              return existingDirty || logToEditableRow(l, dateLong);
+            });
+            return [...unsavedDrafts, ...persisted];
           });
-        });
-      } else if (p?.timeIn || task.status) {
-        // Fallback to task's active progress
-        rows.push({
-          id: `task-${task.id}`,
-          taskId: task.id,
-          rowNumber: rows.length + 2,
-          date: p?.date || formattedDateHeader,
-          timeIn: p?.timeIn || '',
-          timeOut: p?.timeOut || '',
-          durationHours: p?.timeIn && p?.timeOut ? 'Tracked' : '--',
-          client: p?.client || task.list?.name || 'General',
-          timeTracker: p?.isUpwork ? 'Upwork' : 'No Need to Track',
-          task: task.title,
-          taskDeliverablesDescription: p?.taskDeliverablesDescription || p?.taskDeliverables || '',
-          taskUpdateAndDeliverables: p?.taskUpdateAndDeliverables || '',
-          taskLink: `https://nexus.vipscaleph.com/task/${task.id}`,
-          taskStatus: task.status || 'In Progress',
-          wasDeliverablesSubmitted: p?.taskDeliverables ? 'Yes' : 'None',
-          isRecorded: 'Yes',
-          doubleCheckedBy: '',
-          assignedMa: maName,
-        });
+        }
+      } catch (err) {
+        console.error('[TaskMapDailyTrackerView] Failed to fetch personal daily logs:', err);
+        toast.error('Failed to load your daily logs');
+      } finally {
+        setLoading(false);
       }
-    });
+    },
+    [myDisplayName, currentUser?.id, filterPrivateLogs]
+  );
 
-    return [...draftRows, ...rows];
-  }, [allTasks, tasks, draftRows, formattedDateHeader]);
+  useEffect(() => {
+    void fetchMyLogs(dateKey);
+  }, [dateKey, fetchMyLogs]);
 
-  // Filter rows
+  // Real-time sync when the user's sheet or board submission updates
+  useEffect(() => {
+    const handleLogUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const log = detail?.log;
+      if (!log) return;
+      const isMine =
+        (currentUser?.id && log.userId === currentUser.id) ||
+        (myDisplayName && (log.maName || '').trim().toLowerCase() === myDisplayName.toLowerCase());
+      if (!isMine) return;
+      if (!log.dateKey || log.dateKey === dateKey) {
+        void fetchMyLogs(dateKey);
+      }
+    };
+    window.addEventListener('daily_sheet_log:updated', handleLogUpdated);
+    return () => window.removeEventListener('daily_sheet_log:updated', handleLogUpdated);
+  }, [dateKey, fetchMyLogs, currentUser?.id, myDisplayName]);
+
   const filteredRows = useMemo(() => {
-    return scheduleRows.filter((row) => {
-      if (selectedMa !== 'ALL' && row.assignedMa !== selectedMa) return false;
-      if (statusFilter !== 'ALL' && (row.taskStatus || '').toUpperCase() !== statusFilter.toUpperCase()) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesTask = (row.task || '').toLowerCase().includes(q);
-        const matchesClient = (row.client || '').toLowerCase().includes(q);
-        const matchesNotes = (row.taskUpdateAndDeliverables || '').toLowerCase().includes(q);
-        const matchesDesc = (row.taskDeliverablesDescription || '').toLowerCase().includes(q);
-        return matchesTask || matchesClient || matchesNotes || matchesDesc;
-      }
-      return true;
+    if (!searchQuery.trim()) return rows;
+    const q = searchQuery.toLowerCase().trim();
+    return rows.filter((row) => {
+      return (
+        (row.task || '').toLowerCase().includes(q) ||
+        (row.client || '').toLowerCase().includes(q) ||
+        (row.taskUpdateAndDeliverables || '').toLowerCase().includes(q) ||
+        (row.taskDeliverablesDescription || '').toLowerCase().includes(q)
+      );
     });
-  }, [scheduleRows, selectedMa, statusFilter, searchQuery]);
+  }, [rows, searchQuery]);
 
-  // Add draft row
+  const updateRowField = (
+    localId: string,
+    field: keyof EditableTrackerRow,
+    value: string
+  ) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.localId === localId ? { ...r, [field]: value, isDirty: true } : r
+      )
+    );
+  };
+
   const handleAddDraftRow = () => {
-    const newDraft: TrackerRowItem = {
-      id: `draft-${Date.now()}`,
-      isDraft: true,
-      rowNumber: scheduleRows.length + 2,
+    const newDraft: EditableTrackerRow = {
+      localId: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       date: formattedDateHeader,
       timeIn: formatManilaTime(new Date()),
       timeOut: '',
-      client: clients[0]?.name || 'General',
+      client: '',
       timeTracker: 'No Need to Track',
       task: '',
       taskDeliverablesDescription: '',
       taskUpdateAndDeliverables: '',
+      taskLink: '',
       taskStatus: 'In Progress',
-      wasDeliverablesSubmitted: 'None',
-      isRecorded: 'No',
-      assignedMa: selectedMa !== 'ALL' ? selectedMa : 'General',
+      isDraft: true,
+      isDirty: true,
+      isLive: true,
     };
-    setDraftRows((prev) => [newDraft, ...prev]);
-    toast.success('Draft row added! (Full spreadsheet auto-saving will be connected soon)');
+    setRows((prev) => [newDraft, ...prev]);
+  };
+
+  const handleDiscardDraft = (localId: string) => {
+    setRows((prev) => prev.filter((r) => r.localId !== localId));
+  };
+
+  const handleSyncRow = async (
+    row: EditableTrackerRow,
+    overrideMode?: 'START' | 'STOP' | 'UPDATE',
+    overrideTimeOut?: string
+  ) => {
+    const effectiveTimeOut = overrideTimeOut !== undefined ? overrideTimeOut : row.timeOut;
+    const effectiveClient = row.client.trim();
+    const effectiveTask = row.task.trim();
+
+    if ((row.timeIn.trim() || effectiveTimeOut.trim()) && (!effectiveClient || !effectiveTask)) {
+      toast.error('Client and Task are required before logging Time In or Time Out.');
+      return;
+    }
+    if (!effectiveTask) {
+      toast.error('Please enter a Task title.');
+      return;
+    }
+
+    const mode: 'START' | 'STOP' | 'UPDATE' =
+      overrideMode || (effectiveTimeOut.trim() ? 'STOP' : row.isDraft ? 'START' : 'UPDATE');
+
+    setSavingRowIds((prev) => ({ ...prev, [row.localId]: true }));
+    try {
+      const { durationNum, durationHours } = calculateScheduleDuration(
+        row.timeIn.trim(),
+        effectiveTimeOut.trim()
+      );
+      const res = await taskMapApi.syncScheduleToSpreadsheet({
+        taskId: row.taskId || null,
+        subtaskId: row.subtaskId || null,
+        taskTitle: effectiveTask,
+        clientName: effectiveClient || 'General',
+        taskLink: row.taskLink || undefined,
+        status: mode === 'STOP' && row.taskStatus === 'In Progress' ? 'Completed' : row.taskStatus,
+        mode,
+        sheetRow: row.sheetRow ?? null,
+        timeTracker: row.timeTracker || 'No Need to Track',
+        taskDeliverablesDescription: row.taskDeliverablesDescription || effectiveTask,
+        taskUpdateAndDeliverables: row.taskUpdateAndDeliverables || '',
+        source: 'NEXUS_DAILY_TRACKER',
+        explicitRow: {
+          rowNumber: row.sheetRow ?? undefined,
+          date: row.date || formattedDateHeader,
+          timeIn: row.timeIn.trim(),
+          timeOut: effectiveTimeOut.trim(),
+          durationNum,
+          durationHours,
+          client: effectiveClient || 'General',
+          timeTracker: row.timeTracker || 'No Need to Track',
+          task: effectiveTask,
+          dc: 'FALSE',
+          taskDeliverablesDescription: row.taskDeliverablesDescription || effectiveTask,
+          taskUpdateAndDeliverables: row.taskUpdateAndDeliverables || '',
+          taskLink: row.taskLink || undefined,
+          taskStatus: mode === 'STOP' && row.taskStatus === 'In Progress' ? 'Completed' : row.taskStatus,
+        },
+      });
+
+      if (res?.success) {
+        toast.success(
+          mode === 'STOP'
+            ? 'Clocked out & synced to your spreadsheet'
+            : 'Saved & synced to your spreadsheet'
+        );
+        if (row.isDraft) {
+          setRows((prev) => prev.filter((r) => r.localId !== row.localId));
+        } else {
+          setRows((prev) =>
+            prev.map((r) =>
+              r.localId === row.localId
+                ? {
+                    ...r,
+                    timeOut: effectiveTimeOut.trim(),
+                    taskStatus:
+                      mode === 'STOP' && r.taskStatus === 'In Progress'
+                        ? 'Completed'
+                        : r.taskStatus,
+                    isDirty: false,
+                    isLive: !effectiveTimeOut.trim() && Boolean(r.timeIn.trim()),
+                  }
+                : r
+            )
+          );
+        }
+        void fetchMyLogs(dateKey);
+        onRefresh?.();
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to sync row to spreadsheet');
+    } finally {
+      setSavingRowIds((prev) => ({ ...prev, [row.localId]: false }));
+    }
+  };
+
+  const handleClockOutRow = (row: EditableTrackerRow) => {
+    const nowTime = formatManilaTime(new Date());
+    void handleSyncRow(row, 'STOP', nowTime);
   };
 
   const handleExportCsv = () => {
@@ -173,7 +391,6 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
       'Task Deliverables Description',
       'Task Update and Deliverables',
       'Status',
-      'MA',
     ];
     const csvContent = [
       headers.join(','),
@@ -182,13 +399,12 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
           `"${r.date || ''}"`,
           `"${r.timeIn || ''}"`,
           `"${r.timeOut || ''}"`,
-          `"${r.client || ''}"`,
+          `"${(r.client || '').replace(/"/g, '""')}"`,
           `"${r.timeTracker || ''}"`,
           `"${(r.task || '').replace(/"/g, '""')}"`,
           `"${(r.taskDeliverablesDescription || '').replace(/"/g, '""')}"`,
           `"${(r.taskUpdateAndDeliverables || '').replace(/"/g, '""')}"`,
           `"${r.taskStatus || ''}"`,
-          `"${r.assignedMa || ''}"`,
         ].join(',')
       ),
     ].join('\n');
@@ -197,32 +413,56 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `Nexus-Daily-Tracker-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `My-Daily-Logs-${dateKey}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.info('Exported daily tracker rows to CSV');
+    toast.info('Exported your daily logs to CSV');
   };
 
+  const clientOptions = useMemo(() => {
+    const set = new Set<string>();
+    clients.forEach((c) => {
+      if (c?.name) set.add(c.name);
+    });
+    rows.forEach((r) => {
+      if (r.client) set.add(r.client);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [clients, rows]);
+
+  const activeCount = filteredRows.filter((r) => !r.timeOut && Boolean(r.timeIn)).length;
+  const completedCount = filteredRows.filter((r) => Boolean(r.timeOut)).length;
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-hidden select-none">
+    <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-hidden">
+      {/* Datalist for Client autocomplete */}
+      <datalist id="daily-tracker-client-list">
+        {clientOptions.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
+
       {/* TOOLBAR */}
       <div className="px-6 py-3 border-b border-zinc-800 bg-zinc-900/60 backdrop-blur-md flex items-center justify-between gap-4 flex-wrap">
-        {/* Left: View title & Sheet status */}
+        {/* Left: Private Title & Sheet Link */}
         <div className="flex items-center gap-3">
           <div className="size-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-xs">
             <TableIcon className="size-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-bold text-zinc-100 tracking-tight">Daily Tracker Spreadsheet</h2>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">
-                <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Live Grid View
+              <h2 className="text-sm font-bold text-zinc-100 tracking-tight">My Daily Logs</h2>
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-800 border border-zinc-700 text-zinc-300"
+                title="Only you can see and edit your personal daily log entries"
+              >
+                <Lock className="size-2.5 text-emerald-400" />
+                Private{myDisplayName ? ` • ${myDisplayName}` : ''}
               </span>
             </div>
             <p className="text-[11px] text-zinc-400">
-              Interactive 19-column spreadsheet layout mirroring the MA Daily Schedule sheets.
+              Input your tasks below to update your personal Google Daily Schedule spreadsheet in real time.
             </p>
           </div>
         </div>
@@ -231,8 +471,8 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
         <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg p-1 text-xs">
           <button
             type="button"
-            onClick={() => setCurrentDate((prev) => new Date(prev.getTime() - 86400000))}
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+            onClick={() => setDateKey((d) => shiftDateKey(d, -1))}
+            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
             title="Previous Day"
           >
             <ChevronLeft className="size-4" />
@@ -243,16 +483,16 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
           </div>
           <button
             type="button"
-            onClick={() => setCurrentDate((prev) => new Date(prev.getTime() + 86400000))}
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+            onClick={() => setDateKey((d) => shiftDateKey(d, 1))}
+            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
             title="Next Day"
           >
             <ChevronRight className="size-4" />
           </button>
           <button
             type="button"
-            onClick={() => setCurrentDate(new Date())}
-            className="px-2 py-0.5 text-[10px] font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors"
+            onClick={() => setDateKey(getTodayManilaKey())}
+            className="px-2 py-0.5 text-[10px] font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors cursor-pointer"
           >
             Today
           </button>
@@ -260,24 +500,27 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* MA Filter */}
-          <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-300">
-            <User className="size-3.5 text-zinc-400" />
-            <select
-              value={selectedMa}
-              onChange={(e) => setSelectedMa(e.target.value)}
-              className="bg-transparent text-xs text-zinc-200 focus:outline-none cursor-pointer"
+          {dailySheetUrl ? (
+            <a
+              href={dailySheetUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+              title="Open your personal Google Daily Sheet"
             >
-              <option value="ALL" className="bg-zinc-900 text-zinc-200">
-                All Shift MAs ({allUsers.length})
-              </option>
-              {allUsers.map((u) => (
-                <option key={u.id || u.name} value={u.name} className="bg-zinc-900 text-zinc-200">
-                  {u.name}
-                </option>
-              ))}
-            </select>
-          </div>
+              <ExternalLink className="size-3.5" />
+              <span>Open My Sheet</span>
+            </a>
+          ) : (
+            <Link
+              href="/settings"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-medium text-amber-300 transition-colors"
+              title="Set your Google Daily Sheet URL in Settings"
+            >
+              <AlertCircle className="size-3.5" />
+              <span>Link Daily Sheet</span>
+            </Link>
+          )}
 
           {/* Search Input */}
           <div className="relative">
@@ -286,8 +529,8 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter tasks / clients..."
-              className="w-44 pl-8 pr-3 py-1 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
+              placeholder="Filter my logs..."
+              className="w-40 pl-8 pr-3 py-1 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
             />
           </div>
 
@@ -296,7 +539,7 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
             type="button"
             onClick={handleAddDraftRow}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors cursor-pointer"
-            title="Add a new row to this spreadsheet"
+            title="Add a new row to log and sync to your spreadsheet"
           >
             <Plus className="size-3.5" />
             <span>Add Row</span>
@@ -313,191 +556,193 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
           </button>
 
           {/* Refresh */}
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-              title="Refresh spreadsheet data"
-            >
-              <RefreshCw className="size-4" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              void fetchMyLogs(dateKey);
+              onRefresh?.();
+            }}
+            className="p-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+            title="Refresh my daily logs"
+          >
+            <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
       {/* KPI METRICS STRIP */}
       <div className="px-6 py-2 bg-zinc-950 border-b border-zinc-800/80 flex items-center gap-6 text-xs text-zinc-400">
         <div className="flex items-center gap-2">
-          <span className="text-zinc-500 font-medium">Logged Entries:</span>
-          <span className="font-semibold text-zinc-200">{filteredRows.length} rows</span>
+          <span className="text-zinc-500 font-medium">My Entries:</span>
+          <span className="font-semibold text-zinc-200 tabular-nums">{filteredRows.length}</span>
         </div>
         <div className="w-px h-3 bg-zinc-800" />
         <div className="flex items-center gap-2">
-          <span className="text-zinc-500 font-medium">Active In-Progress:</span>
-          <span className="font-semibold text-blue-400">
-            {filteredRows.filter((r) => (r.taskStatus || '').toUpperCase() === 'IN PROGRESS').length}
-          </span>
+          <span className="text-zinc-500 font-medium">Running:</span>
+          <span className="font-semibold text-emerald-400 tabular-nums">{activeCount}</span>
         </div>
         <div className="w-px h-3 bg-zinc-800" />
         <div className="flex items-center gap-2">
-          <span className="text-zinc-500 font-medium">In Review / Completed:</span>
-          <span className="font-semibold text-amber-400">
-            {filteredRows.filter((r) => ['IN REVIEW', 'CLOSED', 'HANDOVER'].includes((r.taskStatus || '').toUpperCase())).length}
-          </span>
+          <span className="text-zinc-500 font-medium">Clocked Out:</span>
+          <span className="font-semibold text-zinc-200 tabular-nums">{completedCount}</span>
         </div>
-        <div className="w-px h-3 bg-zinc-800" />
-        <div className="flex items-center gap-1.5 text-zinc-500 italic text-[11px] ml-auto">
-          <Sparkles className="size-3 text-emerald-400 shrink-0" />
-          <span>Synced with n8n schedule pipeline & Google Sheets</span>
+        <div className="ml-auto text-[11px] text-zinc-500">
+          Client &amp; Task are required before Time In / Time Out.
         </div>
       </div>
 
       {/* SPREADSHEET TABLE GRID */}
       <div className="flex-1 overflow-auto custom-scrollbar bg-zinc-950">
-        <table className="w-full border-collapse text-left text-xs text-zinc-200 min-w-[1400px]">
-          {/* ROW 1: Column Letters (Google Sheets Header Style) */}
+        <table className="w-full border-collapse text-left text-xs text-zinc-200 min-w-[1380px]">
           <thead>
             <tr className="bg-zinc-900/90 text-zinc-500 border-b border-zinc-800/80 text-[10px] font-mono select-none">
               <th className="w-12 px-2 py-1 text-center border-r border-zinc-800/60 sticky left-0 z-20 bg-zinc-900">
                 #
               </th>
-              <th className="w-40 px-3 py-1 border-r border-zinc-800/60 text-center">A</th>
-              <th className="w-24 px-3 py-1 border-r border-zinc-800/60 text-center">B</th>
-              <th className="w-24 px-3 py-1 border-r border-zinc-800/60 text-center">C</th>
-              <th className="w-20 px-3 py-1 border-r border-zinc-800/60 text-center">F</th>
-              <th className="w-36 px-3 py-1 border-r border-zinc-800/60 text-center">G</th>
-              <th className="w-32 px-3 py-1 border-r border-zinc-800/60 text-center">H</th>
-              <th className="w-64 px-3 py-1 border-r border-zinc-800/60 text-center">I</th>
-              <th className="w-14 px-2 py-1 border-r border-zinc-800/60 text-center">J</th>
-              <th className="w-64 px-3 py-1 border-r border-zinc-800/60 text-center">K</th>
-              <th className="w-72 px-3 py-1 border-r border-zinc-800/60 text-center">L</th>
-              <th className="w-16 px-2 py-1 border-r border-zinc-800/60 text-center">M</th>
-              <th className="w-28 px-3 py-1 border-r border-zinc-800/60 text-center">N</th>
-              <th className="w-28 px-3 py-1 border-r border-zinc-800/60 text-center">O</th>
-              <th className="w-24 px-3 py-1 border-r border-zinc-800/60 text-center">P</th>
-              <th className="w-32 px-3 py-1 text-center">MA</th>
+              <th className="w-40 px-2 py-1 border-r border-zinc-800/60 text-center">A</th>
+              <th className="w-24 px-2 py-1 border-r border-zinc-800/60 text-center">B</th>
+              <th className="w-24 px-2 py-1 border-r border-zinc-800/60 text-center">C</th>
+              <th className="w-20 px-2 py-1 border-r border-zinc-800/60 text-center">F</th>
+              <th className="w-40 px-2 py-1 border-r border-zinc-800/60 text-center">G</th>
+              <th className="w-36 px-2 py-1 border-r border-zinc-800/60 text-center">H</th>
+              <th className="w-60 px-2 py-1 border-r border-zinc-800/60 text-center">I</th>
+              <th className="w-56 px-2 py-1 border-r border-zinc-800/60 text-center">K</th>
+              <th className="w-64 px-2 py-1 border-r border-zinc-800/60 text-center">L</th>
+              <th className="w-28 px-2 py-1 border-r border-zinc-800/60 text-center">N</th>
+              <th className="w-32 px-2 py-1 text-center">Sync</th>
             </tr>
 
-            {/* ROW 2: Column Names */}
             <tr className="bg-zinc-900 text-zinc-300 font-semibold border-b border-zinc-800 text-[11px] sticky top-0 z-10 shadow-xs">
               <th className="w-12 px-2 py-2 text-center border-r border-zinc-800 sticky left-0 z-20 bg-zinc-900 font-mono text-zinc-500">
                 Row
               </th>
-              <th className="w-40 px-3 py-2 border-r border-zinc-800">Date:</th>
-              <th className="w-24 px-3 py-2 border-r border-zinc-800">Time In:</th>
-              <th className="w-24 px-3 py-2 border-r border-zinc-800">Time Out:</th>
-              <th className="w-20 px-3 py-2 border-r border-zinc-800">Duration:</th>
-              <th className="w-36 px-3 py-2 border-r border-zinc-800">Client:</th>
-              <th className="w-32 px-3 py-2 border-r border-zinc-800">Time Tracker:</th>
-              <th className="w-64 px-3 py-2 border-r border-zinc-800">Task:</th>
-              <th className="w-14 px-2 py-2 border-r border-zinc-800 text-center">DC</th>
-              <th className="w-64 px-3 py-2 border-r border-zinc-800">Task Deliverables Description:</th>
-              <th className="w-72 px-3 py-2 border-r border-zinc-800">Task Update and Deliverables:</th>
-              <th className="w-16 px-2 py-2 border-r border-zinc-800 text-center">Link</th>
-              <th className="w-28 px-3 py-2 border-r border-zinc-800">Status:</th>
-              <th className="w-28 px-3 py-2 border-r border-zinc-800">Submitted?</th>
-              <th className="w-24 px-3 py-2 border-r border-zinc-800">Recorded?</th>
-              <th className="w-32 px-3 py-2">Assigned MA</th>
+              <th className="w-40 px-2.5 py-2 border-r border-zinc-800">Date:</th>
+              <th className="w-24 px-2.5 py-2 border-r border-zinc-800">Time In:</th>
+              <th className="w-24 px-2.5 py-2 border-r border-zinc-800">Time Out:</th>
+              <th className="w-20 px-2.5 py-2 border-r border-zinc-800">Duration:</th>
+              <th className="w-40 px-2.5 py-2 border-r border-zinc-800">Client:</th>
+              <th className="w-36 px-2.5 py-2 border-r border-zinc-800">Time Tracker:</th>
+              <th className="w-60 px-2.5 py-2 border-r border-zinc-800">Task:</th>
+              <th className="w-56 px-2.5 py-2 border-r border-zinc-800">Deliverables Desc:</th>
+              <th className="w-64 px-2.5 py-2 border-r border-zinc-800">Update &amp; Deliverables:</th>
+              <th className="w-28 px-2.5 py-2 border-r border-zinc-800">Status:</th>
+              <th className="w-32 px-2.5 py-2 text-center">Actions</th>
             </tr>
           </thead>
 
-          {/* TABLE BODY */}
           <tbody className="divide-y divide-zinc-800/60 font-sans">
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={16} className="py-16 text-center text-zinc-500 italic">
-                  No schedule entries found matching current filters. Click &quot;Add Row&quot; above to add a new task record.
+                <td colSpan={12} className="py-16 text-center text-zinc-500 italic">
+                  {loading
+                    ? 'Loading your daily logs...'
+                    : 'No personal log entries for this date yet. Click "Add Row" above to log a task and sync it to your spreadsheet.'}
                 </td>
               </tr>
             ) : (
               filteredRows.map((row, index) => {
-                const isSelected = selectedCell?.row === index;
-                const statusNorm = (row.taskStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-                const isLive = !row.timeOut && Boolean(row.timeIn);
-
-                const statusColor =
-                  statusNorm === 'INPROGRESS'
-                    ? 'bg-blue-500/15 border-blue-500/30 text-blue-400'
-                    : statusNorm === 'INREVIEW' || statusNorm === 'TOREVIEW'
-                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                    : statusNorm === 'HANDOVER'
-                    ? 'bg-sky-500/15 border-sky-500/30 text-sky-300'
-                    : statusNorm === 'CLOSED'
-                    ? 'bg-zinc-800 border-zinc-700 text-zinc-400'
-                    : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/50';
+                const isSaving = Boolean(savingRowIds[row.localId]);
+                const isRunning = !row.timeOut.trim() && Boolean(row.timeIn.trim());
+                const { durationHours } =
+                  row.timeIn && row.timeOut
+                    ? calculateScheduleDuration(row.timeIn, row.timeOut)
+                    : { durationHours: isRunning ? 'Running' : '--' };
 
                 return (
                   <tr
-                    key={row.id || index}
+                    key={row.localId}
                     className={`transition-colors group ${
                       row.isDraft
-                        ? 'bg-emerald-950/20 hover:bg-emerald-900/30'
-                        : isSelected
-                        ? 'bg-indigo-950/30 hover:bg-indigo-900/40'
+                        ? 'bg-emerald-950/20 hover:bg-emerald-950/30'
+                        : row.isDirty
+                        ? 'bg-amber-950/15 hover:bg-amber-950/25'
                         : index % 2 === 0
-                        ? 'bg-zinc-950 hover:bg-zinc-900/70'
-                        : 'bg-zinc-900/30 hover:bg-zinc-900/70'
+                        ? 'bg-zinc-950 hover:bg-zinc-900/60'
+                        : 'bg-zinc-900/30 hover:bg-zinc-900/60'
                     }`}
                   >
                     {/* Row Index */}
-                    <td className="w-12 px-2 py-2 text-center border-r border-zinc-800/80 font-mono text-[11px] text-zinc-500 sticky left-0 z-10 bg-zinc-950 group-hover:bg-zinc-900">
-                      {index + 2}
+                    <td className="w-12 px-2 py-1.5 text-center border-r border-zinc-800/80 font-mono text-[11px] text-zinc-500 sticky left-0 z-10 bg-zinc-950 group-hover:bg-zinc-900">
+                      {row.sheetRow ? `#${row.sheetRow}` : index + 2}
                     </td>
 
                     {/* Col A: Date */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 text-zinc-300 truncate max-w-[160px]">
-                      {row.date || formattedDateHeader}
+                    <td className="px-2.5 py-1.5 border-r border-zinc-800/60 text-zinc-400 truncate max-w-[160px]">
+                      {row.date}
                     </td>
 
                     {/* Col B: Time In */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 font-mono font-medium text-emerald-400 whitespace-nowrap">
-                      {row.timeIn ? (
-                        <span className="flex items-center gap-1">
-                          {isLive && <span className="size-1.5 rounded-full bg-emerald-400 animate-ping" />}
-                          {row.timeIn}
-                        </span>
-                      ) : (
-                        <span className="text-zinc-600">--:--</span>
-                      )}
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <input
+                        type="text"
+                        value={row.timeIn}
+                        onChange={(e) => updateRowField(row.localId, 'timeIn', e.target.value)}
+                        placeholder="8:30 AM"
+                        className="w-full bg-transparent px-1.5 py-1 rounded font-mono text-xs text-emerald-400 placeholder:text-zinc-600 focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                      />
                     </td>
 
                     {/* Col C: Time Out */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 font-mono text-zinc-300 whitespace-nowrap">
-                      {row.timeOut || (isLive ? <span className="text-amber-400/80 italic text-[10px]">Running...</span> : '--:--')}
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <input
+                        type="text"
+                        value={row.timeOut}
+                        onChange={(e) => updateRowField(row.localId, 'timeOut', e.target.value)}
+                        placeholder={isRunning ? 'Running...' : '--:--'}
+                        className="w-full bg-transparent px-1.5 py-1 rounded font-mono text-xs text-zinc-200 placeholder:text-amber-400/70 focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                      />
                     </td>
 
                     {/* Col F: Duration */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 font-mono text-zinc-400 text-[11px]">
-                      {row.durationHours || '--'}
+                    <td className="px-2.5 py-1.5 border-r border-zinc-800/60 font-mono text-zinc-400 text-[11px] whitespace-nowrap">
+                      {durationHours}
                     </td>
 
                     {/* Col G: Client */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 font-semibold text-zinc-200 truncate max-w-[150px]">
-                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800/80 border border-zinc-700/60 text-[11px] truncate">
-                        {row.client || 'General'}
-                      </span>
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <input
+                        type="text"
+                        list="daily-tracker-client-list"
+                        value={row.client}
+                        onChange={(e) => updateRowField(row.localId, 'client', e.target.value)}
+                        placeholder="Client name..."
+                        className="w-full bg-transparent px-1.5 py-1 rounded text-xs font-medium text-zinc-100 placeholder:text-zinc-600 focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                      />
                     </td>
 
                     {/* Col H: Time Tracker */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 text-zinc-400 text-[11px] truncate">
-                      {row.timeTracker || 'No Need to Track'}
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <select
+                        value={row.timeTracker}
+                        onChange={(e) => updateRowField(row.localId, 'timeTracker', e.target.value)}
+                        className="w-full bg-zinc-900/70 border border-zinc-800/80 rounded px-1.5 py-1 text-[11px] text-zinc-300 focus:outline-none focus:border-emerald-500/60 cursor-pointer"
+                      >
+                        <option value="No Need to Track">No Need to Track</option>
+                        <option value="Upwork">Upwork</option>
+                        <option value="Clockify">Clockify</option>
+                      </select>
                     </td>
 
                     {/* Col I: Task */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 font-medium text-zinc-100 max-w-[260px] truncate">
-                      <div className="flex items-center justify-between gap-1 group/task">
-                        <span className="truncate" title={row.task}>
-                          {row.task || <span className="text-zinc-600 italic">Empty Task</span>}
-                        </span>
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={row.task}
+                          onChange={(e) => updateRowField(row.localId, 'task', e.target.value)}
+                          placeholder="Task title..."
+                          className="w-full bg-transparent px-1.5 py-1 rounded text-xs font-medium text-zinc-100 placeholder:text-zinc-600 focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                        />
                         {row.taskId && onOpenDetail && (
                           <button
                             type="button"
                             onClick={() => {
-                              const found = allTasks.find((t) => t.id === row.taskId) || tasks.find((t) => t.id === row.taskId);
+                              const found =
+                                allTasks.find((t) => t.id === row.taskId) ||
+                                tasks.find((t) => t.id === row.taskId);
                               if (found) onOpenDetail(found);
                             }}
-                            className="opacity-0 group-hover/task:opacity-100 p-0.5 text-zinc-400 hover:text-white transition-opacity"
+                            className="p-1 text-zinc-500 hover:text-zinc-200 shrink-0 cursor-pointer"
                             title="Open task detail"
                           >
                             <ExternalLink className="size-3" />
@@ -506,90 +751,101 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
                       </div>
                     </td>
 
-                    {/* Col J: DC */}
-                    <td className="px-2 py-2 border-r border-zinc-800/60 text-center font-mono text-zinc-500 text-[11px]">
-                      {row.dc ? '✓' : '-'}
+                    {/* Col K: Deliverables Description */}
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <input
+                        type="text"
+                        value={row.taskDeliverablesDescription}
+                        onChange={(e) =>
+                          updateRowField(row.localId, 'taskDeliverablesDescription', e.target.value)
+                        }
+                        placeholder="Deliverables scope..."
+                        className="w-full bg-transparent px-1.5 py-1 rounded text-xs text-zinc-300 placeholder:text-zinc-600 focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                      />
                     </td>
 
-                    {/* Col K: Task Deliverables Description */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 text-zinc-300 max-w-[260px] truncate" title={row.taskDeliverablesDescription}>
-                      {row.taskDeliverablesDescription || <span className="text-zinc-600 italic">None</span>}
-                    </td>
-
-                    {/* Col L: Task Update and Deliverables */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 text-zinc-400 max-w-[280px] truncate" title={row.taskUpdateAndDeliverables}>
-                      {row.taskUpdateAndDeliverables || <span className="text-zinc-600 italic">None</span>}
-                    </td>
-
-                    {/* Col M: Task Link */}
-                    <td className="px-2 py-2 border-r border-zinc-800/60 text-center">
-                      {row.taskLink ? (
-                        <a
-                          href={row.taskLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center justify-center p-1 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-colors"
-                          title="Open Link"
-                        >
-                          <LinkIcon className="size-3" />
-                        </a>
-                      ) : (
-                        <span className="text-zinc-700">-</span>
-                      )}
+                    {/* Col L: Update & Deliverables */}
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <input
+                        type="text"
+                        value={row.taskUpdateAndDeliverables}
+                        onChange={(e) =>
+                          updateRowField(row.localId, 'taskUpdateAndDeliverables', e.target.value)
+                        }
+                        placeholder="Progress update / output..."
+                        className="w-full bg-transparent px-1.5 py-1 rounded text-xs text-zinc-300 placeholder:text-zinc-600 focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-emerald-500/60"
+                      />
                     </td>
 
                     {/* Col N: Status */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${statusColor}`}>
-                        {row.taskStatus || 'In Progress'}
-                      </span>
+                    <td className="px-1.5 py-1 border-r border-zinc-800/60">
+                      <select
+                        value={row.taskStatus}
+                        onChange={(e) => updateRowField(row.localId, 'taskStatus', e.target.value)}
+                        className="w-full bg-zinc-900/70 border border-zinc-800/80 rounded px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-emerald-500/60 cursor-pointer"
+                      >
+                        <option value="In Progress">In Progress</option>
+                        <option value="In Review">In Review</option>
+                        <option value="Handover">Handover</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Closed">Closed</option>
+                      </select>
                     </td>
 
-                    {/* Col O: Was Deliverables Submitted? */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 text-zinc-400 text-center text-[11px]">
-                      {row.wasDeliverablesSubmitted || 'None'}
-                    </td>
+                    {/* Actions */}
+                    <td className="px-2 py-1 text-center whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1">
+                        {isRunning && !row.isDraft && (
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => handleClockOutRow(row)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-600/20 hover:bg-amber-600/35 border border-amber-500/40 text-amber-300 text-[10px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                            title="Clock out now & update spreadsheet"
+                          >
+                            <Square className="size-2.5 fill-current" />
+                            <span>Out</span>
+                          </button>
+                        )}
 
-                    {/* Col P: Is Recorded? */}
-                    <td className="px-3 py-2 border-r border-zinc-800/60 text-zinc-400 text-center text-[11px]">
-                      {row.isRecorded || 'No'}
-                    </td>
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onClick={() => void handleSyncRow(row)}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
+                            row.isDraft || row.isDirty
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                              : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                          }`}
+                          title="Save & sync this row to your Google Spreadsheet"
+                        >
+                          {isSaving ? (
+                            <Loader2 className="size-3 animate-spin" />
+                          ) : row.isDraft || row.isDirty ? (
+                            <Save className="size-3" />
+                          ) : (
+                            <CheckCircle2 className="size-3 text-emerald-400" />
+                          )}
+                          <span>{row.isDraft || row.isDirty ? 'Sync' : 'Synced'}</span>
+                        </button>
 
-                    {/* Col Q/MA: Assigned MA */}
-                    <td className="px-3 py-2 font-medium text-zinc-300 truncate max-w-[130px]">
-                      {row.assignedMa || 'General'}
+                        {row.isDraft && (
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => handleDiscardDraft(row.localId)}
+                            className="p-1 rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                            title="Discard unsaved row"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
               })
             )}
-
-            {/* Empty spreadsheet rows for aesthetic grid feel */}
-            {Array.from({ length: Math.max(0, 10 - filteredRows.length) }).map((_, emptyIdx) => {
-              const rowNum = filteredRows.length + emptyIdx + 2;
-              return (
-                <tr key={`empty-${emptyIdx}`} className="bg-zinc-950/40 hover:bg-zinc-900/40 transition-colors">
-                  <td className="w-12 px-2 py-2 text-center border-r border-zinc-800/40 font-mono text-[10px] text-zinc-700 sticky left-0 bg-zinc-950">
-                    {rowNum}
-                  </td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-2 py-2 border-r border-zinc-800/30 text-zinc-800 text-center">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-2 py-2 border-r border-zinc-800/30 text-zinc-800 text-center">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800 text-center">-</td>
-                  <td className="px-3 py-2 border-r border-zinc-800/30 text-zinc-800 text-center">-</td>
-                  <td className="px-3 py-2 text-zinc-800">-</td>
-                </tr>
-              );
-            })}
           </tbody>
         </table>
       </div>

@@ -13,6 +13,17 @@ interface MaDaySummary {
   newTasks: number;
 }
 
+interface DistributeDecision {
+  taskId: string;
+  taskTitle: string;
+  userId: string;
+  userName: string;
+  method: 'ai' | 'rules';
+  reason: string;
+  hours?: number;
+  isMove?: boolean;
+}
+
 interface DistributeResult {
   success: boolean;
   moved: number;
@@ -21,6 +32,7 @@ interface DistributeResult {
   failed: Array<{ taskId: string; taskTitle: string; error: string }>;
   skippedTasks: Array<{ taskId: string; taskTitle: string; reason: string }>;
   summary: MaDaySummary[];
+  decisions?: DistributeDecision[];
 }
 
 interface ResetResult {
@@ -43,6 +55,7 @@ type Dialog = { kind: 'distribute'; preview: DistributeResult | null } | { kind:
 export function AutoQueueControls() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState<'preview' | 'distribute' | 'reset' | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const openDistribute = async () => {
     setBusy('preview');
@@ -52,6 +65,7 @@ export function AutoQueueControls() {
         params: { kind: 'distribute' },
         timeoutMs: TIMEOUT_MS,
       });
+      setSelectedUserId(null);
       setDialog({ kind: 'distribute', preview });
     } catch (err: any) {
       toast.error(err?.message || 'Could not load the distribution preview');
@@ -131,7 +145,7 @@ export function AutoQueueControls() {
           onClick={() => busy === null && setDialog(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-zinc-800 bg-card p-5 shadow-2xl"
+            className={`w-full ${dialog.kind === 'distribute' ? 'max-w-2xl' : 'max-w-md'} rounded-2xl border border-zinc-800 bg-card p-5 shadow-2xl`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-start justify-between gap-3">
@@ -156,34 +170,96 @@ export function AutoQueueControls() {
                   placed by hand stay where they are.
                 </p>
                 {dialog.preview.summary.length > 0 && (
-                  <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-800">
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-zinc-800">
                     <table className="w-full text-[11px]">
                       <thead className="bg-zinc-900/60 text-zinc-500">
                         <tr>
-                          <th className="px-2.5 py-1.5 text-left font-semibold">MA</th>
+                          <th className="px-2.5 py-1.5 text-left font-semibold">MA (click to filter)</th>
+                          <th className="px-2.5 py-1.5 text-right font-semibold">New</th>
                           <th className="px-2.5 py-1.5 text-right font-semibold">Planned / shift</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {dialog.preview.summary.map((s) => (
-                          <tr key={s.userId} className="border-t border-zinc-800/60">
-                            <td className="px-2.5 py-1.5">{s.userName}</td>
-                            <td
-                              className={`px-2.5 py-1.5 text-right ${s.plannedHours > s.shiftHours ? 'text-amber-400' : ''}`}
+                        {dialog.preview.summary.map((s) => {
+                          const active = selectedUserId === s.userId;
+                          return (
+                            <tr
+                              key={s.userId}
+                              onClick={() => setSelectedUserId(active ? null : s.userId)}
+                              className={`border-t border-zinc-800/60 cursor-pointer transition-colors ${
+                                active ? 'bg-emerald-500/10 text-emerald-300' : 'hover:bg-zinc-900/40'
+                              }`}
                             >
-                              {s.plannedHours.toFixed(1)}h / {s.shiftHours.toFixed(1)}h
-                            </td>
-                          </tr>
-                        ))}
+                              <td className="px-2.5 py-1.5 font-medium">{s.userName}</td>
+                              <td className="px-2.5 py-1.5 text-right text-zinc-400">{s.newTasks}</td>
+                              <td
+                                className={`px-2.5 py-1.5 text-right ${s.plannedHours > s.shiftHours ? 'text-amber-400' : ''}`}
+                              >
+                                {s.plannedHours.toFixed(1)}h / {s.shiftHours.toFixed(1)}h
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
+                {dialog.preview.decisions && dialog.preview.decisions.length > 0 && (() => {
+                  const visible = selectedUserId
+                    ? dialog.preview.decisions.filter((d) => d.userId === selectedUserId)
+                    : dialog.preview.decisions;
+                  const selectedName = selectedUserId
+                    ? dialog.preview.summary.find((s) => s.userId === selectedUserId)?.userName
+                    : null;
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                        <span>
+                          {selectedName ? `Tasks for ${selectedName}` : 'All planned tasks'} ({visible.length})
+                        </span>
+                        {selectedUserId && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUserId(null)}
+                            className="text-emerald-400 hover:underline cursor-pointer"
+                          >
+                            Show all
+                          </button>
+                        )}
+                      </div>
+                      <div className="max-h-56 overflow-y-auto rounded-lg border border-zinc-800 divide-y divide-zinc-800/60">
+                        {visible.map((d) => (
+                          <div key={d.taskId} className="px-2.5 py-2 text-[11px] space-y-0.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-zinc-100 truncate">{d.taskTitle}</span>
+                              <span className="shrink-0 text-zinc-400">
+                                {d.userName} · {d.hours !== undefined ? `${d.hours}h` : '3h'} · {d.isMove ? 'Move' : 'Queue'}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-zinc-500">
+                              [{d.method}] {d.reason}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {dialog.preview.skippedTasks.length > 0 && (
-                  <p className="text-amber-400/90">
-                    {dialog.preview.skippedTasks.length} task{dialog.preview.skippedTasks.length === 1 ? '' : 's'} will stay
-                    in Available tasks (no one scheduled today has the role).
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-amber-400/90">
+                      {dialog.preview.skippedTasks.length} task{dialog.preview.skippedTasks.length === 1 ? '' : 's'} will stay
+                      in Available tasks:
+                    </p>
+                    <div className="max-h-24 overflow-y-auto rounded-lg border border-amber-500/20 bg-amber-500/5 divide-y divide-amber-500/10">
+                      {dialog.preview.skippedTasks.map((t) => (
+                        <div key={t.taskId} className="px-2.5 py-1.5 text-[11px]">
+                          <span className="font-medium text-amber-300">{t.taskTitle}</span>
+                          <span className="text-amber-400/80"> — {t.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}

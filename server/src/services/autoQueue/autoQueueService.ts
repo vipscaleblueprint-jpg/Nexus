@@ -576,6 +576,7 @@ export interface DistributeResult {
   failed: Array<{ taskId: string; taskTitle: string; error: string }>;
   skippedTasks: DailyPlan['skipped'];
   summary: DailyPlan['summary'];
+  decisions?: Array<Decision & { isMove?: boolean }>;
 }
 
 /**
@@ -622,6 +623,14 @@ export async function distributeAutoQueue(actor: ActorUser, opts: { preview?: bo
         .map((d) => ({ taskId: d.taskId, taskTitle: d.taskTitle, error: d.error || 'Not applied' })),
       skippedTasks: plan.skipped,
       summary: plan.summary,
+      ...(opts.preview
+        ? {
+            decisions: changes.map((d) => ({
+              ...d,
+              isMove: ownerBefore.has(d.taskId),
+            })),
+          }
+        : {}),
     };
   });
 }

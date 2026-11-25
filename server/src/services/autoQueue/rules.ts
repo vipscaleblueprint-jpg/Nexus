@@ -41,6 +41,8 @@ export interface BoardItem {
   subtaskId?: string | null;
   parentTaskId?: string | null;
   parentTaskTitle?: string | null;
+  subtaskCount?: number | null;
+  subtasks?: Array<{ title?: string | null }> | null;
   listId?: string | null;
   list?: { id?: string; name?: string | null } | null;
   assigneeId?: string | null;
@@ -168,8 +170,16 @@ function isOnHold(item: BoardItem): boolean {
   return (item.taskMap?.statuses || []).some((s) => norm(s).includes('HOLD'));
 }
 
-/** Open production work an MA does (not review/CRM/cadence/on-hold/closed/internal admin). */
+/** Parent tasks (any non-`--audit` subtask, open or completed) are never queued or counted; their subtasks are. */
+export function isParentTask(item: BoardItem): boolean {
+  if (item.isSubtask) return false;
+  if (typeof item.subtaskCount === 'number') return item.subtaskCount > 0;
+  return (item.subtasks || []).some((st) => !(st?.title || '').toLowerCase().includes('--audit'));
+}
+
+/** Open production work an MA does (not parent tasks, review/CRM/cadence/on-hold/closed/internal admin). */
 export function isMaWorkItem(item: BoardItem): boolean {
+  if (isParentTask(item)) return false;
   if (item.isClosed || item.isAdminTask || item.recurringConfig) return false;
   const s = norm(item.status);
   if (NOT_MA_WORK_EXACT.has(s) || s.includes('WAITING') || s.includes('CRM')) return false;

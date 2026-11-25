@@ -154,6 +154,7 @@ async function triggerN8nStartTaskWebhook(params: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(safePayload),
+      signal: AbortSignal.timeout(6000),
     });
     logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);
   } catch (err: any) {
@@ -2763,21 +2764,55 @@ async function executeTaskMapAssignment(
             reviewsList.push(liveSubProg);
           }
 
-          // Trigger n8n webhook asynchronously to append row to MA Daily Schedule
-          triggerN8nStartTaskWebhook({
-            userId: assigneeId,
-            userName: targetSubUser?.name || actorName,
-            userEmail: targetSubUser?.email || actorUser?.email,
-            dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
-            taskId: currentSubtask.taskId,
-            subtaskId: currentSubtask.id,
-            taskTitle: `${currentSubtask.title} (${currentSubtask.task?.title || 'Subtask'})`,
-            clientName: currentSubtask.task?.list?.name || 'General',
-            taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
-            status: 'In Progress',
-            timeIn: nowManilaTime,
-            date: nowManilaDate,
-          });
+          // Persist DailySheetLog & trigger n8n webhook to append row to MA Daily Schedule
+          const subTaskTitleForSheet = `${currentSubtask.title} (${currentSubtask.task?.title || 'Subtask'})`;
+          const subClientForSheet = currentSubtask.task?.list?.name || 'General';
+          const subMaName = targetSubUser?.name || actorName;
+
+          const [savedSubLog] = await Promise.all([
+            upsertDailySheetLog({
+              date: nowManilaDate,
+              maName: subMaName,
+              userId: assigneeId,
+              taskId: currentSubtask.taskId,
+              subtaskId: currentSubtask.id,
+              client: subClientForSheet,
+              taskName: subTaskTitleForSheet,
+              timeIn: nowManilaTime,
+              timeOut: null,
+              isUpwork: false,
+              timeTracker: 'No Need to Track',
+              status: 'In Progress',
+              taskDeliverables: currentSubtask.title,
+              taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
+              source: 'NEXUS_BOARD',
+            }).catch((err) => {
+              logger.warn({ err }, 'Failed to upsert DailySheetLog on subtask IN_PROGRESS');
+              return null;
+            }),
+            triggerN8nStartTaskWebhook({
+              userId: assigneeId,
+              userName: subMaName,
+              userEmail: targetSubUser?.email || actorUser?.email,
+              dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
+              taskId: currentSubtask.taskId,
+              subtaskId: currentSubtask.id,
+              taskTitle: subTaskTitleForSheet,
+              clientName: subClientForSheet,
+              taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
+              status: 'In Progress',
+              timeIn: nowManilaTime,
+              timeOut: null,
+              timeTracker: 'No Need to Track',
+              taskDeliverablesDescription: currentSubtask.title,
+              description: currentSubtask.title,
+              date: nowManilaDate,
+              mode: 'START',
+            }),
+          ]);
+          if (savedSubLog) {
+            io.emit('daily_sheet_log:updated', { log: savedSubLog });
+          }
         }
 
         if (!isReviewOrCrmSub && targetSubUser && !isNonMaReviewerOnlyRole(targetSubUser as any)) {
@@ -3240,20 +3275,51 @@ async function executeTaskMapAssignment(
           reviewsList.push(liveProg);
         }
 
-        // Trigger n8n webhook asynchronously to append row to MA Daily Schedule
-        triggerN8nStartTaskWebhook({
-          userId: assigneeId,
-          userName: updatedTask.assignee?.name || actorName,
-          userEmail: updatedTask.assignee?.email || actorUser?.email,
-          dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
-          taskId: id,
-          taskTitle: updatedTask.title,
-          clientName: updatedTask.list?.name || 'General',
-          taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
-          status: 'In Progress',
-          timeIn: nowManilaTime,
-          date: nowManilaDate,
-        });
+        // Persist DailySheetLog & trigger n8n webhook to append row to MA Daily Schedule
+        const mainMaName = updatedTask.assignee?.name || actorName;
+        const mainClientForSheet = updatedTask.list?.name || 'General';
+        const [savedMainLog] = await Promise.all([
+          upsertDailySheetLog({
+            date: nowManilaDate,
+            maName: mainMaName,
+            userId: assigneeId,
+            taskId: id,
+            client: mainClientForSheet,
+            taskName: updatedTask.title,
+            timeIn: nowManilaTime,
+            timeOut: null,
+            isUpwork: false,
+            timeTracker: 'No Need to Track',
+            status: 'In Progress',
+            taskDeliverables: updatedTask.title,
+            taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
+            source: 'NEXUS_BOARD',
+          }).catch((err) => {
+            logger.warn({ err }, 'Failed to upsert DailySheetLog on main task IN_PROGRESS');
+            return null;
+          }),
+          triggerN8nStartTaskWebhook({
+            userId: assigneeId,
+            userName: mainMaName,
+            userEmail: updatedTask.assignee?.email || actorUser?.email,
+            dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
+            taskId: id,
+            taskTitle: updatedTask.title,
+            clientName: mainClientForSheet,
+            taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
+            status: 'In Progress',
+            timeIn: nowManilaTime,
+            timeOut: null,
+            timeTracker: 'No Need to Track',
+            taskDeliverablesDescription: updatedTask.title,
+            description: updatedTask.title,
+            date: nowManilaDate,
+            mode: 'START',
+          }),
+        ]);
+        if (savedMainLog) {
+          io.emit('daily_sheet_log:updated', { log: savedMainLog });
+        }
       }
 
       const taskStatusNorm = (updatedTask.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');

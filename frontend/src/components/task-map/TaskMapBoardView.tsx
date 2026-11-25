@@ -4133,6 +4133,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                     });
                                     return;
                                   }
+                                  if (normNew === 'inprogress' && !task.isAssumptionBlock && !isTaskLiveWorking(task, user.name, boardTime)) {
+                                    void handleSelectInProgressTask(task.id, userId, task);
+                                    return;
+                                  }
                                   let effectiveStatus = newStatus;
                                   const isClosing = isClosedStatus(effectiveStatus);
                                   if (task.isAssumptionBlock) {

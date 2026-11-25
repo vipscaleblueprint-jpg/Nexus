@@ -7,22 +7,28 @@
  *                            everyone scheduled today, balanced by estimated hours vs shift hours
  */
 import {
+  autoQueuedTo,
   canUserTakeTask,
   computeMaLoads,
   DEFAULT_ESTIMATED_HOURS,
   getBoardItemOwnerId,
   isAutoQueueEligibleUser,
+  isBoardItemStarted,
   isMaWorkItem,
   isUserOnShiftNow,
   itemHours,
   orderPoolForQueue,
   rankCandidatesByLoad,
+  remainingShiftHours,
   scheduledShiftHours,
+  usersInGroup,
   type BoardItem,
   type MaLoad,
   type QueueUser,
+  type ShiftGroup,
   type ShiftWindow,
 } from './rules';
+import { decideDoable, type JudgeFn } from './doable';
 import type { AiPick, PickCandidate, PickTask } from './ollamaPicker';
 
 /** Keep the prompt small for a 3B model: show the AI a few candidates (plus the original MA). */
@@ -35,6 +41,7 @@ export interface Decision {
   taskTitle: string;
   userId: string;
   userName: string;
+  fromUserId?: string;
   method: 'ai' | 'rules';
   reason: string;
   /** Hours the task counted for (its estimate, or the default). Daily plan only. */
@@ -198,6 +205,10 @@ export interface DailyPlanInput {
   /** Hours a task without an estimate counts for. */
   defaultHours?: number;
   pick?: PickFn;
+  /** When true, a task that fits no one's free hours goes to `skipped` instead of overloading someone. */
+  requireRoom?: boolean;
+  /** Overrides `scheduledShiftHours` for each person's available capacity (users with <= 0 are skipped). */
+  capacityHours?: (user: QueueUser) => number;
 }
 
 export interface MaDaySummary {
@@ -219,9 +230,10 @@ export interface DailyPlan {
 
 export async function planDailyDistribution(input: DailyPlanInput): Promise<DailyPlan> {
   const defaultHours = input.defaultHours ?? DEFAULT_ESTIMATED_HOURS;
+  const getCapacity = input.capacityHours ?? ((user: QueueUser) => scheduledShiftHours(user, input.shifts));
   const scheduled = input.users
     .filter(isAutoQueueEligibleUser)
-    .map((user) => ({ user, shiftHours: scheduledShiftHours(user, input.shifts) }))
+    .map((user) => ({ user, shiftHours: getCapacity(user) }))
     .filter((s) => s.shiftHours > 0);
 
   const ids = scheduled.map((s) => s.user.id);
@@ -235,6 +247,7 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
 
   const decisions: Decision[] = [];
   const skipped: DailyPlan['skipped'] = [];
+  const targetLabel = input.requireRoom ? 'on the next shift' : 'scheduled today';
 
   for (const task of orderPoolForQueue(input.pool)) {
     const hours = itemHours(task, defaultHours);
@@ -244,8 +257,8 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
         taskId: task.id,
         taskTitle: task.title,
         reason: (task.assigneeRoleRestrictions || []).length
-          ? `No one scheduled today has the role ${task.assigneeRoleRestrictions!.join(' / ')}`
-          : 'No MAs scheduled today',
+          ? `No one ${targetLabel} has the role ${task.assigneeRoleRestrictions!.join(' / ')}`
+          : `No MAs ${targetLabel}`,
       });
       continue;
     }
@@ -263,8 +276,16 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
           (a.user.name || '').localeCompare(b.user.name || '')
       );
     // Keep it balanced: the AI only chooses among people the task fits into today
-    // (or the three with the most room when it fits no one).
+    // (or the three with the most room when it fits no one, unless requireRoom is set).
     const fits = ranked.filter((c) => c.freeHours! >= hours);
+    if (input.requireRoom && fits.length === 0) {
+      skipped.push({
+        taskId: task.id,
+        taskTitle: task.title,
+        reason: 'No one on the next shift has room',
+      });
+      continue;
+    }
     const pickable = fits.length > 0 ? fits : ranked.slice(0, 3);
 
     const ai = await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
@@ -302,4 +323,115 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       }))
       .sort((a, b) => a.userName.localeCompare(b.userName)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// 1 PM and 5 PM shift checkpoints (doable check -> handover / return to pool)
+// ---------------------------------------------------------------------------
+
+export interface CheckpointPlanInput {
+  boardItems: BoardItem[];
+  users: QueueUser[];
+  shifts: ShiftWindow[];
+  minuteOfDay: number;
+  from: ShiftGroup; // group being checked
+  to: ShiftGroup; // group receiving handovers
+  botId: string;
+  defaultHours?: number;
+  judge?: JudgeFn;
+  pick?: PickFn;
+}
+
+export interface CheckpointPlan {
+  verdicts: Array<{
+    userId: string;
+    userName: string;
+    remainingHours: number;
+    method: 'ai' | 'rules';
+    reason: string;
+    cannotFinishIds: string[];
+  }>;
+  handovers: Decision[]; // fromUserId set
+  returned: Array<{ taskId: string; taskTitle: string; fromUserId: string; reason: string }>;
+  atRisk: Array<{ taskId: string; taskTitle: string; userId: string; reason: string }>; // PM-placed, not moved
+}
+
+export async function planCheckpoint(input: CheckpointPlanInput): Promise<CheckpointPlan> {
+  const defaultHours = input.defaultHours ?? DEFAULT_ESTIMATED_HOURS;
+  const fromUsers = usersInGroup(input.users, input.shifts, input.from);
+
+  const verdicts: CheckpointPlan['verdicts'] = [];
+  const candidates: BoardItem[] = [];
+  const candidateFrom = new Map<string, string>();
+  const atRisk: CheckpointPlan['atRisk'] = [];
+
+  for (const user of fromUsers) {
+    const userItems = input.boardItems.filter(
+      (it) => isMaWorkItem(it) && getBoardItemOwnerId(it) === user.id
+    );
+    const remHours = remainingShiftHours(user, input.shifts, input.minuteOfDay);
+    const verdict = await decideDoable(userItems, remHours, {
+      judge: input.judge,
+      defaultHours,
+    });
+    verdicts.push({
+      userId: user.id,
+      userName: user.name,
+      remainingHours: remHours,
+      method: verdict.method,
+      reason: verdict.reason,
+      cannotFinishIds: verdict.cannotFinishIds,
+    });
+
+    const byId = new Map(userItems.map((it) => [it.id, it]));
+    for (const id of verdict.cannotFinishIds) {
+      const item = byId.get(id);
+      if (!item || isBoardItemStarted(item)) continue;
+      if (autoQueuedTo(item, input.botId) === user.id) {
+        candidates.push(item);
+        candidateFrom.set(item.id, user.id);
+      } else {
+        atRisk.push({
+          taskId: item.id,
+          taskTitle: item.title,
+          userId: user.id,
+          reason: verdict.reason,
+        });
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { verdicts, handovers: [], returned: [], atRisk };
+  }
+
+  const candidateIds = new Set(candidates.map((c) => c.id));
+  const dist = await planDailyDistribution({
+    pool: candidates,
+    boardItems: input.boardItems.filter((it) => !candidateIds.has(it.id)),
+    users: usersInGroup(input.users, input.shifts, input.to),
+    shifts: input.shifts,
+    defaultHours,
+    pick: input.pick,
+    requireRoom: true,
+    capacityHours: (u) => remainingShiftHours(u, input.shifts, input.minuteOfDay),
+  });
+
+  const handovers: Decision[] = dist.decisions.map((d) => ({
+    ...d,
+    fromUserId: candidateFrom.get(d.taskId),
+    reason:
+      d.method === 'rules'
+        ? "Can't finish by end of shift; lightest day on the next shift"
+        : d.reason,
+  }));
+
+  const returned: CheckpointPlan['returned'] = dist.skipped.map((s) => ({
+    taskId: s.taskId,
+    taskTitle: s.taskTitle,
+    fromUserId: candidateFrom.get(s.taskId)!,
+    reason: s.reason,
+  }));
+
+  return { verdicts, handovers, returned, atRisk };
 }

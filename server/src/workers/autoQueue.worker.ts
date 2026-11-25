@@ -1,14 +1,18 @@
 import { Worker } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger, errMsg } from '../config/logger';
-import { runAutoQueue, runDailyAutoQueue } from '../services/autoQueue/autoQueueService';
+import { runCheckpoint, runDailyAutoQueue } from '../services/autoQueue/autoQueueService';
 
-/** Every 5 minutes: top up MAs on shift right now. */
+/** Retired 5-minute top-up job name (kept exported only to clean stale repeatable jobs on startup). */
 export const AUTO_QUEUE_JOB = 'taskMapAutoQueue';
-/** 5:00 AM Manila: hand out the whole Available pool to everyone scheduled today. */
+/** 5:00 AM Manila: hand out Available tasks to the morning shift. */
 export const AUTO_QUEUE_DAILY_JOB = 'taskMapAutoQueueDaily';
+/** 1:00 PM Manila: check morning shift doability and hand over unfinished work to noon. */
+export const AUTO_QUEUE_1PM_JOB = 'taskMapAutoQueue1pm';
+/** 5:00 PM Manila: check noon shift doability, hand over to night, then fill night from Available tasks. */
+export const AUTO_QUEUE_5PM_JOB = 'taskMapAutoQueue5pm';
 
-// Both do nothing while AUTO_QUEUE_MODE=off (see services/autoQueue/config.ts).
+// Runs are no-ops while AUTO_QUEUE_MODE=off (see services/autoQueue/config.ts).
 export const autoQueueWorker = new Worker(
   'TaskMapAutoQueue',
   async (job) => {
@@ -22,13 +26,19 @@ export const autoQueueWorker = new Worker(
         leftInPool: result.skippedTasks.length,
       };
     }
-    const result = await runAutoQueue();
-    return {
-      mode: result.mode,
-      skipped: result.skipped,
-      queued: result.decisions.filter((d) => d.applied).length,
-      decided: result.decisions.length,
-    };
+    if (job.name === AUTO_QUEUE_1PM_JOB || job.name === AUTO_QUEUE_5PM_JOB) {
+      const kind = job.name === AUTO_QUEUE_1PM_JOB ? '1pm' : '5pm';
+      const result = await runCheckpoint(kind);
+      return {
+        mode: result.mode,
+        skipped: result.skipped,
+        handedOver: result.handovers.filter((h) => h.applied).length,
+        returned: result.returned.filter((r) => r.applied).length,
+        atRisk: result.atRisk.length,
+        nightQueued: result.nightFill ? result.nightFill.decisions.filter((d) => d.applied).length : 0,
+      };
+    }
+    return { retired: true };
   },
   { connection: redis, concurrency: 1 },
 );

@@ -6,7 +6,7 @@ import {
   distributeAutoQueue,
   getAutoQueueConfig,
   resetAutoQueue,
-  runAutoQueue,
+  runCheckpoint,
   runDailyAutoQueue,
 } from '../services/autoQueue/autoQueueService';
 
@@ -27,7 +27,7 @@ function sendError(res: Response, err: unknown, what: string) {
 }
 
 /**
- * POST /api/task-map/auto-queue/preview?kind=daily|topup|distribute
+ * POST /api/task-map/auto-queue/preview?kind=daily|1pm|5pm|distribute
  * What a run would do right now, changing nothing. Defaults to the 5 AM plan.
  */
 export const previewAutoQueueHandler = async (req: Request, res: Response) => {
@@ -37,8 +37,8 @@ export const previewAutoQueueHandler = async (req: Request, res: Response) => {
     const config = getAutoQueueConfig();
     const kind = String(req.query.kind || 'daily');
     const result =
-      kind === 'topup'
-        ? await runAutoQueue({ modeOverride: 'dry_run' })
+      kind === '1pm' || kind === '5pm'
+        ? await runCheckpoint(kind, { modeOverride: 'dry_run' })
         : kind === 'distribute'
           ? await distributeAutoQueue(actor, { preview: true })
           : await runDailyAutoQueue({ modeOverride: 'dry_run' });

@@ -39,7 +39,7 @@ import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TAS
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
 import { autoQueueQueue } from './queues/autoQueue.queue';
-import { AUTO_QUEUE_JOB, AUTO_QUEUE_DAILY_JOB } from './workers/autoQueue.worker';
+import { AUTO_QUEUE_JOB, AUTO_QUEUE_DAILY_JOB, AUTO_QUEUE_1PM_JOB, AUTO_QUEUE_5PM_JOB } from './workers/autoQueue.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 
 const app = express();
@@ -120,18 +120,34 @@ const server = http.createServer(app);
     removeOnFail: 50,
   });
 
-  // Task Map auto-queue. Both are no-ops unless AUTO_QUEUE_MODE is set (services/autoQueue/config.ts).
-  // 5:00 AM Manila: hand out the whole Available pool to everyone scheduled today, balanced by hours.
+  // Task Map AI PM auto-queue checkpoints (5 AM / 1 PM / 5 PM Manila). All are no-ops unless AUTO_QUEUE_MODE is set.
+  try {
+    for (const job of await autoQueueQueue.getRepeatableJobs()) {
+      if (job.name === AUTO_QUEUE_JOB) await autoQueueQueue.removeRepeatableByKey(job.key);
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to clean up retired auto-queue repeatable job');
+  }
+  // 5:00 AM Manila: hand out Available tasks to the morning shift, balanced by hours.
   await autoQueueQueue.add(AUTO_QUEUE_DAILY_JOB, {}, {
     repeat: { pattern: '0 5 * * *', tz: 'Asia/Manila' },
     jobId: 'task-map-auto-queue-5am',
     attempts: 5, // retried if a PM is mid Reset/Distribute at 5:00
     backoff: { type: 'fixed', delay: 2 * 60 * 1000 },
   });
-  // Every 5 minutes: top up MAs on shift right now who have worked through their queue.
-  await autoQueueQueue.add(AUTO_QUEUE_JOB, {}, {
-    repeat: { every: 5 * 60 * 1000 },
-    jobId: 'task-map-auto-queue',
+  // 1:00 PM Manila: check morning shift doability and hand over unfinished work to noon.
+  await autoQueueQueue.add(AUTO_QUEUE_1PM_JOB, {}, {
+    repeat: { pattern: '0 13 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-auto-queue-1pm',
+    attempts: 5,
+    backoff: { type: 'fixed', delay: 2 * 60 * 1000 },
+  });
+  // 5:00 PM Manila: check noon shift doability, hand over to night, then fill night from Available tasks.
+  await autoQueueQueue.add(AUTO_QUEUE_5PM_JOB, {}, {
+    repeat: { pattern: '0 17 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-auto-queue-5pm',
+    attempts: 5,
+    backoff: { type: 'fixed', delay: 2 * 60 * 1000 },
   });
 
   // Safety net for the journal auto-append (appendMissingTasksToJournal), every 5 minutes. Kept in Redis, so a

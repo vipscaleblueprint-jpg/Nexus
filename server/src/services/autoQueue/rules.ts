@@ -283,6 +283,14 @@ export function itemHours(item: BoardItem, defaultHours = DEFAULT_ESTIMATED_HOUR
 
 export { isStarted as isBoardItemStarted };
 
+/** Fresh-DB check before handover/return: owner unchanged and not started (`IN PROGRESS`). */
+export function isStillMovable(
+  fresh: { ownerId: string | null | undefined; status?: string | null },
+  expectedOwnerId: string
+): boolean {
+  return Boolean(fresh.ownerId) && fresh.ownerId === expectedOwnerId && norm(fresh.status) !== 'INPROGRESS';
+}
+
 // ---------------------------------------------------------------------------
 // Ordering
 // ---------------------------------------------------------------------------

@@ -21,18 +21,23 @@ import { resolveEffectiveTaskMapOwnerId } from '../../utils/taskMapPermissions';
 import { invokeHandler } from './invokeHandler';
 import {
   planAssignments,
+  planCheckpoint,
   planDailyDistribution,
+  type CheckpointPlan,
   type Decision,
   type DailyPlan,
   type PickFn,
 } from './planner';
 import { pickWithOllama } from './ollamaPicker';
+import { judgeWithOllama } from './ollamaDoable';
+import { type JudgeFn } from './doable';
 import { getAutoQueueConfig, type AutoQueueMode } from './config';
 import {
   autoQueuedTo,
   getBoardItemOwnerId,
   isBoardItemStarted,
   isMaWorkItem,
+  isStillMovable,
   usersInGroup,
   type BoardItem,
   type QueueUser,
@@ -66,8 +71,8 @@ interface ActorUser {
 
 async function taskMapHandlers() {
   // Lazy import: the controller pulls in the server module (socket.io), which imports the workers.
-  const { getTaskMapData, assignTaskMapTask } = await import('../../controllers/taskMap.controller');
-  return { getTaskMapData, assignTaskMapTask };
+  const { getTaskMapData, assignTaskMapTask, updateTaskStatuses } = await import('../../controllers/taskMap.controller');
+  return { getTaskMapData, assignTaskMapTask, updateTaskStatuses };
 }
 
 async function loadBoard(actor: ActorUser): Promise<{ pool: BoardItem[]; items: BoardItem[] }> {
@@ -97,18 +102,38 @@ function aiPicker(): PickFn | undefined {
   return ollama ? (task, candidates) => pickWithOllama(task, candidates, ollama) : undefined;
 }
 
-/** Who owns the item right now, read fresh from the DB (the board snapshot may be minutes old). */
-async function getCurrentOwnerId(item: BoardItem): Promise<string | null | undefined> {
+function aiJudge(): JudgeFn | undefined {
+  const ollama = getAutoQueueConfig().ollama;
+  return ollama ? (remainingHours, items) => judgeWithOllama(remainingHours, items, ollama) : undefined;
+}
+
+interface FreshItemState {
+  ownerId: string | null;
+  status: string | null;
+}
+
+function hasLiveSheetProgress(reviews: any[], subtaskId?: string | null): boolean {
+  return reviews.some(
+    (r: any) =>
+      r?.type === 'SHEET_PROGRESS' &&
+      (subtaskId ? r?.subtaskId === subtaskId : !r?.subtaskId) &&
+      Boolean(r?.timeIn) &&
+      !r?.timeOut
+  );
+}
+
+/** Owner and started state read fresh from the DB (the board snapshot may be minutes old). */
+async function getCurrentState(item: BoardItem): Promise<FreshItemState | null> {
   if (item.isSubtask && item.subtaskId) {
     const sub = await prisma.subtask.findUnique({
       where: { id: item.subtaskId },
-      select: { assigneeId: true, assignees: { select: { id: true } }, taskId: true },
+      select: { status: true, assigneeId: true, assignees: { select: { id: true } }, taskId: true },
     });
-    if (!sub) return undefined;
+    if (!sub) return null;
     const record = await prisma.taskMapRecord.findUnique({ where: { taskId: sub.taskId } });
     const reviews = Array.isArray(record?.pmReviews) ? (record!.pmReviews as any[]) : [];
     const subState = reviews.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === item.subtaskId);
-    return resolveEffectiveTaskMapOwnerId({
+    const ownerId = resolveEffectiveTaskMapOwnerId({
       pmReviews: reviews.filter((r: any) => r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === item.subtaskId),
       handedOver: Boolean(subState?.handedOver),
       statuses: subState?.statuses || [],
@@ -116,19 +141,34 @@ async function getCurrentOwnerId(item: BoardItem): Promise<string | null | undef
       assignees: sub.assignees,
       subtaskId: item.subtaskId,
     });
+    return {
+      ownerId,
+      status: hasLiveSheetProgress(reviews, item.subtaskId) ? 'IN PROGRESS' : sub.status,
+    };
   }
   const task = await prisma.task.findUnique({
     where: { id: item.id },
-    select: { assigneeId: true, assignees: { select: { id: true } }, taskMapRecord: true },
+    select: { status: true, assigneeId: true, assignees: { select: { id: true } }, taskMapRecord: true },
   });
-  if (!task) return undefined;
-  return resolveEffectiveTaskMapOwnerId({
+  if (!task) return null;
+  const reviews = Array.isArray(task.taskMapRecord?.pmReviews) ? (task.taskMapRecord!.pmReviews as any[]) : [];
+  const ownerId = resolveEffectiveTaskMapOwnerId({
     pmReviews: task.taskMapRecord?.pmReviews,
     handedOver: Boolean(task.taskMapRecord?.handedOver),
     statuses: task.taskMapRecord?.statuses || [],
     assigneeId: task.assigneeId,
     assignees: task.assignees,
   });
+  return {
+    ownerId,
+    status: hasLiveSheetProgress(reviews) ? 'IN PROGRESS' : task.status,
+  };
+}
+
+/** Who owns the item right now, read fresh from the DB (the board snapshot may be minutes old). */
+async function getCurrentOwnerId(item: BoardItem): Promise<string | null | undefined> {
+  const state = await getCurrentState(item);
+  return state ? state.ownerId : undefined;
 }
 
 /** Unstarted MA work that the auto-queue placed and nobody has moved since: what Reset/Distribute may move. */
@@ -141,6 +181,25 @@ function movableAutoQueued(items: BoardItem[], botId: string): BoardItem[] {
 // ---------------------------------------------------------------------------
 
 export type AppliedDecision = Decision & { applied: boolean; error?: string };
+
+async function addCheckpointComment(
+  item: BoardItem,
+  botId: string,
+  kind: '1pm' | '5pm',
+  toName: string | null,
+  reason: string
+) {
+  await prisma.taskComment
+    .create({
+      data: {
+        taskId: item.isSubtask && item.parentTaskId ? item.parentTaskId : item.id,
+        userId: botId,
+        content: `**AI PM** (${kind}): moved to ${toName || 'Available tasks'} — ${reason}`,
+        ...(item.isSubtask && item.subtaskId ? { subtaskId: item.subtaskId } : {}),
+      },
+    })
+    .catch(() => null);
+}
 
 async function applyDecisions(opts: {
   decisions: Decision[];
@@ -157,16 +216,26 @@ async function applyDecisions(opts: {
   const { assignTaskMapTask } = await taskMapHandlers();
 
   for (const d of opts.decisions) {
+    const verbDry = d.fromUserId ? 'hand over' : 'queue';
+    const verbDone = d.fromUserId ? 'handed over' : 'queued';
     if (opts.dryRun) {
-      logger.info(`[AutoQueue][${opts.label}][dry-run] would queue "${d.taskTitle}" -> ${d.userName} (${d.method}: ${d.reason})`);
+      logger.info(`[AutoQueue][${opts.label}][dry-run] would ${verbDry} "${d.taskTitle}" -> ${d.userName} (${d.method}: ${d.reason})`);
       results.push({ ...d, applied: false });
       continue;
     }
     const item = opts.itemsById.get(d.taskId)!;
     try {
-      const current = await getCurrentOwnerId(item);
-      if (current === undefined || (current ?? null) !== opts.expectedOwner(item)) {
-        results.push({ ...d, applied: false, error: 'Changed by someone else meanwhile' });
+      const expected = opts.expectedOwner(item);
+      const fresh = await getCurrentState(item);
+      const stillValid =
+        fresh !== null &&
+        (expected === null ? (fresh.ownerId ?? null) === null : isStillMovable(fresh, expected));
+      if (!stillValid) {
+        results.push({
+          ...d,
+          applied: false,
+          error: expected === null ? 'Changed by someone else meanwhile' : 'Changed or started meanwhile',
+        });
         continue;
       }
       const res = await invokeHandler(assignTaskMapTask, {
@@ -193,6 +262,8 @@ async function applyDecisions(opts: {
               method: d.method,
               reason: d.reason,
               run: opts.label,
+              action: d.fromUserId ? 'handover' : 'assign',
+              ...(d.fromUserId ? { fromUserId: d.fromUserId } : {}),
               ...(d.hours !== undefined ? { hours: d.hours } : {}),
               ...(opts.triggeredBy ? { triggeredBy: opts.triggeredBy } : {}),
               ...(item.isSubtask ? { subtaskId: item.subtaskId } : {}),
@@ -200,7 +271,7 @@ async function applyDecisions(opts: {
           },
         })
         .catch(() => null);
-      logger.info(`[AutoQueue][${opts.label}] queued "${d.taskTitle}" -> ${d.userName} (${d.method}: ${d.reason})`);
+      logger.info(`[AutoQueue][${opts.label}] ${verbDone} "${d.taskTitle}" -> ${d.userName} (${d.method}: ${d.reason})`);
       results.push({ ...d, applied: true });
     } catch (err) {
       results.push({ ...d, applied: false, error: errMsg(err) });
@@ -326,6 +397,139 @@ export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode } =
     return { mode, skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
   }
   return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', opts));
+}
+
+// ---------------------------------------------------------------------------
+// 1 PM and 5 PM checkpoints (doable check -> handover / return, then 5 PM night fill)
+// ---------------------------------------------------------------------------
+
+export interface CheckpointResult {
+  mode: AutoQueueMode;
+  skipped?: string;
+  verdicts: CheckpointPlan['verdicts'];
+  handovers: AppliedDecision[];
+  returned: Array<CheckpointPlan['returned'][number] & { applied: boolean; error?: string }>;
+  atRisk: CheckpointPlan['atRisk'];
+  nightFill?: DailyResult; // 5 PM only
+}
+
+export async function runCheckpoint(
+  kind: '1pm' | '5pm',
+  opts: { modeOverride?: AutoQueueMode } = {}
+): Promise<CheckpointResult> {
+  const config = getAutoQueueConfig();
+  const mode = opts.modeOverride || config.mode;
+  const empty: CheckpointResult = { mode, verdicts: [], handovers: [], returned: [], atRisk: [] };
+  if (mode === 'off') return { ...empty, skipped: 'AUTO_QUEUE_MODE is off' };
+
+  return exclusive(`${kind} checkpoint`, async () => {
+    const bot = await getOrCreateAutoQueueUser();
+    const [{ items }, { users, shifts }] = await Promise.all([loadBoard(bot), loadPeople()]);
+    const { hour, minute } = getManilaHourAndMinute();
+    const from: ShiftGroup = kind === '1pm' ? 'morning' : 'noon';
+    const to: ShiftGroup = kind === '1pm' ? 'noon' : 'night';
+
+    const plan = await planCheckpoint({
+      boardItems: items,
+      users,
+      shifts,
+      minuteOfDay: hour * 60 + minute,
+      from,
+      to,
+      botId: bot.id,
+      defaultHours: config.defaultHours,
+      judge: aiJudge(),
+      pick: aiPicker(),
+    });
+
+    const dryRun = mode === 'dry_run';
+    const logPrefix = dryRun ? `[AutoQueue][${kind}][dry-run]` : `[AutoQueue][${kind}]`;
+    for (const v of plan.verdicts) {
+      logger.info(
+        `${logPrefix} verdict ${v.userName} (${v.remainingHours.toFixed(1)}h left, ${v.method}): ${v.cannotFinishIds.length} cannot finish — ${v.reason}`
+      );
+    }
+    for (const r of plan.atRisk) {
+      logger.info(`${logPrefix} at-risk "${r.taskTitle}" (PM-placed, staying put): ${r.reason}`);
+    }
+
+    const itemsById = new Map(items.map((it) => [it.id, it]));
+    const handovers = await applyDecisions({
+      decisions: plan.handovers,
+      itemsById,
+      expectedOwner: (item) => plan.handovers.find((d) => d.taskId === item.id)?.fromUserId ?? null,
+      bot,
+      dryRun,
+      label: kind,
+    });
+
+    for (const h of handovers) {
+      if (!h.applied) continue;
+      const item = itemsById.get(h.taskId)!;
+      await addCheckpointComment(item, bot.id, kind, h.userName, h.reason);
+    }
+
+    const { updateTaskStatuses } = await taskMapHandlers();
+    const returned: CheckpointResult['returned'] = [];
+    for (const r of plan.returned) {
+      if (dryRun) {
+        logger.info(`[AutoQueue][${kind}][dry-run] would return "${r.taskTitle}" -> Available tasks (${r.reason})`);
+        returned.push({ ...r, applied: false });
+        continue;
+      }
+      const item = itemsById.get(r.taskId)!;
+      try {
+        const fresh = await getCurrentState(item);
+        if (!fresh || !isStillMovable(fresh, r.fromUserId)) {
+          returned.push({ ...r, applied: false, error: 'Changed or started meanwhile' });
+          continue;
+        }
+        const res = await invokeHandler(updateTaskStatuses, {
+          params: { id: r.taskId },
+          body: { statuses: ['Hand-over'] },
+          user: bot,
+        });
+        if (res.status !== 200 || !res.body?.success) {
+          returned.push({ ...r, applied: false, error: res.body?.error || `HTTP ${res.status}` });
+          continue;
+        }
+        await prisma.auditLog
+          .create({
+            data: {
+              action: 'AUTO_QUEUE',
+              entity: 'TASK',
+              entityId: item.isSubtask && item.parentTaskId ? item.parentTaskId : r.taskId,
+              userId: bot.id,
+              details: {
+                action: 'returned',
+                fromUserId: r.fromUserId,
+                reason: r.reason,
+                run: kind,
+                ...(item.isSubtask ? { subtaskId: item.subtaskId } : {}),
+              },
+            },
+          })
+          .catch(() => null);
+        await addCheckpointComment(item, bot.id, kind, null, r.reason);
+        logger.info(`[AutoQueue][${kind}] returned "${r.taskTitle}" -> Available tasks (${r.reason})`);
+        returned.push({ ...r, applied: true });
+      } catch (err) {
+        returned.push({ ...r, applied: false, error: errMsg(err) });
+      }
+    }
+
+    let nightFill: DailyResult | undefined;
+    if (kind === '5pm') {
+      nightFill = await runGroupDistribution('night', '5pm', { modeOverride: mode });
+    }
+
+    logger.info(
+      `[AutoQueue][${kind}] ${handovers.filter((h) => h.applied).length}/${plan.handovers.length} handed over, ` +
+        `${returned.filter((r) => r.applied).length}/${plan.returned.length} returned, ${plan.atRisk.length} at-risk`
+    );
+
+    return { mode, verdicts: plan.verdicts, handovers, returned, atRisk: plan.atRisk, ...(nightFill ? { nightFill } : {}) };
+  });
 }
 
 // ---------------------------------------------------------------------------

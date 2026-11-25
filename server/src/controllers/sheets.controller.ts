@@ -1018,6 +1018,19 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
 };
 
 /**
+ * The Nexus user whose linked daily sheet (User.dailySheetUrl) is this spreadsheet.
+ * Sheet titles ("Che - MA Daily Schedule") don't always match account names ("Cherilyn"),
+ * so the spreadsheet ID is the reliable way to tie a sheet row to its owner.
+ */
+async function findUserBySpreadsheetId(rawId: unknown): Promise<{ id: string; name: string | null } | null> {
+  const id = typeof rawId === 'string' ? rawId.trim() : '';
+  if (!/^[a-zA-Z0-9_-]{20,}$/.test(id)) return null;
+  return prisma.user
+    .findFirst({ where: { dailySheetUrl: { contains: `/d/${id}` } }, select: { id: true, name: true } })
+    .catch(() => null);
+}
+
+/**
  * POST /api/webhooks/sheets/progress
  * Ingests MA Daily Schedule row progress (time in, time out, client, status, is_missing_time, upwork).
  * Emits realtime socket events ('task_map:updated', 'task:progress_updated', 'upwork:status_changed').
@@ -1062,6 +1075,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       body.assistant_name ||
       body.assistantName;
     const maNameStr = rawMaName ? String(rawMaName).split(/\s+-\s+|\s+MA Daily Schedule/i)[0].trim() : null;
+    const sheetSpreadsheetId = body.spreadsheet_id || body.spreadsheetId || null;
+    const sheetOwner = await findUserBySpreadsheetId(sheetSpreadsheetId);
 
     // "if the user forgots to input time only the status or client it would mark as red a and an infinite logo time"
     const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);
@@ -1561,6 +1576,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         const savedUnmatchedLog = await upsertDailySheetLog({
           date: sessionDate,
           maName: maNameStr,
+          ...(sheetOwner ? { userId: sheetOwner.id, spreadsheetId: String(sheetSpreadsheetId) } : {}),
           taskId: null,
           subtaskId: null,
           sheetRow: sheet_row ? Number(sheet_row) : null,
@@ -1796,6 +1812,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       const savedLog = await upsertDailySheetLog({
         date: date ? String(date).trim() : getManilaDateStr(),
         maName: maNameStr,
+        ...(sheetOwner ? { userId: sheetOwner.id, spreadsheetId: String(sheetSpreadsheetId) } : {}),
         taskId: target.taskId,
         subtaskId: target.subtaskId || null,
         sheetRow: sheet_row ? Number(sheet_row) : null,

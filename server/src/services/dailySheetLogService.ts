@@ -162,16 +162,21 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
     });
   }
 
-  // If this entry is live, close any older open live entries for this MA on the same day
+  // If this entry is live, close any older open live entries for this MA on the same day.
+  // Match by account as well as name: the Task Map logs under the account name ("Cherilyn")
+  // while the sheet logs under its title name ("Che"), and both are the same person.
   if (isLive) {
     const closeTimeOut = cleanTimeIn || '11:59 PM';
     await prisma.dailySheetLog.updateMany({
       where: {
         dateKey,
-        maKey,
         isLive: true,
         id: { not: saved.id },
-        ...(sheetRow ? { OR: [{ sheetRow: null }, { sheetRow: { lt: sheetRow } }] } : {}),
+        AND: [
+          saved.userId ? { OR: [{ maKey }, { userId: saved.userId }] } : { maKey },
+          // Rows above on the sheet are older; Task Map sessions have no sheetRow
+          ...(sheetRow ? [{ OR: [{ sheetRow: null }, { sheetRow: { lt: sheetRow } }] }] : []),
+        ],
       },
       data: {
         isLive: false,
@@ -182,6 +187,29 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
   }
 
   return saved;
+}
+
+/**
+ * Closes every still-live DailySheetLog session for a task (or one of its subtasks).
+ * The Task Map treats a live log as "working on it right now", so a card that leaves
+ * In Progress (back to Queue, unassigned, On-hold) must end its session or it snaps back.
+ * Pass subtaskId to close only that subtask's sessions; omit it to close all of the task's.
+ */
+export async function closeLiveDailySheetLogsForTask(params: {
+  taskId: string;
+  subtaskId?: string | null;
+  timeOut: string;
+}) {
+  if (!params.taskId) return 0;
+  const res = await prisma.dailySheetLog.updateMany({
+    where: {
+      taskId: params.taskId,
+      ...(params.subtaskId ? { subtaskId: params.subtaskId } : {}),
+      isLive: true,
+    },
+    data: { isLive: false, timeOut: params.timeOut, endedAt: new Date() },
+  });
+  return res.count;
 }
 
 /**

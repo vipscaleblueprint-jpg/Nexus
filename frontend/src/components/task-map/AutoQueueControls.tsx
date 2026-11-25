@@ -35,6 +35,11 @@ interface DistributeResult {
   decisions?: DistributeDecision[];
 }
 
+interface ExcludedUser {
+  id: string;
+  name: string;
+}
+
 interface ResetResult {
   success: boolean;
   returned: number;
@@ -56,15 +61,21 @@ export function AutoQueueControls() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState<'preview' | 'distribute' | 'reset' | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  // People left out of the auto-queue (saved; applies to Distribute and the 5 AM / 1 PM / 5 PM runs)
+  const [excluded, setExcluded] = useState<ExcludedUser[]>([]);
 
-  const openDistribute = async () => {
+  const loadPreview = async () => {
     setBusy('preview');
     try {
-      const preview = await apiClient<DistributeResult>('/api/task-map/auto-queue/preview', {
-        method: 'POST',
-        params: { kind: 'distribute' },
-        timeoutMs: TIMEOUT_MS,
-      });
+      const [preview, ex] = await Promise.all([
+        apiClient<DistributeResult>('/api/task-map/auto-queue/preview', {
+          method: 'POST',
+          params: { kind: 'distribute' },
+          timeoutMs: TIMEOUT_MS,
+        }),
+        apiClient<{ users: ExcludedUser[] }>('/api/task-map/auto-queue/excluded'),
+      ]);
+      setExcluded(ex.users);
       setSelectedUserId(null);
       setDialog({ kind: 'distribute', preview });
     } catch (err: any) {
@@ -72,6 +83,24 @@ export function AutoQueueControls() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const openDistribute = () => loadPreview();
+
+  const setUserExcluded = async (user: ExcludedUser, exclude: boolean) => {
+    setBusy('preview');
+    try {
+      await apiClient('/api/task-map/auto-queue/excluded', {
+        method: 'PUT',
+        body: JSON.stringify({ userId: user.id, excluded: exclude }),
+      });
+      toast.success(exclude ? `${user.name} won't get auto-queued tasks` : `${user.name} is back in the auto-queue`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not update the auto-queue');
+      setBusy(null);
+      return;
+    }
+    await loadPreview();
   };
 
   const runDistribute = async () => {
@@ -123,7 +152,7 @@ export function AutoQueueControls() {
         className={buttonClass}
         onClick={openDistribute}
         disabled={busy !== null}
-        title="Even out unstarted auto-queued tasks and Available tasks across today's MAs, by estimated hours"
+        title="Even out unstarted auto-queued tasks and Available tasks to MAs with enough shift time left today to finish them"
       >
         {busy === 'preview' ? <Loader2 className="size-3.5 animate-spin" /> : <Scale className="size-3.5 text-emerald-400" />}
         <span className="hidden sm:inline">Distribute</span>
@@ -176,7 +205,8 @@ export function AutoQueueControls() {
                         <tr>
                           <th className="px-2.5 py-1.5 text-left font-semibold">MA (click to filter)</th>
                           <th className="px-2.5 py-1.5 text-right font-semibold">New</th>
-                          <th className="px-2.5 py-1.5 text-right font-semibold">Planned / shift</th>
+                          <th className="px-2.5 py-1.5 text-right font-semibold">Planned / shift left</th>
+                          <th className="px-2.5 py-1.5 text-right font-semibold" />
                         </tr>
                       </thead>
                       <tbody>
@@ -197,11 +227,47 @@ export function AutoQueueControls() {
                               >
                                 {s.plannedHours.toFixed(1)}h / {s.shiftHours.toFixed(1)}h
                               </td>
+                              <td className="px-2.5 py-1.5 text-right">
+                                <button
+                                  type="button"
+                                  disabled={busy !== null}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setUserExcluded({ id: s.userId, name: s.userName }, true);
+                                  }}
+                                  title="Stop giving this person auto-queued tasks (Distribute and the 5 AM / 1 PM / 5 PM runs)"
+                                  className="text-zinc-500 hover:text-red-400 cursor-pointer disabled:opacity-50"
+                                >
+                                  Exclude
+                                </button>
+                              </td>
                             </tr>
                           );
                         })}
                       </tbody>
                     </table>
+                  </div>
+                )}
+                {excluded.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className="text-zinc-500">Excluded from auto-queue:</span>
+                    {excluded.map((u) => (
+                      <span
+                        key={u.id}
+                        className="flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-zinc-400"
+                      >
+                        {u.name}
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => setUserExcluded(u, false)}
+                          title="Put back into the auto-queue"
+                          className="text-emerald-500 hover:text-emerald-400 cursor-pointer disabled:opacity-50"
+                        >
+                          Include
+                        </button>
+                      </span>
+                    ))}
                   </div>
                 )}
                 {dialog.preview.decisions && dialog.preview.decisions.length > 0 && (() => {

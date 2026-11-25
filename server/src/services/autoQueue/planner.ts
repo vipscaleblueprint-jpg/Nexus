@@ -56,6 +56,10 @@ interface Candidate {
 }
 
 const clientOf = (it: BoardItem) => (it.list?.name || '').trim();
+const clientIdOf = (it: BoardItem) => it.listId || it.list?.id || '';
+
+/** userId -> client (list id) -> how many of that client's tasks the person has commented on before. */
+export type ClientHistory = Map<string, Map<string, number>>;
 
 function originalMaId(task: BoardItem): string | null {
   const reviews = Array.isArray(task.taskMap?.pmReviews) ? task.taskMap!.pmReviews : [];
@@ -209,6 +213,10 @@ export interface DailyPlanInput {
   requireRoom?: boolean;
   /** Overrides `scheduledShiftHours` for each person's available capacity (users with <= 0 are skipped). */
   capacityHours?: (user: QueueUser) => number;
+  /** How skipped-task reasons name the people considered, e.g. "on shift for the rest of today". */
+  roomLabel?: string;
+  /** Past work per client (from comments): people who worked the client before are preferred. */
+  clientHistory?: ClientHistory;
 }
 
 export interface MaDaySummary {
@@ -247,7 +255,7 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
 
   const decisions: Decision[] = [];
   const skipped: DailyPlan['skipped'] = [];
-  const targetLabel = input.requireRoom ? 'on the next shift' : 'scheduled today';
+  const targetLabel = input.roomLabel || (input.requireRoom ? 'on the next shift' : 'scheduled today');
 
   for (const task of orderPoolForQueue(input.pool)) {
     const hours = itemHours(task, defaultHours);
@@ -256,8 +264,16 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       skipped.push({
         taskId: task.id,
         taskTitle: task.title,
-        reason: (task.assigneeRoleRestrictions || []).length
-          ? `No one ${targetLabel} has the role ${task.assigneeRoleRestrictions!.join(' / ')}`
+        reason: task.effectiveRolesSource === 'none'
+          ? 'No role set and none could be guessed from the title; tag a role so it can be auto-queued'
+          : (task.effectiveRoles ?? task.assigneeRoleRestrictions ?? []).length
+          ? `No one ${targetLabel} has the role ${(task.effectiveRoles ?? task.assigneeRoleRestrictions)!.join(' / ')}${
+              task.effectiveRolesSource === 'parent'
+                ? ' (from the parent task)'
+                : task.effectiveRolesSource === 'title'
+                  ? ' (guessed from the title)'
+                  : ''
+            }`
           : `No MAs ${targetLabel}`,
       });
       continue;
@@ -282,14 +298,19 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       skipped.push({
         taskId: task.id,
         taskTitle: task.title,
-        reason: 'No one on the next shift has room',
+        reason: `No one ${targetLabel} has ${hours}h free for it`,
       });
       continue;
     }
-    const pickable = fits.length > 0 ? fits : ranked.slice(0, 3);
+    // Prefer people who have worked this client before (commented on its tasks) (still lightest-first among them),
+    // as long as it fits their day; only fall back to everyone else when none of them has room.
+    const doneBefore = (c: Candidate) => input.clientHistory?.get(c.user.id)?.get(clientIdOf(task)) || 0;
+    const familiar = fits.filter((c) => doneBefore(c) > 0);
+    const pickable = familiar.length > 0 ? familiar : fits.length > 0 ? fits : ranked.slice(0, 3);
 
     const ai = await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
-    const chosen = ai?.candidate || ranked[0];
+    const chosen = ai?.candidate || pickable[0];
+    const lightest = `lightest day relative to shift (${chosen.load.hours.toFixed(1)}h of ${(shiftHours.get(chosen.user.id) || 0).toFixed(1)}h before this)`;
     decisions.push({
       taskId: task.id,
       taskTitle: task.title,
@@ -298,7 +319,9 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       method: ai ? 'ai' : 'rules',
       reason: ai
         ? ai.reason
-        : `Lightest day relative to shift (${chosen.load.hours.toFixed(1)}h of ${(shiftHours.get(chosen.user.id) || 0).toFixed(1)}h before this)`,
+        : doneBefore(chosen) > 0
+          ? `Worked ${clientOf(task) || 'this client'} before (commented on ${doneBefore(chosen)} task${doneBefore(chosen) === 1 ? '' : 's'}); ${lightest}`
+          : `${familiar.length === 0 && fits.length > 0 && input.clientHistory ? 'No one free has worked this client before; ' : ''}${lightest[0].toUpperCase()}${lightest.slice(1)}`,
       hours,
     });
 
@@ -340,6 +363,7 @@ export interface CheckpointPlanInput {
   defaultHours?: number;
   judge?: JudgeFn;
   pick?: PickFn;
+  clientHistory?: ClientHistory;
 }
 
 export interface CheckpointPlan {
@@ -415,15 +439,14 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
     pick: input.pick,
     requireRoom: true,
     capacityHours: (u) => remainingShiftHours(u, input.shifts, input.minuteOfDay),
+    clientHistory: input.clientHistory,
   });
 
   const handovers: Decision[] = dist.decisions.map((d) => ({
     ...d,
     fromUserId: candidateFrom.get(d.taskId),
     reason:
-      d.method === 'rules'
-        ? "Can't finish by end of shift; lightest day on the next shift"
-        : d.reason,
+      d.method === 'rules' ? `Can't finish by end of shift; ${d.reason[0].toLowerCase()}${d.reason.slice(1)}` : d.reason,
   }));
 
   const returned: CheckpointPlan['returned'] = dist.skipped.map((s) => ({

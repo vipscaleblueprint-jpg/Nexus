@@ -57,6 +57,13 @@ export interface BoardItem {
   estimatedHours?: number | null;
   /** Role(s) the task needs, e.g. Galaxy's picked role. Any one of them qualifies. */
   assigneeRoleRestrictions?: string[] | null;
+  /**
+   * Set by the auto-queue when it loads the board (resolveTaskRoles): the task's own roles, else its
+   * parent task's, else roles guessed from the title. Source 'none' = no role could be worked out,
+   * so the auto-queue leaves the task for a PM. Undefined = not resolved; the task's own roles apply.
+   */
+  effectiveRoles?: string[];
+  effectiveRolesSource?: 'task' | 'parent' | 'title' | 'none';
   teamId?: string | null;
   progress?: { timeIn?: string | null; timeOut?: string | null } | null;
   taskMap?: {
@@ -82,21 +89,15 @@ const lowerRoles = (u: QueueUser) => (u.roles || []).map((r) => (r || '').trim()
 // Who can take tasks
 // ---------------------------------------------------------------------------
 
-const MA_ROLE = (r: string) => r === 'ma' || r.includes('marketing associate') || /\bdev/.test(r);
-const PM_OR_LEAD_ROLE = (r: string) =>
-  /project\s*manager|\bpm\b|team\s*lead|\bsenior\b/.test(r);
-
 /**
- * Everyone doing production work is an MA; Auditor/CRM/Funnel etc. are extra duties on top.
- * PMs/leads/admins (who do the assigning) and system accounts never receive auto-queued work.
+ * Every active worker can receive auto-queued work, whatever their roles (PMs, seniors and admins
+ * included): being on a shift decides who works today, and canUserTakeTask matches each task's
+ * roles. Only inactive and system accounts are left out.
  */
 export function isAutoQueueEligibleUser(user: QueueUser): boolean {
   if (user.isActive === false) return false;
   if ((user.email || '').toLowerCase().endsWith('@system.local')) return false;
-  if ((user.systemRole || '').toUpperCase() === 'ADMIN') return false;
-  const roles = lowerRoles(user);
-  if (roles.some(PM_OR_LEAD_ROLE)) return false;
-  return roles.some(MA_ROLE);
+  return true;
 }
 
 function isWithinWindow(s: ShiftWindow, minuteOfDay: number): boolean {
@@ -192,11 +193,48 @@ const roleKey = (r: string) => (r || '').trim().toLowerCase();
  * or is in the task's team (team roles). A task with no role or team can go to any MA.
  */
 export function canUserTakeTask(user: QueueUser, item: BoardItem): boolean {
-  const required = (item.assigneeRoleRestrictions || []).map(roleKey).filter(Boolean);
+  if (item.effectiveRolesSource === 'none' && !item.teamId) return false; // no role known: a PM tags it
+  const required = (item.effectiveRoles ?? item.assigneeRoleRestrictions ?? []).map(roleKey).filter(Boolean);
   if (required.length === 0 && !item.teamId) return true;
   if (item.teamId && user.teamId === item.teamId) return true;
   const userRoles = new Set(lowerRoles(user).map(roleKey));
   return required.some((r) => userRoles.has(r));
+}
+
+// ---------------------------------------------------------------------------
+// Working out a task's role when it has none
+// ---------------------------------------------------------------------------
+
+/**
+ * Title keywords -> the role(s) that do that work. Only used when neither the task nor its parent
+ * task has a role. Any one matched role qualifies, like a tagged task with several roles.
+ */
+const ROLE_KEYWORDS: Array<{ roles: string[]; pattern: RegExp }> = [
+  { roles: ['Motion Graphics'], pattern: /\b(videos?|reels?|animations?|motion|video edit\w*|youtube|screen recording)\b/i },
+  { roles: ['Design'], pattern: /\b(design\w*|graphics?|logos?|banners?|thumbnails?|carousels?|flyers?|mock-?ups?|figma|canva|branding|posts?|feeds?|stories|story|infographics?|presentation deck|ui\/ux)\b/i },
+  { roles: ['Marketing'], pattern: /\b(emails?|newsletters?|copywriting|copy|captions?|content calendar|marketing calendar|campaigns?|blogs?|announcements?|sms)\b/i },
+  { roles: ['Funnel Builder'], pattern: /\b(funnels?|landing pages?|sales pages?|opt-?ins?|checkout|order bump|upsells?|downsells?|thank you page|kajabi|clickfunnels|websites?|web ?pages?)\b/i },
+  { roles: ['Developer'], pattern: /\b(automations?|zapier|n8n|api|integrations?|webhooks?|smart contracts?|scripts?|code|bugs?|database|nft)\b/i },
+  { roles: ['Lead Generation'], pattern: /\b(leads?|lead gen\w*|outreach|prospect\w*|manychat|follow[- ]?ups?)\b/i },
+];
+
+export function guessRolesFromTitle(title: string | null | undefined): string[] {
+  const text = (title || '').replace(/^[-\s]+/, '');
+  return ROLE_KEYWORDS.filter((k) => k.pattern.test(text)).flatMap((k) => k.roles);
+}
+
+/**
+ * Sets effectiveRoles on a task: its own roles, else (subtasks) the parent task's roles, else roles
+ * guessed from the title, else none (the auto-queue then leaves it in Available tasks for a PM).
+ */
+export function resolveTaskRoles(item: BoardItem, parentRoles?: string[] | null): BoardItem {
+  const own = (item.assigneeRoleRestrictions || []).filter(Boolean);
+  if (own.length) return { ...item, effectiveRoles: own, effectiveRolesSource: 'task' };
+  const parent = (parentRoles || []).filter(Boolean);
+  if (item.isSubtask && parent.length) return { ...item, effectiveRoles: parent, effectiveRolesSource: 'parent' };
+  const guessed = guessRolesFromTitle(item.title);
+  if (guessed.length) return { ...item, effectiveRoles: guessed, effectiveRolesSource: 'title' };
+  return { ...item, effectiveRoles: [], effectiveRolesSource: 'none' };
 }
 
 // ---------------------------------------------------------------------------

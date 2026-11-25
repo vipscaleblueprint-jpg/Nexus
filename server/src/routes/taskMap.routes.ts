@@ -42,6 +42,8 @@ import {
   previewAutoQueueHandler,
   resetAutoQueueHandler,
   distributeAutoQueueHandler,
+  listAutoQueueExcludedHandler,
+  setAutoQueueExcludedHandler,
 } from '../controllers/autoQueue.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -74,6 +76,8 @@ taskMapRouter.post('/tasks/:id/pm-review', handlePmReviewAction);
 taskMapRouter.post('/auto-queue/preview', previewAutoQueueHandler);
 taskMapRouter.post('/auto-queue/reset', resetAutoQueueHandler);
 taskMapRouter.post('/auto-queue/distribute', distributeAutoQueueHandler);
+taskMapRouter.get('/auto-queue/excluded', listAutoQueueExcludedHandler);
+taskMapRouter.put('/auto-queue/excluded', setAutoQueueExcludedHandler);
 taskMapRouter.post('/rollover', runRollover);
 taskMapRouter.post('/daily-rollover', runDailyRollover);
 taskMapRouter.get('/history-dates', getHistoryDates);

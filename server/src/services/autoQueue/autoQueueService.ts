@@ -24,6 +24,7 @@ import {
   planCheckpoint,
   planDailyDistribution,
   type CheckpointPlan,
+  type ClientHistory,
   type Decision,
   type DailyPlan,
   type PickFn,
@@ -38,6 +39,8 @@ import {
   isBoardItemStarted,
   isMaWorkItem,
   isStillMovable,
+  remainingShiftHours,
+  resolveTaskRoles,
   usersInGroup,
   type BoardItem,
   type QueueUser,
@@ -81,13 +84,34 @@ async function loadBoard(actor: ActorUser): Promise<{ pool: BoardItem[]; items: 
   if (board.status !== 200 || !board.body?.success) {
     throw new Error(`Task Map data request failed (HTTP ${board.status})`);
   }
-  return { pool: board.body.availablePool || [], items: board.body.tasks || [] };
+  const pool: BoardItem[] = board.body.availablePool || [];
+  const items: BoardItem[] = board.body.tasks || [];
+  const parentRoles = await loadParentRoles([...pool, ...items]);
+  const resolve = (it: BoardItem) => resolveTaskRoles(it, it.parentTaskId ? parentRoles.get(it.parentTaskId) : null);
+  return { pool: pool.map(resolve), items: items.map(resolve) };
+}
+
+/** Roles of the parent tasks of role-less subtasks (a subtask with no role inherits its parent's). */
+async function loadParentRoles(items: BoardItem[]): Promise<Map<string, string[]>> {
+  const ids = [
+    ...new Set(
+      items
+        .filter((it) => it.isSubtask && it.parentTaskId && !(it.assigneeRoleRestrictions || []).length)
+        .map((it) => it.parentTaskId!)
+    ),
+  ];
+  if (!ids.length) return new Map();
+  const parents = await prisma.task.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, assigneeRoleRestrictions: true },
+  });
+  return new Map(parents.map((p) => [p.id, p.assigneeRoleRestrictions || []]));
 }
 
 async function loadPeople(): Promise<{ users: QueueUser[]; shifts: ShiftWindow[] }> {
   const [users, shifts] = await Promise.all([
     prisma.user.findMany({
-      where: { isActive: true },
+      where: { isActive: true, autoQueueExcluded: false },
       select: {
         id: true, name: true, email: true, roles: true, systemRole: true, isActive: true, starRating: true, teamId: true,
       },
@@ -95,6 +119,31 @@ async function loadPeople(): Promise<{ users: QueueUser[]; shifts: ShiftWindow[]
     prisma.auditShiftConfig.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
   ]);
   return { users: users as QueueUser[], shifts: shifts as ShiftWindow[] };
+}
+
+const HISTORY_DAYS = 180;
+
+/**
+ * Who has worked a client before: the client's (list's) tasks each person has commented on in the
+ * last HISTORY_DAYS (task or subtask comments; one task counts once however many comments).
+ */
+async function loadClientHistory(botId: string): Promise<ClientHistory> {
+  const rows = await prisma.taskComment.findMany({
+    where: { createdAt: { gte: new Date(Date.now() - HISTORY_DAYS * 864e5) }, userId: { not: botId } },
+    select: { userId: true, taskId: true, task: { select: { listId: true } } },
+  });
+  const seen = new Set<string>();
+  const history: ClientHistory = new Map();
+  for (const r of rows) {
+    const listId = r.task?.listId;
+    const key = `${r.userId}|${r.taskId}`;
+    if (!listId || seen.has(key)) continue;
+    seen.add(key);
+    const byClient = history.get(r.userId) || new Map<string, number>();
+    byClient.set(listId, (byClient.get(listId) || 0) + 1);
+    history.set(r.userId, byClient);
+  }
+  return history;
 }
 
 function aiPicker(): PickFn | undefined {
@@ -367,7 +416,11 @@ async function runGroupDistribution(
   if (mode === 'off') return { mode, skipped: 'AUTO_QUEUE_MODE is off', ...empty };
 
   const bot = await getOrCreateAutoQueueUser();
-  const [{ pool, items }, { users, shifts }] = await Promise.all([loadBoard(bot), loadPeople()]);
+  const [{ pool, items }, { users, shifts }, clientHistory] = await Promise.all([
+    loadBoard(bot),
+    loadPeople(),
+    loadClientHistory(bot.id),
+  ]);
   const plan = await planDailyDistribution({
     pool,
     boardItems: items,
@@ -375,6 +428,7 @@ async function runGroupDistribution(
     shifts,
     defaultHours: config.defaultHours,
     pick: aiPicker(),
+    clientHistory,
   });
   const decisions = await applyDecisions({
     decisions: plan.decisions,
@@ -424,7 +478,11 @@ export async function runCheckpoint(
 
   return exclusive(`${kind} checkpoint`, async () => {
     const bot = await getOrCreateAutoQueueUser();
-    const [{ items }, { users, shifts }] = await Promise.all([loadBoard(bot), loadPeople()]);
+    const [{ items }, { users, shifts }, clientHistory] = await Promise.all([
+      loadBoard(bot),
+      loadPeople(),
+      loadClientHistory(bot.id),
+    ]);
     const { hour, minute } = getManilaHourAndMinute();
     const from: ShiftGroup = kind === '1pm' ? 'morning' : 'noon';
     const to: ShiftGroup = kind === '1pm' ? 'noon' : 'night';
@@ -440,6 +498,7 @@ export async function runCheckpoint(
       defaultHours: config.defaultHours,
       judge: aiJudge(),
       pick: aiPicker(),
+      clientHistory,
     });
 
     const dryRun = mode === 'dry_run';
@@ -581,14 +640,24 @@ export interface DistributeResult {
 
 /**
  * Evens out the day: unstarted auto-queued tasks plus everything in Available tasks are re-planned
- * across everyone scheduled today (same rules as 5 AM, no AI so the button is quick). Only cards whose
+ * by the working time each person still has today from the moment it runs (later shifts included).
+ * A task only goes to someone with enough free time left to finish it, so a 3h task at 4 PM skips a
+ * morning person who is out at 5 PM and goes to the noon/night shift. Same rules as 5 AM otherwise,
+ * no AI so the button is quick. Only cards whose
  * owner changes are moved; started tasks and anything a PM placed by hand stay where they are.
  */
 export async function distributeAutoQueue(actor: ActorUser, opts: { preview?: boolean } = {}): Promise<DistributeResult> {
   return exclusive(opts.preview ? 'distribute preview' : 'distribute', async () => {
     const config = getAutoQueueConfig();
     const bot = await getOrCreateAutoQueueUser();
-    const [{ pool, items }, { users, shifts }] = await Promise.all([loadBoard(bot), loadPeople()]);
+    const [{ pool, items }, { users, shifts }, clientHistory] = await Promise.all([
+      loadBoard(bot),
+      loadPeople(),
+      loadClientHistory(bot.id),
+    ]);
+
+    const { hour, minute } = getManilaHourAndMinute();
+    const nowMinute = hour * 60 + minute;
 
     const movable = movableAutoQueued(items, bot.id);
     const movableIds = new Set(movable.map((m) => m.id));
@@ -600,6 +669,13 @@ export async function distributeAutoQueue(actor: ActorUser, opts: { preview?: bo
       users,
       shifts,
       defaultHours: config.defaultHours,
+      // Working time each person still has today from the moment of the click, including shifts
+      // that haven't started yet (night/noon). A task only goes to someone with enough of it left
+      // after their current work; otherwise it stays in Available tasks for a later shift.
+      capacityHours: (user) => remainingShiftHours(user, shifts, nowMinute),
+      requireRoom: true,
+      roomLabel: 'working the rest of today',
+      clientHistory,
     });
 
     const changes = plan.decisions.filter((d) => (ownerBefore.get(d.taskId) ?? null) !== d.userId);
@@ -633,4 +709,27 @@ export async function distributeAutoQueue(actor: ActorUser, opts: { preview?: bo
         : {}),
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// People left out of the auto-queue (set by PMs/Admins from the Distribute dialog)
+// ---------------------------------------------------------------------------
+
+export async function listAutoQueueExcluded(): Promise<Array<{ id: string; name: string }>> {
+  return prisma.user.findMany({
+    where: { isActive: true, autoQueueExcluded: true },
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
+export async function setAutoQueueExcluded(userId: string, excluded: boolean, actor: ActorUser): Promise<void> {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { autoQueueExcluded: excluded },
+    select: { name: true },
+  });
+  logger.info(
+    `[AutoQueue] ${user.name} ${excluded ? 'excluded from' : 'included in'} the auto-queue by ${actor.name || actor.email || actor.id}`
+  );
 }

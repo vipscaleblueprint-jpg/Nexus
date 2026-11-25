@@ -51,6 +51,8 @@ model User {
   starRating            Int                   @default(1)
   employmentType        EmploymentType        @default(FULL_TIME)
   isActive              Boolean               @default(true)
+  /// PMs/Admins can leave someone out of the Task Map auto-queue (Distribute, 5 AM, 1 PM, 5 PM)
+  autoQueueExcluded     Boolean               @default(false)
   lastLoginAt           DateTime?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt

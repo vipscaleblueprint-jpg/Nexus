@@ -5,7 +5,9 @@ import {
   AutoQueueBusyError,
   distributeAutoQueue,
   getAutoQueueConfig,
+  listAutoQueueExcluded,
   resetAutoQueue,
+  setAutoQueueExcluded,
   runCheckpoint,
   runDailyAutoQueue,
 } from '../services/autoQueue/autoQueueService';
@@ -74,5 +76,32 @@ export const distributeAutoQueueHandler = async (req: Request, res: Response) =>
     return res.json({ success: true, ...(await distributeAutoQueue(actor)) });
   } catch (err) {
     return sendError(res, err, 'distribute');
+  }
+};
+
+/** GET /api/task-map/auto-queue/excluded: people left out of the auto-queue. */
+export const listAutoQueueExcludedHandler = async (req: Request, res: Response) => {
+  if (!(await requirePm(req, res))) return;
+  try {
+    return res.json({ success: true, users: await listAutoQueueExcluded() });
+  } catch (err) {
+    return sendError(res, err, 'excluded list');
+  }
+};
+
+/** PUT /api/task-map/auto-queue/excluded { userId, excluded }: leave someone out of (or put back into) the auto-queue. */
+export const setAutoQueueExcludedHandler = async (req: Request, res: Response) => {
+  const actor = await requirePm(req, res);
+  if (!actor) return;
+  const { userId, excluded } = req.body || {};
+  if (typeof userId !== 'string' || !userId || typeof excluded !== 'boolean') {
+    return res.status(400).json({ error: 'userId (string) and excluded (boolean) are required' });
+  }
+  try {
+    await setAutoQueueExcluded(userId, excluded, actor);
+    return res.json({ success: true, users: await listAutoQueueExcluded() });
+  } catch (err: any) {
+    if (err?.code === 'P2025') return res.status(404).json({ error: 'User not found' });
+    return sendError(res, err, 'exclude');
   }
 };

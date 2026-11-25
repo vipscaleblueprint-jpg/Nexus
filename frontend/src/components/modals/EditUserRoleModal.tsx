@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, X, User as UserIcon, Check, Loader2, Star, ChevronDown } from 'lucide-react';
+import { Shield, X, User as UserIcon, Check, Loader2, Star, ChevronDown, Search } from 'lucide-react';
 import { usersApi } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { User, SystemRole, EmploymentType, WorkspaceRole } from '@/lib/types';
@@ -21,7 +21,9 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
   // roles[0] is always the "primary" role — whichever was clicked first.
   const [roles, setRoles] = useState<string[]>([]);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const [roleSearch, setRoleSearch] = useState('');
   const roleMenuRef = useRef<HTMLDivElement>(null);
+  const roleSearchInputRef = useRef<HTMLInputElement>(null);
 
   const [starRating, setStarRating] = useState<number>(1);
   const [isActive, setIsActive] = useState(true);
@@ -58,21 +60,36 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (roleMenuOpen) {
+          setRoleMenuOpen(false);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, roleMenuOpen]);
 
   useEffect(() => {
-    if (!roleMenuOpen) return;
+    if (!roleMenuOpen) {
+      setRoleSearch('');
+      return;
+    }
+    const timer = setTimeout(() => {
+      roleSearchInputRef.current?.focus();
+    }, 0);
     const onClickOutside = (e: MouseEvent) => {
       if (roleMenuRef.current && !roleMenuRef.current.contains(e.target as Node)) {
         setRoleMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', onClickOutside);
+    };
   }, [roleMenuOpen]);
 
 
@@ -118,6 +135,22 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
       teamRoleGroups[groupKey].push(r);
     }
   });
+
+  const normalizedRoleSearch = roleSearch.trim().toLowerCase();
+  const filteredWorkspaceRoles = normalizedRoleSearch
+    ? workspaceRoleOptions.filter((r: any) => r.name.toLowerCase().includes(normalizedRoleSearch))
+    : workspaceRoleOptions;
+  const filteredTeamRoleEntries = Object.entries(teamRoleGroups)
+    .map(([teamName, teamRoles]) => {
+      if (!normalizedRoleSearch || teamName.toLowerCase().includes(normalizedRoleSearch)) {
+        return [teamName, teamRoles] as const;
+      }
+      return [
+        teamName,
+        teamRoles.filter((r) => r.name.toLowerCase().includes(normalizedRoleSearch)),
+      ] as const;
+    })
+    .filter(([, teamRoles]) => teamRoles.length > 0);
 
   const RoleCheckboxRow = ({ id, name }: { id: string; name: string }) => {
     const checked = roles.includes(name);
@@ -298,30 +331,62 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
               </button>
 
               {roleMenuOpen && (
-                <div className="absolute z-20 mt-1.5 w-full max-h-64 overflow-y-auto bg-popover border border-zinc-800 rounded-xl shadow-xl p-1.5">
-                  {workspaceRoleOptions.length === 0 && Object.keys(teamRoleGroups).length === 0 && (
-                    <div className="px-2.5 py-2 text-[11px] text-zinc-500">No roles available.</div>
-                  )}
-                  {workspaceRoleOptions.length > 0 && (
-                    <div className="mb-1">
-                      <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                        Generic Roles
-                      </div>
-                      {workspaceRoleOptions.map((r: any) => (
-                        <RoleCheckboxRow key={r.id} id={r.id} name={r.name} />
-                      ))}
+                <div className="absolute z-20 mt-1.5 w-full max-h-64 flex flex-col bg-popover border border-zinc-800 rounded-xl shadow-xl overflow-hidden">
+                  <div className="p-1.5 border-b border-zinc-800/80 shrink-0">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        ref={roleSearchInputRef}
+                        type="text"
+                        value={roleSearch}
+                        onChange={(e) => setRoleSearch(e.target.value)}
+                        placeholder="Search roles..."
+                        className="w-full bg-background border border-zinc-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                      />
+                      {roleSearch && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoleSearch('');
+                            roleSearchInputRef.current?.focus();
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-zinc-500 hover:text-zinc-300 transition-colors"
+                          aria-label="Clear role search"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
-                  )}
-                  {Object.entries(teamRoleGroups).map(([teamName, teamRoles]) => (
-                    <div key={teamName} className="mb-1">
-                      <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                        {teamName}
+                  </div>
+                  <div className="overflow-y-auto p-1.5">
+                    {filteredWorkspaceRoles.length === 0 && filteredTeamRoleEntries.length === 0 && (
+                      <div className="px-2.5 py-2 text-[11px] text-zinc-500">
+                        {availableRoles.length === 0
+                          ? 'No roles available.'
+                          : `No roles matching "${roleSearch.trim()}".`}
                       </div>
-                      {teamRoles.map((r) => (
-                        <RoleCheckboxRow key={r.id} id={r.id} name={r.name} />
-                      ))}
-                    </div>
-                  ))}
+                    )}
+                    {filteredWorkspaceRoles.length > 0 && (
+                      <div className="mb-1">
+                        <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                          Generic Roles
+                        </div>
+                        {filteredWorkspaceRoles.map((r: any) => (
+                          <RoleCheckboxRow key={r.id} id={r.id} name={r.name} />
+                        ))}
+                      </div>
+                    )}
+                    {filteredTeamRoleEntries.map(([teamName, teamRoles]) => (
+                      <div key={teamName} className="mb-1">
+                        <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                          {teamName}
+                        </div>
+                        {teamRoles.map((r) => (
+                          <RoleCheckboxRow key={r.id} id={r.id} name={r.name} />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

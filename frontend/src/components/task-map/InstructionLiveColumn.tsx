@@ -28,6 +28,21 @@ import {
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 
 const MIN_SUPERVISE_LIVE_MS = 20 * 60 * 1000;
+const SUPERVISE_TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const SUPERVISE_THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+function getNextSuperviseMilestoneMs(elapsedMs: number): number {
+  if (elapsedMs < SUPERVISE_TWO_HOURS_MS) {
+    return SUPERVISE_TWO_HOURS_MS;
+  }
+  const stepsAfterTwoHours = Math.floor((elapsedMs - SUPERVISE_TWO_HOURS_MS) / SUPERVISE_THREE_HOURS_MS) + 1;
+  return SUPERVISE_TWO_HOURS_MS + stepsAfterTwoHours * SUPERVISE_THREE_HOURS_MS;
+}
+
+function formatMilestoneHours(ms: number): string {
+  const hours = Math.round(ms / (60 * 60 * 1000));
+  return `${hours}h`;
+}
 
 export interface InstructionLiveColumnProps {
   sortedUserColumns: Array<[string, { user: any; tasks: TaskMapItem[] }]>;
@@ -85,8 +100,11 @@ function formatElapsedShort(diffMs: number): string {
 
 function formatRemainingMins(reappearAt: string, nowMs: number): string {
   const diffMs = Math.max(0, new Date(reappearAt).getTime() - nowMs);
-  const mins = Math.max(1, Math.ceil(diffMs / 60000));
-  return `${mins}m`;
+  const totalMins = Math.max(1, Math.ceil(diffMs / 60000));
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${totalMins}m`;
 }
 
 export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
@@ -259,7 +277,8 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
         client: confirmTarget.clientName,
         note: checkNote.trim() || null,
       });
-      toast.success(`Checked ${confirmTarget.maName} — will reappear in 40m`);
+      const nextMilestoneLabel = formatMilestoneHours(getNextSuperviseMilestoneMs(confirmTarget.diffMs));
+      toast.success(`Checked ${confirmTarget.maName} — will reappear at ${nextMilestoneLabel}`);
       setConfirmTarget(null);
       setCheckNote('');
     } catch (err: any) {
@@ -356,9 +375,30 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
         className={`group relative rounded-xl border p-3 shadow-md transition-all duration-200 ease-out ${
           isSnoozed
             ? 'border-zinc-800/80 bg-zinc-900/45 opacity-70 hover:opacity-95'
-            : 'bg-zinc-900 border-border not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md not-has-[[data-card-control]:hover]:hover:border-zinc-600/80'
+            : isUpwork
+              ? 'bg-zinc-900 border-indigo-500/35 dark:border-white/35 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md'
+              : 'bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md'
         } ${isClickable ? 'cursor-pointer active:scale-[0.99]' : ''}`}
+        style={!isSnoozed && !isUpwork ? { borderColor: 'rgba(208, 74, 124, 0.35)' } : undefined}
       >
+        {!isSnoozed && (
+          <div
+            aria-hidden="true"
+            className={
+              isUpwork
+                ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
+                : 'pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe'
+            }
+            style={
+              !isUpwork
+                ? {
+                    borderColor: '#D04A7C',
+                    boxShadow: '0 0 0 2px rgba(208, 74, 124, 0.5), 0 0 20px rgba(208, 74, 124, 0.35)',
+                  }
+                : undefined
+            }
+          />
+        )}
         {/* Person + Live Timer */}
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 min-w-0">
@@ -526,11 +566,11 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
                     setCheckNote('');
                     setConfirmTarget(entry);
                   }}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-600 text-emerald-700 dark:text-emerald-300 hover:!text-white border border-emerald-500/30 hover:border-emerald-600 font-semibold transition-colors cursor-pointer"
-                  title="Mark as checked (hides for 40 mins)"
+                  className="inline-flex items-center justify-center p-1.5 rounded-md bg-emerald-500/10 hover:bg-emerald-600 text-emerald-700 dark:text-emerald-300 hover:!text-white border border-emerald-500/30 hover:border-emerald-600 transition-colors cursor-pointer"
+                  title="Mark as checked (hides until next check-in)"
+                  aria-label="Mark as checked"
                 >
-                  <CheckCircle2 className="size-3" />
-                  <span>Check</span>
+                  <CheckCircle2 className="size-4" />
                 </button>
               )
             )}
@@ -565,7 +605,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
                     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
                     : 'bg-zinc-800/80 text-zinc-400 hover:text-zinc-200 border-zinc-700/60'
                 }`}
-                title={showChecked ? 'Hide checked cards' : 'Peek at checked cards (40m snooze)'}
+                title={showChecked ? 'Hide checked cards' : 'Peek at checked cards'}
               >
                 <Eye className="size-2.5" />
                 <span>Checked ({checkedEntries.length})</span>
@@ -653,7 +693,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
                 {searchQuery
                   ? 'No matching live tasks.'
                   : checkedEntries.length > 0
-                    ? `All ${checkedEntries.length} live task(s) checked — reappearing in 40m.`
+                    ? `All ${checkedEntries.length} live task(s) checked — waiting for next check-in.`
                     : 'No live progress 20 mins and above.'}
               </p>
             </div>
@@ -665,7 +705,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
                 <div className="pt-2 mt-2 border-t border-zinc-800/80 space-y-2">
                   <div className="flex items-center justify-between px-1">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                      Checked (40m Snooze)
+                      Checked (Snoozed)
                     </span>
                   </div>
                   {checkedEntries.map((entry) => renderCard(entry, true))}
@@ -721,7 +761,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
               </div>
 
               <p className="text-xs text-zinc-300 leading-relaxed">
-                Confirm you&apos;ve checked in on <span className="font-semibold text-white">{confirmTarget.maName}</span>&apos;s progress. This card will be hidden from <span className="font-semibold text-emerald-400">Supervise</span> and automatically reappear in <span className="font-semibold text-white">40 minutes</span> if still live.
+                Confirm you&apos;ve checked in on <span className="font-semibold text-white">{confirmTarget.maName}</span>&apos;s progress. This card will be hidden from <span className="font-semibold text-emerald-400">Supervise</span> and automatically reappear at the <span className="font-semibold text-white">{formatMilestoneHours(getNextSuperviseMilestoneMs(confirmTarget.diffMs))}</span> mark if still live.
               </p>
 
               <div className="space-y-1.5">
@@ -759,7 +799,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
                   ) : (
                     <>
                       <CheckCircle2 className="size-3.5" />
-                      <span>Confirm Check (Hide 40m)</span>
+                      <span>Confirm Check (Hide until {formatMilestoneHours(getNextSuperviseMilestoneMs(confirmTarget.diffMs))})</span>
                     </>
                   )}
                 </button>

@@ -279,7 +279,7 @@ const getHexColor = (color: string) => {
 const isActivityVisible = (act: any): boolean => {
   if (!act) return false;
   const t = act.type;
-  if (t === 'status_change') return true;
+  if (t === 'status_change' || t === 'task_map_status_change') return true;
   if (t === 'assignment' || t === 'unassignment' || t === 'add_follower' || t === 'remove_follower' || t === 'followers_change') return true;
   if (t === 'title_change') return true;
   if (t === 'priority_change') return true;
@@ -2312,7 +2312,7 @@ export function TaskDetailModalContent({
         const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
         const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+          const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
           if (c.id === payload.checklistId || isAudit) {
             const hasItem = (c.items || []).some((i: any) =>
               i.id === payload.item.id ||
@@ -2343,7 +2343,7 @@ export function TaskDetailModalContent({
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
-              const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+              const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
               if (c.id === payload.checklistId || isAudit) {
                 const hasItem = (c.items || []).some((i: any) =>
                   i.id === payload.item.id ||
@@ -5209,7 +5209,8 @@ export function TaskDetailModalContent({
                               if (item.isActivityType) {
                               const act = item;
                               const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                              if (act.type === 'status_change') {
+                              if (act.type === 'status_change' || act.type === 'task_map_status_change') {
+                                const isSubStatusChange = act.type === 'task_map_status_change';
                                 return (
                                   <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                     <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
@@ -5217,7 +5218,8 @@ export function TaskDetailModalContent({
                                       <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                       {act.subtaskTitle ? (
                                         <>
-                                          changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span>
+                                          {isSubStatusChange ? 'changed sub-status of subtask' : 'changed status of subtask'}{' '}
+                                          <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span>
                                           {act.oldStatus && (
                                             <>from <span
                                               className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
@@ -5229,7 +5231,7 @@ export function TaskDetailModalContent({
                                         </>
                                       ) : (
                                         <>
-                                          changed status
+                                          {isSubStatusChange ? 'changed sub-status' : 'changed status'}
                                           {act.oldStatus && (
                                             <> from <span
                                               className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
@@ -9811,13 +9813,14 @@ export function SubtaskDetailView({
                             if (item.isActivityType) {
                             const act = item;
                             const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                            if (act.type === 'status_change') {
+                            if (act.type === 'status_change' || act.type === 'task_map_status_change') {
+                              const isSubStatusChange = act.type === 'task_map_status_change';
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    changed status
+                                    {isSubStatusChange ? 'changed sub-status' : 'changed status'}
                                     {act.oldStatus && (
                                       <> from <span
                                           className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}

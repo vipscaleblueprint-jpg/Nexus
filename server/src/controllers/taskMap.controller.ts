@@ -1874,7 +1874,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         requestedStatuses: statuses,
       });
 
-      await prisma.auditLog.create({
+      const revLog = await prisma.auditLog.create({
         data: {
           action: 'TASK_MAP_STATUS_CHANGE',
           entity: 'TASK',
@@ -1887,7 +1887,26 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             actor: actorDisplayName,
           },
         },
-      }).catch(() => {});
+      }).catch(() => null);
+
+      await invalidateCache(`task:activities:${revResult.taskId}`, `task:${revResult.taskId}`).catch(() => {});
+      if (revLog) {
+        io.emit('task_activity', {
+          taskId: revResult.taskId,
+          activity: {
+            id: revLog.id,
+            type: 'task_map_status_change',
+            author: actorDisplayName,
+            oldStatus: null,
+            newStatus: revResult.statuses.length > 0 ? revResult.statuses.join(', ') : 'None',
+            oldStatuses: [],
+            newStatuses: revResult.statuses,
+            subtaskId: revResult.subtaskId,
+            date: revLog.createdAt,
+            user: actorUser ? { id: actorUser.id, name: actorDisplayName } : { id: user?.id || 'system', name: actorDisplayName },
+          },
+        });
+      }
 
       const freshRecord = await getOrCreateTaskMapRecord(revResult.taskId);
       const responseTaskMap = revResult.subtaskId
@@ -2045,9 +2064,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       }
 
       const updatedParent = await updateTaskMapRecord(subtask.taskId, { pmReviews });
-      await invalidateCache('task:*', 'tasks:all', `task:${subtask.taskId}`, `task:${subtask.id}`, 'task_map:*');
+      await invalidateCache('task:*', 'tasks:all', `task:${subtask.taskId}`, `task:${subtask.id}`, `task:activities:${subtask.taskId}`, 'task_map:*');
 
-      await prisma.auditLog.create({
+      const subLog = await prisma.auditLog.create({
         data: {
           action: 'TASK_MAP_STATUS_CHANGE',
           entity: 'TASK',
@@ -2060,6 +2079,24 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             subtaskTitle: subtask.title,
             actor: actorDisplayName,
           },
+        },
+      });
+
+      io.emit('task_activity', {
+        listId: subtask.task?.listId || undefined,
+        taskId: subtask.taskId,
+        activity: {
+          id: subLog.id,
+          type: 'task_map_status_change',
+          author: actorDisplayName,
+          oldStatus: oldStatuses.length > 0 ? oldStatuses.join(', ') : null,
+          newStatus: statuses.length > 0 ? statuses.join(', ') : 'None',
+          oldStatuses,
+          newStatuses: statuses,
+          subtaskId: subtask.id,
+          subtaskTitle: subtask.title,
+          date: subLog.createdAt,
+          user: actorUser ? { id: actorUser.id, name: actorDisplayName } : { id: user?.id || 'system', name: actorDisplayName },
         },
       });
 
@@ -2424,7 +2461,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     }
 
     // Create AuditLog
-    await prisma.auditLog.create({
+    const mainLog = await prisma.auditLog.create({
       data: {
         action: 'TASK_MAP_STATUS_CHANGE',
         entity: 'TASK',
@@ -2435,6 +2472,24 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           newStatuses: statuses,
           actor: actorDisplayName,
         },
+      },
+    });
+
+    await invalidateCache(`task:activities:${id}`, `task:${id}`).catch(() => {});
+
+    io.emit('task_activity', {
+      listId: currentTask?.listId || undefined,
+      taskId: id,
+      activity: {
+        id: mainLog.id,
+        type: 'task_map_status_change',
+        author: actorDisplayName,
+        oldStatus: oldStatuses.length > 0 ? oldStatuses.join(', ') : null,
+        newStatus: statuses.length > 0 ? statuses.join(', ') : 'None',
+        oldStatuses,
+        newStatuses: statuses,
+        date: mainLog.createdAt,
+        user: actorUser ? { id: actorUser.id, name: actorDisplayName } : { id: user?.id || 'system', name: actorDisplayName },
       },
     });
 
@@ -5165,6 +5220,8 @@ export const getClientLockStatusHandler = async (req: Request, res: Response) =>
 /**
  * Handles explicit schedule row sync from frontend to spreadsheet / n8n
  */
+const recentSpreadsheetStopDedupe = new Map<string, number>();
+
 export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => {
   try {
     const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, source } = req.body;
@@ -5277,29 +5334,48 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
     }
 
-    // Forward to n8n webhook to update the user's personal Google Spreadsheet
+    // Forward to n8n webhook to update the user's personal Google Spreadsheet (with STOP deduplication)
     if (targetRow) {
-      await triggerN8nStartTaskWebhook({
-        userId: user?.id,
-        userName: actorDisplayName,
-        userEmail: actorUser?.email,
-        dailySheetUrl: actorUser?.dailySheetUrl,
-        taskId: cleanTaskId || null,
-        subtaskId: subtaskId || null,
-        sheetRow: resolvedSheetRow,
-        taskTitle: targetRow.task || 'Task',
-        clientName: targetRow.client || 'General',
-        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
-        status: targetRow.taskStatus || mode,
-        date: targetRow.date,
-        timeIn: targetRow.timeIn,
-        timeOut: effectiveTimeOut,
-        timeTracker: targetRow.timeTracker || null,
-        taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
-        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
-        description: targetRow.taskDeliverablesDescription || targetRow.task,
-        mode: mode || 'UPDATE',
-      });
+      let skipDuplicateWebhook = false;
+      if (mode === 'STOP') {
+        const dedupeKey = `${String(targetRow.date || getManilaDateStr()).split('T')[0]}::${actorDisplayName.trim().toLowerCase()}::${String(targetRow.timeIn || '').trim()}::${cleanTaskId || 'none'}`;
+        if (isRedisReady()) {
+          const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
+          if (!acquired) skipDuplicateWebhook = true;
+        } else {
+          const prevTs = recentSpreadsheetStopDedupe.get(dedupeKey);
+          const nowTs = Date.now();
+          if (prevTs && nowTs - prevTs < 30000) {
+            skipDuplicateWebhook = true;
+          } else {
+            recentSpreadsheetStopDedupe.set(dedupeKey, nowTs);
+          }
+        }
+      }
+
+      if (!skipDuplicateWebhook) {
+        await triggerN8nStartTaskWebhook({
+          userId: user?.id,
+          userName: actorDisplayName,
+          userEmail: actorUser?.email,
+          dailySheetUrl: actorUser?.dailySheetUrl,
+          taskId: cleanTaskId || null,
+          subtaskId: subtaskId || null,
+          sheetRow: resolvedSheetRow,
+          taskTitle: targetRow.task || 'Task',
+          clientName: targetRow.client || 'General',
+          taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
+          status: targetRow.taskStatus || mode,
+          date: targetRow.date,
+          timeIn: targetRow.timeIn,
+          timeOut: effectiveTimeOut,
+          timeTracker: targetRow.timeTracker || null,
+          taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
+          description: targetRow.taskDeliverablesDescription || targetRow.task,
+          mode: mode || 'UPDATE',
+        });
+      }
     }
 
     return res.json({
@@ -5419,6 +5495,46 @@ export const getUserDailyScheduleConfigHandler = async (req: Request, res: Respo
   }
 };
 
+const SUPERVISE_TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const SUPERVISE_THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+function parseManilaSessionStart(dateKey: string, timeIn: string, now: Date): Date | null {
+  const m = String(timeIn || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!m) return null;
+  let hours = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const period = (m[3] || '').toUpperCase();
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  if (hours < 0 || hours > 23 || mins < 0 || mins > 59) return null;
+
+  const cleanDate = String(dateKey || '').split('T')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  let start = new Date(`${cleanDate}T${pad(hours)}:${pad(mins)}:00+08:00`);
+  if (isNaN(start.getTime())) return null;
+
+  if (start.getTime() - now.getTime() > SUPERVISE_TWO_HOURS_MS) {
+    start = new Date(start.getTime() - 24 * 60 * 60 * 1000);
+  }
+  return start;
+}
+
+function computeNextSuperviseReappearAt(dateKey: string, timeIn: string, checkedAt: Date): Date {
+  const start = parseManilaSessionStart(dateKey, timeIn, checkedAt);
+  if (!start) {
+    return new Date(checkedAt.getTime() + SUPERVISE_TWO_HOURS_MS);
+  }
+  const elapsedMs = Math.max(0, checkedAt.getTime() - start.getTime());
+  const nextMilestoneMs =
+    elapsedMs < SUPERVISE_TWO_HOURS_MS
+      ? SUPERVISE_TWO_HOURS_MS
+      : SUPERVISE_TWO_HOURS_MS +
+        (Math.floor((elapsedMs - SUPERVISE_TWO_HOURS_MS) / SUPERVISE_THREE_HOURS_MS) + 1) *
+          SUPERVISE_THREE_HOURS_MS;
+  return new Date(start.getTime() + nextMilestoneMs);
+}
+
 export const createSuperviseCheckHandler = async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
@@ -5443,7 +5559,7 @@ export const createSuperviseCheckHandler = async (req: Request, res: Response) =
     const sessionKey = `${effectiveDateKey}::${maKey}::${cleanTimeIn}::${cleanTaskId || 'none'}`;
 
     const checkedAt = new Date();
-    const reappearAt = new Date(checkedAt.getTime() + 40 * 60 * 1000);
+    const reappearAt = computeNextSuperviseReappearAt(effectiveDateKey, cleanTimeIn, checkedAt);
 
     const check = await (prisma as any).superviseCheck.upsert({
       where: { sessionKey },

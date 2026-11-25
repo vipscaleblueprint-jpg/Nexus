@@ -1617,18 +1617,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                   {liveSlotLabel}
                                 </span>
                               </div>
-                              {isColumnLiveWorking && (
-                                <span
-                                  className="text-[10px] font-mono font-semibold flex items-center gap-1"
-                                  style={{ color: liveSlotColor }}
-                                >
-                                  <span
-                                    className="size-1.5 rounded-full animate-ping shrink-0"
-                                    style={{ backgroundColor: liveSlotColor }}
-                                  />
-                                  Live Working
-                                </span>
-                              )}
                             </div>
 
                             {activeInProgTask ? (

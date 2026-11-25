@@ -2646,6 +2646,27 @@ export async function getTaskActivities(req: Request, res: Response) {
           user: log.user ? { ...log.user, name: authorName } : log.user,
         };
       }
+      if (log.action === 'TASK_MAP_STATUS_CHANGE') {
+        const rawName = log.user?.name || details.actor;
+        const authorName = (rawName && (rawName.toUpperCase() === 'VIPSCALE' || rawName.toUpperCase() === 'VIP SCALE'))
+          ? 'VIPScale'
+          : (rawName || 'Someone');
+        const oldStatuses = Array.isArray(details.oldStatuses) ? details.oldStatuses : [];
+        const newStatuses = Array.isArray(details.newStatuses) ? details.newStatuses : [];
+        return {
+          id: log.id,
+          type: 'task_map_status_change',
+          author: authorName,
+          oldStatus: oldStatuses.length > 0 ? oldStatuses.join(', ') : null,
+          newStatus: newStatuses.length > 0 ? newStatuses.join(', ') : 'None',
+          oldStatuses,
+          newStatuses,
+          subtaskTitle: details.subtaskTitle,
+          subtaskId: details.subtaskId,
+          date: log.createdAt,
+          user: log.user ? { ...log.user, name: authorName } : log.user,
+        };
+      }
       if (log.action === 'COMMENT') {
         return {
           id: log.id,
@@ -3798,6 +3819,106 @@ function itemAssigneeIds(assigneeId: unknown, assigneeIds: unknown): string[] | 
 
 const isAuditChecklistName = (name: string | null | undefined) => (name || '').trim().toLowerCase() === 'audit';
 
+/**
+ * Enforces audit hierarchy order: UI/UX Audit and Design Audit share Level 1 and must
+ * be completed before Instructions Audit or Funnel Audit can be checked.
+ */
+async function validateAuditHierarchyOrder(params: {
+  taskId: string;
+  subtaskId?: string | null;
+  auditText: string;
+}): Promise<string | null> {
+  const norm = (params.auditText || '').trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+  const normalized = norm === 'instruction audit' ? 'instructions audit' : norm;
+  if (normalized !== 'instructions audit' && normalized !== 'funnel audit') {
+    return null;
+  }
+
+  const taskData = await prisma.task.findUnique({
+    where: { id: params.taskId },
+    select: {
+      title: true,
+      assigneeRoleRestrictions: true,
+      checklists: {
+        select: {
+          name: true,
+          externalId: true,
+          subtaskId: true,
+          items: { select: { text: true, completed: true } },
+        },
+      },
+      subtasks: {
+        select: {
+          id: true,
+          title: true,
+          assigneeRoleRestrictions: true,
+          checklists: {
+            select: {
+              name: true,
+              externalId: true,
+              subtaskId: true,
+              items: { select: { text: true, completed: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!taskData) return null;
+
+  const targetSub = params.subtaskId
+    ? taskData.subtasks.find((s) => s.id === params.subtaskId)
+    : null;
+  const checklists = params.subtaskId
+    ? [...(targetSub?.checklists || []), ...taskData.checklists.filter((c) => c.subtaskId === params.subtaskId)]
+    : taskData.checklists;
+  const auditorRoles = targetSub
+    ? (targetSub.assigneeRoleRestrictions || [])
+    : [
+        ...(taskData.assigneeRoleRestrictions || []),
+        ...taskData.subtasks
+          .filter((s) => s.title?.toLowerCase().startsWith('--audit'))
+          .flatMap((s) => s.assigneeRoleRestrictions || []),
+      ];
+
+  const required = resolveRequiredAudits({
+    title: targetSub?.title || taskData.title,
+    auditorRoles,
+    checklists,
+    subtaskId: params.subtaskId || null,
+  });
+
+  const completedNorms = new Set<string>();
+  for (const cl of checklists) {
+    if (params.subtaskId ? (cl.subtaskId && cl.subtaskId !== params.subtaskId) : cl.subtaskId) continue;
+    for (const it of cl.items || []) {
+      if (!it.completed || (it.text || '').startsWith('!')) continue;
+      const n = (it.text || '').trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+      completedNorms.add(n === 'instruction audit' ? 'instructions audit' : n);
+    }
+  }
+
+  const missingLevel1 = required.filter((reqName) => {
+    const n = reqName.trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+    return (n === 'ui ux audit' || n === 'design audit') && !completedNorms.has(n);
+  });
+  if (missingLevel1.length > 0) {
+    return `Cannot complete ${params.auditText}: ${missingLevel1.join(' and ')} must be completed first.`;
+  }
+
+  if (normalized === 'funnel audit') {
+    const requiresInstructions = required.some((reqName) => {
+      const n = reqName.trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+      return n === 'instructions audit' || n === 'instruction audit';
+    });
+    if (requiresInstructions && !completedNorms.has('instructions audit')) {
+      return 'Cannot complete Funnel Audit: Instructions Audit must be completed first.';
+    }
+  }
+
+  return null;
+}
+
 async function getAuditAssignDeniedMessage(): Promise<string> {
   return (await getAssignDeniedMessage()).replace('set Team Role and Assignees', 'assign or remove auditors');
 }
@@ -3883,6 +4004,14 @@ export async function createChecklistItem(req: Request, res: Response) {
           });
           if (counterpartConflict) {
             return res.status(403).json({ error: counterpartConflict });
+          }
+          const hierarchyError = await validateAuditHierarchyOrder({
+            taskId,
+            subtaskId: checklist?.subtaskId || subtaskId || null,
+            auditText: text || '',
+          });
+          if (hierarchyError) {
+            return res.status(400).json({ error: hierarchyError });
           }
           data.assigneeId = [userId];
         }
@@ -4271,6 +4400,14 @@ export async function updateChecklistItem(req: Request, res: Response) {
           });
           if (counterpartConflict) {
             return res.status(403).json({ error: counterpartConflict });
+          }
+          const hierarchyError = await validateAuditHierarchyOrder({
+            taskId: targetTaskId,
+            subtaskId: currentSubtaskId || null,
+            auditText: text || checkItem?.text || '',
+          });
+          if (hierarchyError) {
+            return res.status(400).json({ error: hierarchyError });
           }
           data.assigneeId = [userId];
         }

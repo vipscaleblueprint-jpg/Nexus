@@ -10,6 +10,7 @@ import {
   getRequiredAudits,
   getAiPickedAudits,
   hidesDesignAudit,
+  HIDE_INSTRUCTIONS_AUDIT,
   isNexusAuditChecklist,
   canPerformAudit,
   isUiUxAudit,
@@ -90,6 +91,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     ].filter((name) => {
       const norm = normalizeAuditName(name);
       if (!name || name.startsWith('!') || excludedSet.has(norm)) return false;
+      if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') return false;
       if (
         hideDesign &&
         norm === 'design audit' &&
@@ -274,15 +276,6 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
           <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
             Audit Checklist
           </span>
-          {isQueueColumn && (
-            <span
-              className="flex items-center gap-0.5 text-[9px] text-zinc-500 font-medium"
-              title="Must be assigned to an auditor first"
-            >
-              <Lock className="size-2.5" />
-              <span>Queue</span>
-            </span>
-          )}
         </div>
         <span
           className={`text-[9px] font-mono px-1.5 py-0.2 rounded-full font-semibold border ${

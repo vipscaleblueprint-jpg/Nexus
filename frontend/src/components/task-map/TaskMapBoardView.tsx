@@ -2509,7 +2509,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
 
       // Also trigger sheet schedule row sync
-      taskMapApi.syncScheduleToSpreadsheet({
+      await taskMapApi.syncScheduleToSpreadsheet({
         taskId: linkedId || task.id,
         subtaskId: task.subtaskId || null,
         sheetRow: task.progress?.sheetRow,
@@ -2605,7 +2605,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
 
     // Trigger syncScheduleToSpreadsheet with explicit sheetRow and startedAt preserving same row
-    taskMapApi.syncScheduleToSpreadsheet({
+    await taskMapApi.syncScheduleToSpreadsheet({
       taskId: effectiveTaskId,
       subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
       sheetRow: task.progress?.sheetRow,

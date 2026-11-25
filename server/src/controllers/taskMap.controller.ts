@@ -5221,7 +5221,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
 
     // Forward to n8n webhook to update the user's personal Google Spreadsheet
     if (targetRow) {
-      triggerN8nStartTaskWebhook({
+      await triggerN8nStartTaskWebhook({
         userId: user?.id,
         userName: actorDisplayName,
         userEmail: actorUser?.email,

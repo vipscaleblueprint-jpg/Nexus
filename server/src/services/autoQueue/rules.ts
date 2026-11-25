@@ -313,7 +313,7 @@ export function computeMaLoads(items: BoardItem[], userIds: string[], defaultHou
 }
 
 /** Hours a task counts for when balancing: its estimate, or the default when it has none. */
-export const DEFAULT_ESTIMATED_HOURS = 3;
+export const DEFAULT_ESTIMATED_HOURS = 0.5;
 export function itemHours(item: BoardItem, defaultHours = DEFAULT_ESTIMATED_HOURS): number {
   const h = Number(item.estimatedHours);
   return Number.isFinite(h) && h > 0 ? h : defaultHours;

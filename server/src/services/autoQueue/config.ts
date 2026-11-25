@@ -27,9 +27,9 @@ export function getAutoQueueConfig(): AutoQueueConfig {
   const url = (process.env.OLLAMA_URL || '').trim();
   return {
     mode,
-    maxQueuedPerMa: Math.floor(numEnv('AUTO_QUEUE_MAX_QUEUED_PER_MA', 2, 1)),
+    maxQueuedPerMa: Math.floor(numEnv('AUTO_QUEUE_MAX_QUEUED_PER_MA', 10, 1)),
     maxAssignmentsPerRun: Math.floor(numEnv('AUTO_QUEUE_MAX_PER_RUN', 5, 1)),
-    defaultHours: numEnv('AUTO_QUEUE_DEFAULT_HOURS', 3, 0.25),
+    defaultHours: numEnv('AUTO_QUEUE_DEFAULT_HOURS', 0.5, 0.25),
     ollama: url
       ? {
           url,

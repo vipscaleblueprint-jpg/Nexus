@@ -299,7 +299,7 @@ export function AutoQueueControls() {
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-medium text-zinc-100 truncate">{d.taskTitle}</span>
                               <span className="shrink-0 text-zinc-400">
-                                {d.userName} · {d.hours !== undefined ? `${d.hours}h` : '3h'} · {d.isMove ? 'Move' : 'Queue'}
+                                {d.userName} · {d.hours !== undefined ? `${d.hours}h` : '0.5h'} · {d.isMove ? 'Move' : 'Queue'}
                               </span>
                             </div>
                             <div className="text-[10px] text-zinc-500">

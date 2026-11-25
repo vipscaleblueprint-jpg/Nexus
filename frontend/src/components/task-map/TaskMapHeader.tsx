@@ -5,6 +5,7 @@ import { TaskMapShift, UpworkSession, taskMapApi, getUserRoleDefinition, Auditor
 import { Users, Building2, ChevronDown, Check, Search, ShieldCheck, Shield, Kanban, UserCheck, X, Briefcase, Plus, Loader2, ArrowUpDown, ArrowDownWideNarrow, ArrowUpNarrowWide, Table } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { isAaronUser, isProjectManagerOrAdmin } from '@/lib/permissions';
+import { AutoQueueControls } from './AutoQueueControls';
 
 export interface ClientOption {
   id: string;
@@ -963,6 +964,9 @@ export const TaskMapHeader: React.FC<Props> = ({
               <Users className="size-3.5 text-indigo-400" />
               <span className="hidden sm:inline">Manage Shifts</span>
             </Link>
+
+            {/* Auto-queue: Distribute / Reset (PMs & Admins, today's board only) */}
+            {isPmOrAdmin && currentView === 'BOARD' && !isHistory && <AutoQueueControls />}
 
             <div className="relative flex items-center">
               <Search className="size-3.5 text-zinc-500 absolute left-3 pointer-events-none" />

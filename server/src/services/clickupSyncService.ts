@@ -18,6 +18,14 @@ import { redis } from '../config/redis';
 import { invalidateCache } from './redisService';
 import { injectSubtaskIntoJournal } from './journalInjectionService';
 import { queueAuditPick } from './aiAuditPicker';
+import { parseEstimatedHours } from '../utils/estimatedHours';
+
+/** ClickUp's "Time Estimate" (milliseconds) as hours, or null when it isn't set. */
+function hoursFromClickUp(cu: { time_estimate?: number | string | null }): number | null {
+  const ms = Number(cu?.time_estimate);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return parseEstimatedHours(ms / 3_600_000) ?? null;
+}
 import {
   getClickUpTask,
   getClickUpListTasks,
@@ -514,6 +522,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
     listId: true,
     externalId: true,
     description: true,
+    estimatedHours: true,
     list: { select: { clickUpListId: true, externalId: true } },
   } as const;
   const cu = await getClickUpTask(cuTaskId);
@@ -556,6 +565,8 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
         ...(PRIORITY_MAP[cu.priority?.priority] && { priority: PRIORITY_MAP[cu.priority.priority] }),
         ...(toDate(cu.due_date) && { dueDate: toDate(cu.due_date) }),
         ...(toDate(cu.start_date) && { startDate: toDate(cu.start_date) }),
+        // ClickUp's Time Estimate fills a missing estimate; never replaces Galaxy's or a PM's
+        ...(existing.estimatedHours == null && hoursFromClickUp(cu) != null && { estimatedHours: hoursFromClickUp(cu) }),
         // Only overwrite assignees when ClickUp's resolve to Nexus users,
         // so unmatched emails don't wipe assignments made in Nexus.
         ...(assigneeIds.length > 0 && {
@@ -582,6 +593,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
         dueDate: toDate(cu.due_date),
         startDate: toDate(cu.start_date),
         createdAt: toDate(cu.date_created) ?? undefined,
+        estimatedHours: hoursFromClickUp(cu),
         ...(assigneeIds.length > 0 && {
           assigneeId: assigneeIds[0],
           assignees: { connect: assigneeIds.map((id) => ({ id })) },
@@ -607,12 +619,12 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
   const existing =
     (await prisma.subtask.findFirst({
       where: { OR: [{ externalId: cuSubtaskId }, { externalId: { endsWith: `/${cuSubtaskId}` } }] },
-      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true },
+      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true, estimatedHours: true },
     })) ??
     // Subtasks created in Nexus before their ClickUp ID was stored.
     (await prisma.subtask.findFirst({
       where: { taskId: nexusTaskId, externalId: null, title: { equals: cu.name, mode: 'insensitive' } },
-      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true },
+      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true, estimatedHours: true },
     }));
   const description = descriptionHtml(cu);
 
@@ -637,6 +649,8 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
         ...(PRIORITY_MAP[cu.priority?.priority] && { priority: PRIORITY_MAP[cu.priority.priority] }),
         ...(toDate(cu.due_date) && { dueDate: toDate(cu.due_date) }),
         ...(auditorRole && existing.assigneeRoleRestrictions.length === 0 && { assigneeRoleRestrictions: [auditorRole] }),
+        // ClickUp's Time Estimate fills a missing estimate; never replaces Galaxy's or a PM's
+        ...(existing.estimatedHours == null && hoursFromClickUp(cu) != null && { estimatedHours: hoursFromClickUp(cu) }),
         ...(assigneeIds.length > 0 && {
           assigneeId: assigneeIds[0],
           assignees: { set: assigneeIds.map((id) => ({ id })) },
@@ -656,6 +670,7 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
         dueDate: toDate(cu.due_date),
         externalId: cuSubtaskId,
         createdAt: toDate(cu.date_created) ?? undefined,
+        estimatedHours: hoursFromClickUp(cu),
         ...(auditorRole && { assigneeRoleRestrictions: [auditorRole] }),
         ...(assigneeIds.length > 0 && {
           assigneeId: assigneeIds[0],

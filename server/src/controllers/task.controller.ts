@@ -54,6 +54,7 @@ import {
 import { extractMentionedUserIds, notifyMentionedUsers, toNotificationPreview } from '../utils/mentionNotification';
 import { appendTaskToJournal, NEW_TASK_BADGE } from '../utils/pageBlocks';
 import { canUserSetAssignees, getAssignDeniedMessage, canUserDeleteTask } from '../utils/assignPermission';
+import { parseEstimatedHours, MAX_ESTIMATED_HOURS } from '../utils/estimatedHours';
 import { updatePageBlocks } from '../services/pageContentService';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 import {
@@ -909,6 +910,7 @@ export async function updateTask(req: Request, res: Response) {
       listId, assigneeId, assigneeIds, teamId, dueDate, startDate, currentListId, userId,
       assigneeRoleRestrictions, teamAssignAccessRole, recurringConfig,
     } = req.body;
+    const estimatedHours = parseEstimatedHours(req.body.estimatedHours);
     const status = rawStatus !== undefined ? canonicalizeTaskStatus(rawStatus) : undefined;
     const effectiveUser = authReq.user || (userId ? { id: userId } : null);
 
@@ -916,6 +918,10 @@ export async function updateTask(req: Request, res: Response) {
     const changesAssignment = assigneeIds !== undefined || assigneeId !== undefined || assigneeRoleRestrictions !== undefined;
     if (changesAssignment && !(await canUserSetAssignees(authReq.user?.id))) {
       return res.status(403).json({ error: await getAssignDeniedMessage() });
+    }
+    // Estimated hours drive how the Task Map balances work, so the same people who assign may change them
+    if (estimatedHours !== undefined && !(await canUserSetAssignees(authReq.user?.id))) {
+      return res.status(403).json({ error: 'Only Project Managers and Admins can change estimated hours.' });
     }
 
     // Status lock is now open to all, only audit checklist completion is checked later.
@@ -1100,6 +1106,7 @@ export async function updateTask(req: Request, res: Response) {
       ...(assigneeRoleRestrictions !== undefined ? { assigneeRoleRestrictions } : {}),
       ...(teamAssignAccessRole !== undefined ? { teamAssignAccessRole } : {}),
       ...(recurringConfig !== undefined ? { recurringConfig } : {}),
+      ...(estimatedHours !== undefined ? { estimatedHours } : {}),
       // Ensure undefined fields are stripped out completely
     };
 
@@ -3140,11 +3147,19 @@ export async function updateSubtask(req: Request, res: Response) {
     const { id: taskId, subtaskId } = req.params;
     const { title, description, completed, assigneeIds, assigneeId, teamId, priority, dueDate, status: rawStatus, assigneeRoleRestrictions, teamAssignAccessRole } = req.body;
     const status = rawStatus !== undefined ? canonicalizeTaskStatus(rawStatus) : undefined;
+    const estimatedHours = parseEstimatedHours(req.body.estimatedHours);
+    if (req.body.estimatedHours !== undefined && estimatedHours === undefined) {
+      return res.status(400).json({ error: `estimatedHours must be a number of hours above 0 and up to ${MAX_ESTIMATED_HOURS}, or null` });
+    }
 
     // Only Project Managers and Admins can set Team Role / Assignees (checked against the DB, not the token)
     const changesAssignment = assigneeIds !== undefined || assigneeId !== undefined || assigneeRoleRestrictions !== undefined;
     if (changesAssignment && !(await canUserSetAssignees((req as any).user?.id))) {
       return res.status(403).json({ error: await getAssignDeniedMessage() });
+    }
+    // Estimated hours drive how the Task Map balances work, so the same people who assign may change them
+    if (estimatedHours !== undefined && !(await canUserSetAssignees((req as any).user?.id))) {
+      return res.status(403).json({ error: 'Only Project Managers and Admins can change estimated hours.' });
     }
 
     if (status !== undefined || completed === true) {
@@ -3255,6 +3270,7 @@ export async function updateSubtask(req: Request, res: Response) {
         ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
         ...(assigneeRoleRestrictions !== undefined && { assigneeRoleRestrictions }),
         ...(teamAssignAccessRole !== undefined && { teamAssignAccessRole }),
+        ...(estimatedHours !== undefined && { estimatedHours }),
       },
       // @ts-ignore
       include: { 

@@ -16,7 +16,8 @@ import { uploadApi } from '@/api/upload';
 import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
-import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess } from '@/lib/permissions';
+import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess, isProjectManagerOrAdmin } from '@/lib/permissions';
+import { EstimatedHoursField } from './EstimatedHoursField';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
@@ -3301,6 +3302,31 @@ export function TaskDetailModalContent({
     }
   };
 
+  const handleEstimatedHoursChange = async (hours: number | null) => {
+    if (!task) return;
+    const previous = (task as any).estimatedHours ?? null;
+    const updated = { ...task, estimatedHours: hours };
+    if (onUpdateTask) onUpdateTask(updated);
+    useAppStore.getState().updateTask(updated);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
+
+    try {
+      const parentId = (task as any).parentTaskId || (task as any).taskId;
+      if (parentId) {
+        await tasksApi.updateSubtask(parentId, task.id, { estimatedHours: hours });
+      } else {
+        await tasksApi.updateTask(task.id, { estimatedHours: hours, currentListId: task.listId, userId: currentUser?.id });
+      }
+      toast.success(hours != null ? 'Estimated time updated' : 'Estimated time cleared');
+    } catch (err: any) {
+      const reverted = { ...task, estimatedHours: previous };
+      if (onUpdateTask) onUpdateTask(reverted);
+      useAppStore.getState().updateTask(reverted);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: reverted } }));
+      toast.error(err.message || 'Failed to update estimated time');
+    }
+  };
+
   const handleSaveRecurrence = async (config: RecurringConfig | null, triggerImmediate: boolean) => {
     if (!task) return;
     try {
@@ -4485,6 +4511,13 @@ export function TaskDetailModalContent({
                     )}
                   </div>
                 </div>
+
+                {/* Estimated time (Galaxy's AI estimate; PMs/Admins can edit) */}
+                <EstimatedHoursField
+                  hours={(task as any).estimatedHours}
+                  canEdit={isProjectManagerOrAdmin(currentUser as any)}
+                  onSave={handleEstimatedHoursChange}
+                />
 
               </div>
 
@@ -7783,6 +7816,18 @@ export function SubtaskDetailView({
       });
   };
 
+  const handleUpdateEstimatedHours = async (hours: number | null) => {
+    const previous = subtaskRef.current?.estimatedHours ?? null;
+    syncSubtaskToParent({ ...subtaskRef.current, estimatedHours: hours });
+    try {
+      await tasksApi.updateSubtask(parentTask.id, subtask.id, { estimatedHours: hours });
+      toast.success(hours != null ? 'Estimated time updated' : 'Estimated time cleared');
+    } catch (err: any) {
+      syncSubtaskToParent({ ...subtaskRef.current, estimatedHours: previous });
+      toast.error(err.message || 'Failed to update estimated time');
+    }
+  };
+
   const handleStartEditing = () => {
     if (socket && subtask) {
       socket.emit('task_editing_start', {
@@ -9183,6 +9228,13 @@ export function SubtaskDetailView({
                   </Popover.Portal>
                 </Popover.Root>
               </div>
+
+              {/* Estimated time (Galaxy's AI estimate; PMs/Admins can edit) */}
+              <EstimatedHoursField
+                hours={subtask.estimatedHours}
+                canEdit={isProjectManagerOrAdmin(currentUser as any)}
+                onSave={handleUpdateEstimatedHours}
+              />
             </div>
 
             {/* Description */}

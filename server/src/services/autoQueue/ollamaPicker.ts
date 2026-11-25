@@ -1,0 +1,186 @@
+/**
+ * Asks the self-hosted Ollama model which on-shift MA should get a task.
+ *
+ * The model only chooses among candidates code already filtered (eligible, on shift, under the cap).
+ * Candidates are shown as short labels (c1, c2, ...) and the JSON schema restricts the answer to those
+ * labels, so a small model can't invent a person. Any failure returns null and the caller falls back
+ * to the fewest-tasks rule.
+ */
+import { logger, errMsg } from '../../config/logger';
+
+export interface PickTask {
+  title: string;
+  client?: string | null;
+  parentTaskTitle?: string | null;
+  priority?: string | null;
+  dueDate?: string | Date | null;
+  description?: string | null;
+  estimatedHours?: number | null;
+}
+
+export interface PickCandidate {
+  id: string;
+  name: string;
+  active: number;
+  queued: number;
+  /** 5 AM plan only: shift hours today minus estimated hours already held. */
+  freeHours?: number;
+  starRating?: number | null;
+  /** Clients of the open tasks already in their column. */
+  currentClients: string[];
+  /** They were the original MA on this task (e.g. it came back for revision). */
+  workedOnThisBefore: boolean;
+}
+
+export interface AiPick {
+  userId: string;
+  reason: string;
+}
+
+export interface OllamaConfig {
+  url: string;
+  model: string;
+  username?: string;
+  password?: string;
+  timeoutMs: number;
+}
+
+interface ChatMessage {
+  role: 'system' | 'user';
+  content: string;
+}
+
+const MAX_DESCRIPTION_CHARS = 600;
+
+const SYSTEM_PROMPT = `You are the project manager for a team of marketing associates (MAs).
+Pick the ONE MA who should get the task. Everyone listed is on shift and has room for it.
+Decide in this order:
+1. Someone who worked on this exact task before should get it back.
+2. Prefer someone already working for the same client.
+3. For URGENT or HIGH priority tasks, prefer a higher star rating.
+4. Otherwise, prefer the person with the most free hours, then the fewest open tasks.
+Reply with JSON only: {"candidate": "<label>", "reason": "<one short sentence>"}.`;
+
+const label = (i: number) => `c${i + 1}`;
+
+export function cleanOllamaText(s: string | null | undefined, max: number): string {
+  const text = (s || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+export function formatOllamaDue(d?: string | Date | null): string {
+  if (!d) return 'none';
+  const date = new Date(d);
+  return isNaN(date.getTime()) ? 'none' : date.toISOString().slice(0, 10);
+}
+
+export async function chatWithOllama<T>(
+  config: OllamaConfig,
+  payload: unknown,
+  parse: (raw: string) => T | null,
+  logPrefix = 'AutoQueue'
+): Promise<T | null> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.username && config.password) {
+    headers.Authorization = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
+  }
+
+  try {
+    const res = await fetch(`${config.url.replace(/\/+$/, '')}/api/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    if (!res.ok) {
+      logger.warn(`[${logPrefix}] Ollama returned HTTP ${res.status}`);
+      return null;
+    }
+    const body: any = await res.json();
+    const parsed = parse(body?.message?.content || '');
+    if (!parsed) {
+      logger.warn(`[${logPrefix}] Ollama gave an unusable answer: ${String(body?.message?.content || '').slice(0, 200)}`);
+    }
+    return parsed;
+  } catch (err) {
+    logger.warn(`[${logPrefix}] Ollama request failed: ${errMsg(err)}`);
+    return null;
+  }
+}
+
+export function buildPickRequest(task: PickTask, candidates: PickCandidate[], model: string) {
+  const taskLines = [
+    `Task: ${cleanOllamaText(task.title, 200)}`,
+    task.parentTaskTitle ? `Part of: ${cleanOllamaText(task.parentTaskTitle, 200)}` : null,
+    `Client: ${task.client || 'unknown'}`,
+    `Priority: ${task.priority || 'MEDIUM'}`,
+    `Due: ${formatOllamaDue(task.dueDate)}`,
+    task.estimatedHours ? `Estimated time: ${task.estimatedHours}h` : null,
+    task.description ? `Description: ${cleanOllamaText(task.description, MAX_DESCRIPTION_CHARS)}` : null,
+  ].filter(Boolean);
+
+  const candidateLines = candidates.map((c, i) => {
+    const parts = [
+      `${label(i)}: ${c.name}`,
+      `open tasks ${c.active} (${c.queued} not started)`,
+      c.freeHours !== undefined ? `free hours today ${Math.max(0, c.freeHours).toFixed(1)}` : null,
+      `star rating ${c.starRating ?? 'n/a'}`,
+      `current clients: ${c.currentClients.length ? c.currentClients.join(', ') : 'none'}`,
+    ].filter(Boolean) as string[];
+    if (c.workedOnThisBefore) parts.push('WORKED ON THIS TASK BEFORE');
+    return `- ${parts.join('; ')}`;
+  });
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: `${taskLines.join('\n')}\n\nCandidates:\n${candidateLines.join('\n')}` },
+  ];
+
+  return {
+    model,
+    stream: false,
+    messages,
+    format: {
+      type: 'object',
+      properties: {
+        candidate: { type: 'string', enum: candidates.map((_, i) => label(i)) },
+        reason: { type: 'string' },
+      },
+      required: ['candidate', 'reason'],
+    },
+    options: { temperature: 0 },
+  };
+}
+
+export function parsePickResponse(raw: string, candidates: PickCandidate[]): AiPick | null {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const idx = candidates.findIndex((_, i) => label(i) === String(parsed?.candidate || '').trim());
+  if (idx === -1) return null;
+  const reason = typeof parsed?.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim().slice(0, 300) : 'Picked by AI';
+  return { userId: candidates[idx].id, reason };
+}
+
+export async function pickWithOllama(
+  task: PickTask,
+  candidates: PickCandidate[],
+  config: OllamaConfig
+): Promise<AiPick | null> {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return { userId: candidates[0].id, reason: 'Only MA available' };
+
+  return chatWithOllama(
+    config,
+    buildPickRequest(task, candidates, config.model),
+    (raw) => parsePickResponse(raw, candidates),
+    'AutoQueue'
+  );
+}

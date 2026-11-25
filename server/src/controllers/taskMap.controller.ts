@@ -778,6 +778,11 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
           include: { items: true },
         },
+        _count: {
+          select: {
+            subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' } } } },
+          },
+        },
       },
       orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
     });
@@ -1018,6 +1023,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const parentClosed = isClosedStatus(task.status);
       enrichedTasks.push({
         ...task,
+        subtaskCount: task._count?.subtasks ?? 0,
         taskMap: mapRecord,
         pmTags,
         isWaitingPmReview: pmTags.length > 0,
@@ -1100,6 +1106,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             assigneeId: subAssigneeId,
             assigneeRoleRestrictions: st.assigneeRoleRestrictions || [],
             teamAssignAccessRole: st.teamAssignAccessRole || null,
+            teamId: st.teamId || null,
+            estimatedHours: st.estimatedHours ?? null,
             list: task.list,
             assignee: subAssignee,
             assignees: subAssignees,

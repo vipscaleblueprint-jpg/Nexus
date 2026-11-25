@@ -29,6 +29,7 @@ import {
 import { pickWithOllama } from './ollamaPicker';
 import { getAutoQueueConfig, type AutoQueueMode } from './config';
 import {
+  autoQueuedTo,
   getBoardItemOwnerId,
   isBoardItemStarted,
   isMaWorkItem,
@@ -126,18 +127,6 @@ async function getCurrentOwnerId(item: BoardItem): Promise<string | null | undef
     assigneeId: task.assigneeId,
     assignees: task.assignees,
   });
-}
-
-/** The MA the auto-queue put this item with, if its current Task Map assignment is the auto-queue's. */
-function autoQueuedTo(item: BoardItem, botId: string): string | null {
-  const reviews = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap!.pmReviews : [];
-  const entry = reviews.find(
-    (r: any) =>
-      r?.type === 'PM_ASSIGNMENT' &&
-      r?.assignedTo &&
-      (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
-  );
-  return entry && entry.assignedBy === botId && getBoardItemOwnerId(item) === entry.assignedTo ? entry.assignedTo : null;
 }
 
 /** Unstarted MA work that the auto-queue placed and nobody has moved since: what Reset/Distribute may move. */

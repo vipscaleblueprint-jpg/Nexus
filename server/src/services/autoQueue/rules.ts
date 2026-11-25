@@ -19,6 +19,7 @@ export interface QueueUser {
 
 export interface ShiftWindow {
   shiftKey: string;
+  order?: number | null;
   startHour: number;
   startMinute?: number | null;
   endHour: number;
@@ -27,6 +28,8 @@ export interface ShiftWindow {
   memberNames?: string[] | null;
   isActive?: boolean;
 }
+
+export type ShiftGroup = 'morning' | 'noon' | 'night';
 
 /** The subset of a Task Map board item (getTaskMapData payload) these rules read. */
 export interface BoardItem {
@@ -118,21 +121,64 @@ export function isUserOnShiftNow(user: QueueUser, shifts: ShiftWindow[], minuteO
   return shifts.some((s) => s.isActive !== false && isShiftMember(user, s) && isWithinWindow(s, minuteOfDay));
 }
 
+const SHIFT_GROUPS: readonly ShiftGroup[] = ['morning', 'noon', 'night'];
+
+const shiftStartMinutes = (s: ShiftWindow) => s.startHour * 60 + (s.startMinute || 0);
+
+function shiftCoverage(user: QueueUser, shifts: ShiftWindow[]): boolean[] {
+  const covered = new Array<boolean>(48 * 60).fill(false); // two days, for shifts past midnight
+  for (const s of shifts) {
+    if (s.isActive === false || !isShiftMember(user, s)) continue;
+    const start = shiftStartMinutes(s);
+    let end = s.endHour * 60 + (s.endMinute || 0);
+    if (end <= start) end += 24 * 60;
+    for (let m = start; m < end; m++) covered[m] = true;
+  }
+  return covered;
+}
+
 /**
  * Hours the user is scheduled today: the union of the shifts they belong to, so overlapping
  * shifts (e.g. 12:00-18:30 and 17:00-01:00) aren't counted twice. 0 = not scheduled.
  * Shifts are the same every day (Nexus has no days off yet).
  */
 export function scheduledShiftHours(user: QueueUser, shifts: ShiftWindow[]): number {
-  const covered = new Array<boolean>(48 * 60).fill(false); // two days, for shifts past midnight
-  for (const s of shifts) {
-    if (s.isActive === false || !isShiftMember(user, s)) continue;
-    const start = s.startHour * 60 + (s.startMinute || 0);
-    let end = s.endHour * 60 + (s.endMinute || 0);
-    if (end <= start) end += 24 * 60;
-    for (let m = start; m < end; m++) covered[m] = true;
+  return shiftCoverage(user, shifts).filter(Boolean).length / 60;
+}
+
+/** Minutes of the user's shift union at or after `minuteOfDay`, in hours. */
+export function remainingShiftHours(user: QueueUser, shifts: ShiftWindow[], minuteOfDay: number): number {
+  const covered = shiftCoverage(user, shifts);
+  const start = Math.max(0, Math.floor(minuteOfDay));
+  let mins = 0;
+  for (let m = start; m < covered.length; m++) {
+    if (covered[m]) mins++;
   }
-  return covered.filter(Boolean).length / 60;
+  return mins / 60;
+}
+
+/**
+ * Shift group = rank of active shifts sorted by `order` (ties by start time):
+ * 0 = morning, 1 = noon, 2 = night. User's group = lowest rank they're a member of.
+ */
+export function shiftGroupOf(user: QueueUser, shifts: ShiftWindow[]): ShiftGroup | null {
+  const active = shifts
+    .filter((s) => s.isActive !== false)
+    .slice()
+    .sort(
+      (a, b) =>
+        (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) ||
+        shiftStartMinutes(a) - shiftStartMinutes(b)
+    );
+  for (let i = 0; i < Math.min(active.length, SHIFT_GROUPS.length); i++) {
+    if (isShiftMember(user, active[i])) return SHIFT_GROUPS[i];
+  }
+  return null;
+}
+
+/** Eligible MAs whose starting shift belongs to `group`. */
+export function usersInGroup(users: QueueUser[], shifts: ShiftWindow[], group: ShiftGroup): QueueUser[] {
+  return users.filter((u) => isAutoQueueEligibleUser(u) && shiftGroupOf(u, shifts) === group);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +246,18 @@ export function getBoardItemOwnerId(item: BoardItem): string | null {
     assignees: item.assignees,
     subtaskId: item.isSubtask ? item.subtaskId : null,
   });
+}
+
+/** The MA the auto-queue put this item with, if its current Task Map assignment is the auto-queue's. */
+export function autoQueuedTo(item: BoardItem, botId: string): string | null {
+  const reviews = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap!.pmReviews : [];
+  const entry = reviews.find(
+    (r: any) =>
+      r?.type === 'PM_ASSIGNMENT' &&
+      r?.assignedTo &&
+      (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
+  );
+  return entry && entry.assignedBy === botId && getBoardItemOwnerId(item) === entry.assignedTo ? entry.assignedTo : null;
 }
 
 export function computeMaLoads(items: BoardItem[], userIds: string[], defaultHours = DEFAULT_ESTIMATED_HOURS): Map<string, MaLoad> {

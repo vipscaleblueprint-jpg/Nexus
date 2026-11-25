@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/lib/store';
 import { Loader2 } from 'lucide-react';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import DocPage from '@/app/docs/[id]/page';
 
 // ---------------------------------------------------------------------------
@@ -77,8 +78,7 @@ export default function PrioritiesPage() {
   if (!hydrated) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-background text-zinc-400">
-        <Loader2 className="w-6 h-6 animate-spin mb-4 text-indigo-500" />
-        <p className="text-sm">Loading your journal...</p>
+        <NexusLogoLoader size={48} label="Loading your journal..." />
       </div>
     );
   }
@@ -92,8 +92,7 @@ export default function PrioritiesPage() {
   if (!hasLoadedSpaces || loadingSpaces) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-background text-zinc-400">
-        <Loader2 className="w-6 h-6 animate-spin mb-4 text-indigo-500" />
-        <p className="text-sm">Loading your journal...</p>
+        <NexusLogoLoader size={48} label="Loading your journal..." />
       </div>
     );
   }
@@ -101,8 +100,7 @@ export default function PrioritiesPage() {
   // ── Case 4: Spaces loaded but no daily rollover doc found ──
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 h-full bg-background text-zinc-400">
-      <Loader2 className="w-6 h-6 animate-spin mb-4" />
-      <p>Waiting for daily rollover worker to initialize priorities...</p>
+      <NexusLogoLoader size={48} label="Waiting for daily rollover worker to initialize priorities..." />
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { NexusLogo, NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { useAppStore } from '@/lib/store';
 import { authApi } from '@/api';
 import { resetSidebarSession } from '@/lib/sidebarSession';
@@ -87,10 +88,8 @@ export default function LoginPage() {
       {/* Top Header */}
       <header className="px-8 py-6 relative z-10 flex items-center justify-between max-w-7xl mx-auto w-full border-b border-zinc-800/60">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-zinc-200 text-zinc-950 font-extrabold flex items-center justify-center text-sm shadow-md">
-            ⚡
-          </div>
-          <span className="font-bold tracking-tight text-sm text-zinc-200 flex items-center gap-2">
+          <NexusLogo size={28} />
+          <span className="font-bold tracking-tight text-sm text-foreground flex items-center gap-2">
             Nexus Platform
           </span>
         </div>
@@ -223,7 +222,10 @@ export default function LoginPage() {
               className="w-full bg-zinc-200 hover:bg-white text-zinc-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all duration-200 shadow-md mt-2 flex items-center justify-center gap-2"
             >
               {isLoading ? (
-                <span>Authenticating...</span>
+                <>
+                  <NexusLogoLoader size={16} inline />
+                  <span>Authenticating...</span>
+                </>
               ) : (
                 <>
                   <span>Sign In</span>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, Suspense } from 'react';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { WorkspaceDashboard } from '@/components/dashboard/WorkspaceDashboard';
 import { CreateSpaceModal } from '@/components/modals/CreateSpaceModal';
 import { CreateFolderModal } from '@/components/modals/CreateFolderModal';
@@ -41,7 +42,7 @@ export default function DocsPage() {
 
   return (
     <>
-      <Suspense fallback={<div className="flex-1 flex items-center justify-center h-full"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>}>
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center h-full"><NexusLogoLoader size={44} /></div>}>
         <WorkspaceDashboard
           activeView="docs"
           spaces={spaces}

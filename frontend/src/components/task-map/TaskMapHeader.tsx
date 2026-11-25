@@ -795,11 +795,13 @@ export const TaskMapHeader: React.FC<Props> = ({
 
   const shiftOptions = React.useMemo(() => {
     const baseLabel = (s: TaskMapShift) => {
-      const cleanName = (s.name || '').replace(/\s+shift$/i, '').trim();
-      if (cleanName) return cleanName;
       const k = (s.shiftKey || '').toUpperCase();
+      if (k === 'NOON' || k === 'PM_AFTERNOON' || k === 'AFTERNOON') return 'Noon';
+      const cleanName = (s.name || '').replace(/\s+shift$/i, '').trim();
+      if (cleanName) {
+        return /^afternoon$/i.test(cleanName) ? 'Noon' : cleanName;
+      }
       if (k === 'DAY' || k === 'AM' || k === 'MORNING') return 'Morning';
-      if (k === 'NOON' || k === 'PM_AFTERNOON' || k === 'AFTERNOON') return 'Afternoon';
       if (k === 'NIGHT' || k === 'PM_NIGHT') return 'Night';
       return s.shiftKey;
     };
@@ -811,11 +813,11 @@ export const TaskMapHeader: React.FC<Props> = ({
           .map((s) => ({
             key: (s.shiftKey || '').toUpperCase(),
             label: baseLabel(s),
-            hoursLabel: `${s.name} (${formatShiftHours(s)} Manila)`,
+            hoursLabel: `${(s.name || '').replace(/afternoon/gi, 'Noon')} (${formatShiftHours(s)} Manila)`,
           }))
       : [
           { key: 'DAY', label: 'Morning', hoursLabel: 'Morning Shift' },
-          { key: 'NOON', label: 'Afternoon', hoursLabel: 'Afternoon Shift' },
+          { key: 'NOON', label: 'Noon', hoursLabel: 'Noon Shift' },
           { key: 'NIGHT', label: 'Night', hoursLabel: 'Night Shift' },
         ];
 
@@ -935,19 +937,6 @@ export const TaskMapHeader: React.FC<Props> = ({
                   )}
                 </button>
               )}
-
-              <button
-                type="button"
-                onClick={() => onViewChange('SHEETS')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  currentView === 'SHEETS'
-                    ? 'bg-sky-600 text-white shadow-sm font-semibold'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-sky-500 dark:hover:text-sky-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
-                }`}
-              >
-                <Table className="size-3.5" />
-                <span>Sheets</span>
-              </button>
             </div>
           )}
 

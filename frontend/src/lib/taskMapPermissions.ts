@@ -128,7 +128,7 @@ export function isColumnCollapsedByDefault(
   currentUserId?: string | null,
   isPmUser: boolean = false
 ): boolean {
-  if (columnId === 'available') return false;
+  if (columnId === 'available' || columnId === 'instruction-live') return false;
   if (isPmUser) return false;
   if (!currentUserId) return false;
   return columnId !== currentUserId;

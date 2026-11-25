@@ -1242,7 +1242,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // 1. Search-matching auditor columns move to the front
   // 2. Pinned columns come next
   // 3. Current viewing user column next (showing on the right side of To Review)
-  // 4. Alphabetical order (A-Z)
+  // 4. Audit specialization order: Design -> UI/UX -> Funnel -> Instruction -> Other
+  // 5. Alphabetical order (A-Z)
+  const getAuditorTypeOrder = (user: any): number => {
+    const label = getAuditorBadge(user).label;
+    if (label === 'Design Auditor') return 0;
+    if (label === 'UI/UX Auditor') return 1;
+    if (label === 'Funnel Auditor') return 2;
+    if (label === 'Instruction Auditor') return 3;
+    return 4;
+  };
+
   const curUserId = currentUser?.id;
   const curUserName = (currentUser?.name || '').trim().toLowerCase();
 
@@ -1282,7 +1292,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     if (isCurA && !isCurB) return -1;
     if (!isCurA && isCurB) return 1;
 
-    // 4. Alphabetical order (A-Z)
+    // 4. Audit specialization order: Design First, then UI/UX, then Funnel
+    const typeOrderA = getAuditorTypeOrder(colA.auditorUser);
+    const typeOrderB = getAuditorTypeOrder(colB.auditorUser);
+    if (typeOrderA !== typeOrderB) return typeOrderA - typeOrderB;
+
+    // 5. Alphabetical order (A-Z)
     return (colA.title || '').localeCompare(colB.title || '', undefined, { sensitivity: 'base' });
   });
 

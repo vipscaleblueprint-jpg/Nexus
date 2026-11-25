@@ -28,6 +28,11 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "Nexus — Enterprise Project Management Platform",
   description: "ClickUp-style workspace with Notion minimalist design and multi-role authorization.",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/nexus-logo.png",
+  },
 };
 
 export default function RootLayout({

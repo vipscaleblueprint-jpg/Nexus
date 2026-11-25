@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Clock, FileCheck, Send, Loader2, ArrowRight } from 'lucide-react';
 import { formatManilaTime } from '@/api/taskMap';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 export interface TaskDeliverablesModalProps {
   isOpen: boolean;
@@ -173,7 +174,7 @@ export function TaskDeliverablesModal({
             >
               {isSubmitting ? (
                 <>
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <NexusLogoLoader size={15} inline />
                   <span>Submitting...</span>
                 </>
               ) : (

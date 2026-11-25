@@ -30,7 +30,7 @@ export { getRequiredAudits, ALL_AUDIT_OPTIONS, normalizeAuditName };
 
 // TEMPORARY TOGGLES: Hidden per user request until process is finalized. Set to false to restore.
 export const HIDE_AUDIT_DELETE = false;
-export const HIDE_ADD_AUDIT = true;
+export const HIDE_ADD_AUDIT = false;
 export { HIDE_DESIGN_AUDIT };
 
 const generateTempChecklistId = () => `temp-cl-${Date.now()}`;

@@ -18,6 +18,7 @@ import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api';
 import { initPerfMonitor, isPerfEnabled, markNavigation, recordSocketEvent } from '@/lib/perfMonitor';
 import { formatTabTitle, resolveRouteTitle, updateFaviconBadge } from '@/lib/tabManager';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { applyTheme, getStoredTheme } from '@/lib/theme';
 import { playNotificationSound, preloadCustomSound } from '@/lib/soundNotification';
 import { initGlobalTaskNewTabListeners } from '@/lib/taskNavigation';
@@ -736,10 +737,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground font-sans select-none">
         <Suspense fallback={null}><TabTitleSync /></Suspense>
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
-          <span className="text-sm font-medium text-zinc-400 tracking-wide">Please wait...</span>
-        </div>
+        <NexusLogoLoader size={52} label="Please wait..." />
       </div>
     );
   }

@@ -49,10 +49,6 @@ const TaskMapDailyTrackerView = dynamic(
   () => import('./TaskMapDailyTrackerView').then((m) => m.TaskMapDailyTrackerView),
   { ssr: false }
 );
-const TaskMapSheetsView = dynamic(
-  () => import('./TaskMapSheetsView').then((m) => m.TaskMapSheetsView),
-  { ssr: false }
-);
 import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
 
 const TaskDetailModal = dynamic(
@@ -64,6 +60,7 @@ const UncheckedAuditsModal = dynamic(
   { ssr: false }
 );
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { hasCrmAccess, canTransitionTaskStatus } from '@/lib/permissions';
@@ -674,7 +671,7 @@ export const TaskMapContainer: React.FC = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
       reloadTimer = setTimeout(() => {
         loadData(true);
-      }, 400);
+      }, 150);
     };
 
     const handleTaskUpdated = (e: any) => {
@@ -721,7 +718,6 @@ export const TaskMapContainer: React.FC = () => {
             data.maSession.maName,
             data.maSession?.cleared ? null : data.maSession
           );
-          return;
         }
         scheduleReload();
         return;
@@ -820,14 +816,61 @@ export const TaskMapContainer: React.FC = () => {
 
     const handleProgressUpdated = (e: any) => {
       const data = e?.detail || e;
-      if (!data?.taskId) return;
+      if (!data?.taskId) {
+        scheduleReload();
+        return;
+      }
       const { taskId, progress } = data;
-      const applyProg = (t: TaskMapItem) =>
-        t.id === taskId
-          ? applyLiveWorkingTaskStatus({ ...t, progress: progress !== undefined ? progress : t.progress })
-          : t;
+      let foundInLocalState = false;
+      const applyProg = (t: TaskMapItem) => {
+        if (t.id !== taskId) return t;
+        foundInLocalState = true;
+        return applyLiveWorkingTaskStatus({ ...t, progress: progress !== undefined ? progress : t.progress });
+      };
       setTasks((prev) => prev.map(applyProg));
       setAvailablePool((prev) => prev.map(applyProg));
+      if (!foundInLocalState) {
+        scheduleReload();
+      }
+    };
+
+    const handleDailySheetLogUpdated = (e: any) => {
+      const data = e?.detail || e;
+      const log = data?.log;
+      if (log?.maName) {
+        useAppStore.getState().updateMaActiveSession(log.maName, {
+          maName: log.maName,
+          client: log.client || null,
+          taskName: log.taskName || null,
+          taskId: log.taskId || null,
+          timeIn: log.timeIn || null,
+          timeOut: log.timeOut || null,
+          date: log.dateKey || currentDate,
+          status: log.status || (log.timeOut ? 'CLOSED' : 'IN PROGRESS'),
+          isUpwork: Boolean(log.isUpwork),
+          rowNumber: log.sheetRow || null,
+          active: Boolean(log.timeIn && !log.timeOut && !log.isMissingTime),
+        });
+      }
+      if (log?.taskId) {
+        const nextProgress = {
+          maName: log.maName,
+          timeIn: log.timeIn || null,
+          timeOut: log.timeOut || null,
+          date: log.dateKey || currentDate,
+          client: log.client || null,
+          status: log.status || null,
+          sheetRow: log.sheetRow || undefined,
+          isMissingTime: Boolean(log.isMissingTime),
+          isUpwork: Boolean(log.isUpwork),
+          timeTracker: log.timeTracker || null,
+        };
+        const patchLog = (t: TaskMapItem) =>
+          t.id === log.taskId ? applyLiveWorkingTaskStatus({ ...t, progress: nextProgress }) : t;
+        setTasks((prev) => prev.map(patchLog));
+        setAvailablePool((prev) => prev.map(patchLog));
+      }
+      scheduleReload();
     };
 
     const handleUpworkChanged = (e: any) => {
@@ -910,6 +953,7 @@ export const TaskMapContainer: React.FC = () => {
     window.addEventListener('task_map:shifts_updated', handleShiftsUpdated);
     window.addEventListener('audit_shifts:updated', handleShiftsUpdated);
     window.addEventListener('task:progress_updated', handleProgressUpdated);
+    window.addEventListener('daily_sheet_log:updated', handleDailySheetLogUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
     window.addEventListener('ma:session_updated', handleMaSessionUpdated);
     window.addEventListener('task_map:ma_progress_changed', handleMaSessionUpdated);
@@ -923,6 +967,7 @@ export const TaskMapContainer: React.FC = () => {
       window.removeEventListener('task_map:shifts_updated', handleShiftsUpdated);
       window.removeEventListener('audit_shifts:updated', handleShiftsUpdated);
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
+      window.removeEventListener('daily_sheet_log:updated', handleDailySheetLogUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
       window.removeEventListener('ma:session_updated', handleMaSessionUpdated);
       window.removeEventListener('task_map:ma_progress_changed', handleMaSessionUpdated);
@@ -1919,10 +1964,7 @@ export const TaskMapContainer: React.FC = () => {
               </button>
             </div>
           ) : (
-            <>
-              <Loader2 className="size-8 animate-spin text-[#0099ff] mb-3" />
-              <p className="text-sm font-medium">Loading Task Map Journal...</p>
-            </>
+            <NexusLogoLoader size={52} label="Loading Task Map Journal..." />
           )}
         </div>
       ) : isInitialBoardLoading ? (
@@ -2053,25 +2095,17 @@ export const TaskMapContainer: React.FC = () => {
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
               search={search}
             />
-          ) : currentView === 'DAILY_TRACKER' ? (
+          ) : currentView === 'DAILY_TRACKER' || currentView === 'SHEETS' ? (
             <TaskMapDailyTrackerView
               tasks={displayedTasks.filter((t) => !t.isSubtask)}
               allTasks={tasks}
+              allUsers={allUsers}
               currentUser={currentUser}
               initialDate={currentDate}
               initialLogs={dailySheetLogs}
               clients={clients}
               onOpenDetail={handleOpenTaskDetail}
               onRefresh={() => loadData(true)}
-            />
-          ) : currentView === 'SHEETS' ? (
-            <TaskMapSheetsView
-              allTasks={tasks}
-              allUsers={allUsers}
-              initialDate={currentDate}
-              initialLogs={dailySheetLogs}
-              onOpenDetail={handleOpenTaskDetail}
-              onRefreshBoard={() => loadData(true)}
             />
           ) : (
             <TaskMapUpworkView

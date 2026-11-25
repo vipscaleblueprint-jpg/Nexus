@@ -73,6 +73,15 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     if (norm === 'instruction audit' || norm === 'instructions audit') subStatusAudits.push('Instructions Audit');
   });
 
+  const getAuditSortOrder = (name: string): number => {
+    const norm = normalizeAuditName(name);
+    if (norm === 'design audit') return 0;
+    if (norm === 'ui ux audit' || norm === 'ui/ux audit') return 1;
+    if (norm === 'funnel audit') return 2;
+    if (norm === 'instructions audit' || norm === 'instruction audit') return 3;
+    return 4;
+  };
+
   const allAuditNames = Array.from(
     new Set([
       ...requiredTitles,
@@ -91,7 +100,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       }
       return true;
     }))
-  );
+  ).sort((a, b) => getAuditSortOrder(a) - getAuditSortOrder(b));
 
   if (allAuditNames.length === 0) {
     return null;

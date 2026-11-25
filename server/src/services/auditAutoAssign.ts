@@ -59,7 +59,7 @@ export const DEFAULT_SHIFTS: DbShiftConfig[] = [
   {
     id: 'default-pm-afternoon',
     shiftKey: 'PM_AFTERNOON',
-    name: 'Afternoon Shift',
+    name: 'Noon Shift',
     startHour: 12,
     startMinute: 0,
     endHour: 18,

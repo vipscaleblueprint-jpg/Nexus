@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 // useRouter is imported above
 import { ListSkeleton } from '@/components/ui/Skeleton';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 import { KanbanBoard } from '@/components/board/KanbanBoard';
 import { arrayMove } from '@dnd-kit/sortable';
@@ -1111,7 +1112,9 @@ export default function BoardPage() {
       )}
 
       {loading ? (
-        <ListSkeleton />
+        <div className="flex-1 flex items-center justify-center h-full">
+          <NexusLogoLoader size={48} label="Loading board..." />
+        </div>
       ) : error ? (
         <div className="flex items-center justify-center h-full text-red-400 text-sm">{error}</div>
       ) : (

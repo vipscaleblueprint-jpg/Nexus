@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Lock, ShieldAlert, Check, X, KeyRound, Loader2 } from 'lucide-react';
 import { taskMapApi } from '@/api/taskMap';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 interface ClientOtpModalProps {
   isOpen: boolean;
@@ -182,7 +183,7 @@ export function ClientOtpModal({
             >
               {isVerifying ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <NexusLogoLoader size={15} inline />
                   <span>Verifying...</span>
                 </>
               ) : (

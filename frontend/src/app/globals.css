@@ -941,3 +941,28 @@ span[data-badge] {
 .substatus-pill:hover:not(:disabled) {
   filter: brightness(1.25) contrast(1.05);
 }
+
+/* Static Nexus Logo fill-up loading animation */
+@keyframes nexus-logo-fill {
+  0% {
+    clip-path: inset(100% 0 0 0);
+    opacity: 0.9;
+  }
+  70% {
+    clip-path: inset(0% 0 0 0);
+    opacity: 1;
+  }
+  88% {
+    clip-path: inset(0% 0 0 0);
+    opacity: 1;
+  }
+  100% {
+    clip-path: inset(100% 0 0 0);
+    opacity: 0.35;
+  }
+}
+
+.nexus-logo-fill-layer {
+  animation: nexus-logo-fill 1.8s ease-in-out infinite;
+  will-change: clip-path, opacity;
+}

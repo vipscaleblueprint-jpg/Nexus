@@ -55,6 +55,7 @@ import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnTaskTypeDropdown, matchesTaskTypeFilter } from './ColumnTaskTypeDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
+import { InstructionLiveColumn } from './InstructionLiveColumn';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 
 export function doesProgressMatchUser(progMaName?: string | null, userName?: string | null): boolean {
@@ -3326,6 +3327,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
             </DroppableColumn>
           );
         })()}
+
+        {/* 1.5 Instruction Live Column (Only live progress >= 20 mins) */}
+        <InstructionLiveColumn
+          sortedUserColumns={sortedUserColumns}
+          isCollapsed={resolveColumnCollapsedState(
+            'instruction-live',
+            collapsedColumns,
+            currentUser?.id,
+            isPmUser
+          )}
+          isPinned={!!pinnedColumns['instruction-live']}
+          onToggleCollapse={() => toggleCollapseColumn('instruction-live')}
+          onTogglePin={() => togglePinColumn('instruction-live')}
+          onOpenDetail={onOpenDetail}
+          isTaskLiveWorking={isTaskLiveWorking}
+          upworkClients={upworkClients}
+          upworkProjectClients={upworkProjectClients}
+        />
 
         {/* 2. User Shift Columns (Matches Image 1 & 4) */}
         {sortedUserColumns.map(([userId, { user, tasks: userTasks }]) => {

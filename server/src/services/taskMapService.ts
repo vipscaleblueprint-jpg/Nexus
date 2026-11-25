@@ -3,6 +3,7 @@ import { logger } from '../config/logger';
 import { randomUUID } from 'crypto';
 import { getActiveManilaShift } from './auditAutoAssign';
 import { redis, isRedisReady, invalidateCache, getMaActiveSessionsMap, clearMaActiveSessions } from './redisService';
+import { closeLiveDailySheetLogsForTask } from './dailySheetLogService';
 
 function getIo() {
   try {
@@ -1358,6 +1359,18 @@ export async function cascadeParentOnHoldToSubtasks(params: {
 }): Promise<number> {
   const { parentTaskId, listId, actorId, actorName } = params;
   if (!parentTaskId) return 0;
+
+  // An on-hold task can't still be "working right now": end any live sheet session on it or its
+  // subtasks, otherwise the Task Map pulls that session's card straight back into In Progress.
+  await closeLiveDailySheetLogsForTask({
+    taskId: parentTaskId,
+    timeOut: new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date()),
+  }).catch((err) => logger.warn({ err, parentTaskId }, 'Failed to close live DailySheetLog on hold'));
 
   const openSubtasks = await prisma.subtask.findMany({
     where: {

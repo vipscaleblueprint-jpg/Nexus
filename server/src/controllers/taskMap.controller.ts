@@ -73,6 +73,7 @@ import {
 } from '../services/taskMapService';
 import {
   upsertDailySheetLog,
+  closeLiveDailySheetLogsForTask,
   getDailySheetLogsForDate,
   getDailySheetLogsIndexForDate,
 } from '../services/dailySheetLogService';
@@ -2535,6 +2536,16 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
  * - PM (isPm): can assign/queue/transfer/unassign in QUEUE mode; cannot move into IN_PROGRESS.
  * - Transfer: PM-only, always lands in target MA's To Do (QUEUE), never In Progress.
  */
+/** "6:04 PM" in Manila time, the format the daily sheets and SHEET_PROGRESS use. */
+function formatManilaClockTime(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
 async function executeTaskMapAssignment(
   req: Request,
   res: Response,
@@ -2629,13 +2640,18 @@ async function executeTaskMapAssignment(
 
       const currentSubStatusNorm = (currentSubtask.status || '').toUpperCase().replace(/[\s_-]+/g, '');
       const isCurrentlyInProgressOrHold = currentSubStatusNorm === 'INPROGRESS' || currentSubStatusNorm === 'ONHOLD';
+      // A live sheet session keeps the card in In Progress even when status/PM assignment already say Queue
+      const subHasLiveSession =
+        (await prisma.dailySheetLog.count({
+          where: { taskId: currentSubtask.taskId, subtaskId: currentSubtask.id, isLive: true },
+        })) > 0;
       const isAlreadyAssigned =
         assigneeId &&
         (currentSubtask.assigneeId === assigneeId ||
           (currentSubtask.assignees || []).some((a) => a.id === assigneeId)) &&
         existingSubPmAssignment &&
         existingSubPmAssignment.mode === mode &&
-        !(mode === 'QUEUE' && isCurrentlyInProgressOrHold);
+        !(mode === 'QUEUE' && (isCurrentlyInProgressOrHold || subHasLiveSession));
       if (isAlreadyAssigned) {
         return res.json({ success: true, task: currentSubtask, taskMap: parentRecord });
       }
@@ -2818,6 +2834,21 @@ async function executeTaskMapAssignment(
         reviewsList[existingIdxAfter] = nextSubState;
       } else {
         reviewsList.push(nextSubState);
+      }
+
+      // Leaving In Progress (to Queue or back to the pool) ends the subtask's open time-in session
+      if (mode === 'QUEUE' || !assigneeId) {
+        const subTimeOut = formatManilaClockTime(new Date());
+        for (const r of reviewsList) {
+          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === currentSubtask.id && r.timeIn && !r.timeOut) {
+            r.timeOut = subTimeOut;
+          }
+        }
+        await closeLiveDailySheetLogsForTask({
+          taskId: currentSubtask.taskId,
+          subtaskId: currentSubtask.id,
+          timeOut: subTimeOut,
+        }).catch((err) => logger.warn({ err }, 'Failed to close live DailySheetLog for subtask'));
       }
 
       const updatedRecord = await updateTaskMapRecord(currentSubtask.taskId, { pmReviews: reviewsList });
@@ -3078,6 +3109,8 @@ async function executeTaskMapAssignment(
 
     const currentStatusNorm = (currentTask.status || '').toUpperCase().replace(/[\s_-]+/g, '');
     const isCurrentlyInProgressOrHold = currentStatusNorm === 'INPROGRESS' || currentStatusNorm === 'ONHOLD';
+    // A live sheet session keeps the card in In Progress even when status/PM assignment already say Queue
+    const hasLiveSession = (await prisma.dailySheetLog.count({ where: { taskId: id, isLive: true } })) > 0;
 
     // Guard: If task is already assigned to this user and has matching PM assignment mode, return early
     const isAlreadyAssigned =
@@ -3086,7 +3119,7 @@ async function executeTaskMapAssignment(
         (currentTask.assignees || []).some((a) => a.id === assigneeId)) &&
       existingPmAssignment &&
       existingPmAssignment.mode === mode &&
-      !(mode === 'QUEUE' && isCurrentlyInProgressOrHold);
+      !(mode === 'QUEUE' && (isCurrentlyInProgressOrHold || hasLiveSession));
     if (isAlreadyAssigned) {
       return res.json({
         success: true,
@@ -3335,6 +3368,20 @@ async function executeTaskMapAssignment(
       if (isRedisReady()) {
         redis.hdel('task_map:upwork_active', id).catch(() => {});
       }
+    }
+
+    // Leaving In Progress (to Queue or back to the pool) ends the task's open time-in sessions
+    if (mode === 'QUEUE' || !assigneeId) {
+      const queueTimeOut = formatManilaClockTime(new Date());
+      for (const r of reviewsList) {
+        if (r?.type === 'SHEET_PROGRESS' && r.timeIn && !r.timeOut) {
+          r.timeOut = queueTimeOut;
+          reviewsModified = true;
+        }
+      }
+      await closeLiveDailySheetLogsForTask({ taskId: id, timeOut: queueTimeOut }).catch((err) =>
+        logger.warn({ err }, 'Failed to close live DailySheetLog for task')
+      );
     }
 
     const updateMapRecordPayload: any = { statuses: newStatuses, handedOver };

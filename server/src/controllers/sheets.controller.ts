@@ -1074,9 +1074,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       body.sheetName ||
       body.assistant_name ||
       body.assistantName;
-    const maNameStr = rawMaName ? String(rawMaName).split(/\s+-\s+|\s+MA Daily Schedule/i)[0].trim() : null;
     const sheetSpreadsheetId = body.spreadsheet_id || body.spreadsheetId || null;
     const sheetOwner = await findUserBySpreadsheetId(sheetSpreadsheetId);
+    // Key the MA by their Nexus user name, not the sheet's file-name prefix ("Che" → "Cherilyn").
+    // Board actions store sessions/progress under the full user name, so a short sheet prefix
+    // would split one MA into two keys and leave the board's session stale.
+    const fileMaName = rawMaName ? String(rawMaName).split(/\s+-\s+|\s+MA Daily Schedule/i)[0].trim() : null;
+    const maNameStr = sheetOwner?.name || (await findUserByName(fileMaName))?.name || fileMaName;
 
     // "if the user forgots to input time only the status or client it would mark as red a and an infinite logo time"
     const hasStatusOrClientOrTask = Boolean(statusStr || clientStr || task);

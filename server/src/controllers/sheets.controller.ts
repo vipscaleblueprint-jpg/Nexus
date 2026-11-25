@@ -529,7 +529,7 @@ async function addAssignee(target: LinkedTarget, assignee: unknown, res: Respons
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:all');
+  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:*');
   await syncTaskMapOnDirectAssign(target.taskId, target.subtaskId, user.id);
   return res.status(200).json({ success: true, assignee: user.name, clickup_link: target.clickUpLink });
 }
@@ -565,7 +565,7 @@ async function removeAssignee(target: LinkedTarget, assignee: unknown, res: Resp
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:all');
+  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:*');
   io.emit('task_map:updated');
   return res.status(200).json({ success: true, assignee: user.name, clickup_link: target.clickUpLink });
 }
@@ -1005,7 +1005,7 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
           JSON.stringify(updatedRevs),
           rec.taskId
         ).catch(() => { });
-        await invalidateCache(`task:${rec.taskId}`, 'task_map:all');
+        await invalidateCache(`task:${rec.taskId}`, 'task_map:*');
         if (isRedisReady()) {
           await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
         }
@@ -1390,7 +1390,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           };
           // Hold user's last inputted session throughout the day until 12:00 AM rollover
           await setMaActiveSession(maKey, sessionData).catch(() => { });
-          await invalidateCache('task_map:all').catch(() => { });
+          await invalidateCache('task_map:*').catch(() => { });
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
           io.emit('task_map:updated', { maSession: sessionData });
@@ -1461,7 +1461,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
           if (currentActiveObj && matchesActiveRow) {
             await deleteMaActiveSession(maKey).catch(() => { });
-            await invalidateCache('task_map:all').catch(() => { });
+            await invalidateCache('task_map:*').catch(() => { });
             const clearedPayload = { maName: maNameStr, cleared: true };
             io.emit('ma:session_updated', clearedPayload);
             io.emit('task_map:ma_progress_changed', clearedPayload);
@@ -1504,7 +1504,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                     JSON.stringify(filteredRevs),
                     staleRec.taskId
                   );
-                  await invalidateCache(`task:${staleRec.taskId}`, 'task_map:all');
+                  await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
                   const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
                   io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
                   io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
@@ -1587,7 +1587,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         if (!isOlderRowEdit) {
           // Hold user's last inputted session throughout the day until 12:00 AM rollover
           await setMaActiveSession(maKey, sessionData).catch(() => { });
-          await invalidateCache('task_map:all').catch(() => { });
+          await invalidateCache('task_map:*').catch(() => { });
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
           io.emit('task_map:updated', {
@@ -1657,7 +1657,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 JSON.stringify(filteredRevs),
                 staleRec.taskId
               );
-              await invalidateCache(`task:${staleRec.taskId}`, 'task_map:all');
+              await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
               const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
               io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
               io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
@@ -1890,7 +1890,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               JSON.stringify(updatedReviews),
               otherRec.taskId
             );
-            await invalidateCache(`task:${otherRec.taskId}`, 'task_map:all');
+            await invalidateCache(`task:${otherRec.taskId}`, 'task_map:*');
             const newProgress = updatedReviews.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
             io.emit('task:progress_updated', {
               taskId: otherRec.taskId,
@@ -2270,7 +2270,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     });
 
     // Invalidate caches
-    await invalidateCache(`task:${target.taskId}`, 'task_map:all', 'tasks:all');
+    await invalidateCache(`task:${target.taskId}`, 'task_map:*', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
     if (maNameStr && !isClosedIncoming) {

@@ -1425,9 +1425,9 @@ export interface SpreadsheetScheduleRow {
   taskDeliverablesDescription?: string; // Col K (11): High-level deliverable scope/title
   taskUpdateAndDeliverables?: string; // Col L (12): Detailed update & outcome
   taskLink?: string; // Col M (13): Nexus or ClickUp link
-  taskStatus: string; // Col N (14): "In Progress" | "In Review" | "Handover" | "Closed"
-  wasDeliverablesSubmitted?: string; // Col O (15): "None" | "Yes"
-  isRecorded?: string; // Col P (16): "No" | "Yes"
+  taskStatus?: string; // Col N (14): "In Progress" | "In Review" | "Handover" | "Closed" (managed by Sheet automation)
+  wasDeliverablesSubmitted?: string; // Col O (15): "None" | "Yes" (managed by Sheet automation)
+  isRecorded?: string; // Col P (16): "No" | "Yes" (managed by Sheet automation)
   doubleCheckedBy?: string; // Col Q (17)
   automation?: string; // Col R (18)
   notes?: string; // Col S (19)
@@ -1543,10 +1543,6 @@ export function splitMidnightScheduleRows(
         dc: 'FALSE',
         taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
         taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
-        taskLink: session.taskLink || '',
-        taskStatus: session.status || 'In Progress',
-        wasDeliverablesSubmitted: 'None',
-        isRecorded: 'Yes',
       },
     ];
   }
@@ -1573,10 +1569,6 @@ export function splitMidnightScheduleRows(
         dc: 'FALSE',
         taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
         taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
-        taskLink: session.taskLink || '',
-        taskStatus: session.status,
-        wasDeliverablesSubmitted: 'Yes',
-        isRecorded: 'Yes',
       },
     ];
   }
@@ -1601,10 +1593,6 @@ export function splitMidnightScheduleRows(
     dc: 'FALSE',
     taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
     taskUpdateAndDeliverables: `${session.taskUpdateAndDeliverables || ''} (Part 1 - Until Midnight)`.trim(),
-    taskLink: session.taskLink || '',
-    taskStatus: 'In Progress', // closed out for day 1
-    wasDeliverablesSubmitted: 'None',
-    isRecorded: 'Yes',
   });
 
   // Row 2: Day 2 (from 12:00 AM midnight to end time)
@@ -1623,10 +1611,6 @@ export function splitMidnightScheduleRows(
     dc: 'FALSE',
     taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
     taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
-    taskLink: session.taskLink || '',
-    taskStatus: session.status,
-    wasDeliverablesSubmitted: 'Yes',
-    isRecorded: 'Yes',
   });
 
   return rows;

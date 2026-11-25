@@ -141,10 +141,17 @@ async function triggerN8nStartTaskWebhook(params: {
 }) {
   const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
   try {
+    // Strip automation-managed sheet columns (Task Link, Task Status, Was Deliverables Submitted?, IsRecorded?)
+    // so Nexus never overwrites Google Sheet formulas / Apps Script automations.
+    const {
+      taskLink: _omitTaskLink,
+      status: _omitStatus,
+      ...safePayload
+    } = params;
     const res = await fetch(n8nUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify(safePayload),
     });
     logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);
   } catch (err: any) {
@@ -2698,7 +2705,7 @@ async function executeTaskMapAssignment(
         'tasks:all',
         'dashboard:all',
         'lists:all',
-        'task_map:all'
+        'task_map:*'
       ).catch(() => {});
 
       const prevSubAssignees =
@@ -3220,7 +3227,7 @@ async function executeTaskMapAssignment(
       'tasks:all',
       'dashboard:all',
       'lists:all',
-      'task_map:all'
+      'task_map:*'
     ).catch(() => { });
 
     const prevTaskAssignees =
@@ -3511,7 +3518,7 @@ export const claimTask = async (req: Request, res: Response) => {
       'tasks:all',
       'dashboard:all',
       'lists:all',
-      'task_map:all'
+      'task_map:*'
     ).catch(() => { });
 
     // AuditLog
@@ -3601,7 +3608,7 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
         },
       });
 
-      await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
+      await invalidateCache('task_map:*', `task:${id}`).catch(() => { });
       io.emit('task_map:updated', { taskId: id, taskMap: updated });
       io.emit('task:updated', { id });
       return res.json({ success: true, taskMap: updated });
@@ -3658,7 +3665,7 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
         },
       });
 
-      await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
+      await invalidateCache('task_map:*', `task:${id}`).catch(() => { });
       io.emit('task_map:updated', { taskId: id, taskMap: updated });
       io.emit('task:updated', { id });
       return res.json({ success: true, taskMap: updated });
@@ -3763,7 +3770,7 @@ export const runRollover = async (req: Request, res: Response) => {
       rolledCount++;
     }
 
-    await invalidateCache('task_map:all').catch(() => { });
+    await invalidateCache('task_map:*').catch(() => { });
     io.emit('task_map:updated');
     res.json({ success: true, rolledCount, nextShift });
   } catch (error: any) {
@@ -3840,7 +3847,7 @@ export const updateTaskMeta = async (req: Request, res: Response) => {
     if (shift !== undefined) data.shift = String(shift).toUpperCase();
 
     const updated = await updateTaskMapRecord(id, data);
-    await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
+    await invalidateCache('task_map:*', `task:${id}`).catch(() => { });
     io.emit('task_map:updated', { taskId: id, taskMap: updated });
     res.json({ success: true, taskMap: updated });
   } catch (error: any) {
@@ -4608,10 +4615,10 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
           },
         });
         await updateTaskMapRecord(t.id, { statuses: [] });
-        await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
+        await invalidateCache(`task:${t.id}`, 'task_map:*', 'tasks:all');
       }
 
-      await invalidateCache('task_map:all').catch(() => { });
+      await invalidateCache('task_map:*').catch(() => { });
     io.emit('task_map:updated');
       return res.json({
         success: true,
@@ -4655,7 +4662,7 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
         revs = [];
       }
       await updateTaskMapRecord(t.id, { statuses: cleanedStatuses, pmReviews: revs, handedOver: true });
-      await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
+      await invalidateCache(`task:${t.id}`, 'task_map:*', 'tasks:all');
       resetTaskIds.push(t.id);
     }
 
@@ -4706,11 +4713,11 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
       else revs.push(nextSubState);
 
       await updateTaskMapRecord(st.taskId, { pmReviews: revs });
-      await invalidateCache(`task:${st.taskId}`, `task:${st.id}`, 'task_map:all', 'tasks:all');
+      await invalidateCache(`task:${st.taskId}`, `task:${st.id}`, 'task_map:*', 'tasks:all');
       resetTaskIds.push(`subtask:${st.id}`);
     }
 
-    await invalidateCache('task_map:all').catch(() => { });
+    await invalidateCache('task_map:*').catch(() => { });
     io.emit('task_map:updated');
     return res.json({
       success: true,
@@ -5296,7 +5303,7 @@ export const createDailySheetLogHandler = async (req: Request, res: Response) =>
     if (log) {
       io.emit('daily_sheet_log:updated', { log });
     }
-    await invalidateCache('task_map:all').catch(() => {});
+    await invalidateCache('task_map:*').catch(() => {});
 
     return res.json({ success: true, log });
   } catch (err: any) {

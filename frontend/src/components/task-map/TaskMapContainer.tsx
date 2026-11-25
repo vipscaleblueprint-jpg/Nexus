@@ -19,6 +19,7 @@ import {
   applyOptimisticTaskMapAssignment,
   syncTaskPmReviewsWithAssignee,
   markTaskSavingToDb,
+  isTaskSavingToDb,
   collectClientDashboardLists,
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
@@ -85,6 +86,10 @@ const getTodayDateStr = () => {
 export const TaskMapContainer: React.FC = () => {
   const [tasks, setTasks] = useState<TaskMapItem[]>([]);
   const [availablePool, setAvailablePool] = useState<TaskMapItem[]>([]);
+  const availablePoolRef = useRef<TaskMapItem[]>([]);
+  useEffect(() => {
+    availablePoolRef.current = availablePool;
+  }, [availablePool]);
   const [options, setOptions] = useState<TaskMapOption[]>([]);
   const [shifts, setShifts] = useState<TaskMapShift[]>([]);
   const [activeShift, setActiveShift] = useState<string>('');
@@ -415,13 +420,14 @@ export const TaskMapContainer: React.FC = () => {
         // Merge with local pending optimistic updates so background refreshes never flicker or uncheck
         setTasks(() => {
           const serverTasks = res.tasks || [];
-          return serverTasks.map((st) => {
+          const nowTs = Date.now();
+          const mapped = serverTasks.map((st) => {
             const pendingAssign = pendingAssignRef.current.get(st.id);
-            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
+            if (pendingAssign && nowTs - pendingAssign.timestamp < 3500) {
               return pendingAssign.task;
             }
             const pending = pendingUpdatesRef.current.get(st.id);
-            const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
+            const rawStatuses = pending && nowTs - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
             const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
             return applyLiveWorkingTaskStatus({
               ...st,
@@ -431,6 +437,17 @@ export const TaskMapContainer: React.FC = () => {
               },
             });
           });
+          // Preserve tasks optimistically dragged out of Available Pool that aren't in serverTasks yet
+          pendingAssignRef.current.forEach((pendingAssign, pId) => {
+            if (
+              nowTs - pendingAssign.timestamp < 3500 &&
+              pendingAssign.targetUserId !== null &&
+              !mapped.some((t) => t.id === pId)
+            ) {
+              mapped.unshift(pendingAssign.task);
+            }
+          });
+          return mapped;
         });
 
         setAvailablePool(() => {
@@ -668,7 +685,11 @@ export const TaskMapContainer: React.FC = () => {
         scheduleReload();
         return;
       }
-      if (pendingUpdatesRef.current.has(taskId)) {
+      if (pendingUpdatesRef.current.has(taskId) || isTaskSavingToDb(taskId)) {
+        return;
+      }
+      const pendingAssign = pendingAssignRef.current.get(taskId);
+      if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
         return;
       }
       const isClosed = task.isClosed || isClosedStatus(task.status);
@@ -718,9 +739,14 @@ export const TaskMapContainer: React.FC = () => {
         activeUpworkSessions: incomingActiveSessions,
       } = data;
 
-      // If this client is actively debouncing a local status change for this task, ignore older broadcast
+      // If this client is actively debouncing a local status change or saving a drag/assign for this task, ignore older broadcast
       const pending = pendingUpdatesRef.current.get(taskId);
-      if (pending?.timer) {
+      const pendingAssign = pendingAssignRef.current.get(taskId);
+      if (
+        pending?.timer ||
+        isTaskSavingToDb(taskId) ||
+        (pendingAssign && Date.now() - pendingAssign.timestamp < 3500)
+      ) {
         return;
       }
 
@@ -773,7 +799,7 @@ export const TaskMapContainer: React.FC = () => {
       setTasks((prev) => {
         const mapped = prev.map(patchItem);
         if (assignedOutOfPool && !mapped.some((t) => t.id === taskId)) {
-          const fromPool = availablePool.find((t) => t.id === taskId);
+          const fromPool = availablePoolRef.current.find((t) => t.id === taskId);
           if (fromPool) {
             return [patchItem(fromPool), ...mapped];
           }

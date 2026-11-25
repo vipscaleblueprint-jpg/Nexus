@@ -1,4 +1,4 @@
-import { HIDE_DESIGN_AUDIT, normalizeAuditName } from '../utils/auditChecklist';
+import { HIDE_DESIGN_AUDIT, HIDE_INSTRUCTIONS_AUDIT, normalizeAuditName } from '../utils/auditChecklist';
 
 /**
  * ============================================================================
@@ -68,6 +68,9 @@ export function getNextAuditStepFromHierarchy(params: NextAuditStepParams): stri
     if (hideDesignAudit && norm === 'design audit' && !activeSet.has(norm)) {
       continue;
     }
+    if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') {
+      continue;
+    }
     if (!requiredByNorm.has(norm)) {
       requiredByNorm.set(norm, toCanonicalHierarchyLabel(reqName));
     }
@@ -78,6 +81,9 @@ export function getNextAuditStepFromHierarchy(params: NextAuditStepParams): stri
     const norm = normalizeAuditName(step);
     if (!norm) continue;
     if (hideDesignAudit && norm === 'design audit' && !activeSet.has(norm)) {
+      continue;
+    }
+    if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') {
       continue;
     }
     if (requiredByNorm.has(norm) && !completedSet.has(norm)) {

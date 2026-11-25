@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { UploadCloud, Search, X, Flag, Play } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
-import { TaskMapItem, isTaskUnderAdmin, taskMapApi } from '@/api/taskMap';
+import { TaskMapItem, isTaskUnderAdmin, taskMapApi, extractTaskLinkIdentifiers, matchesTaskLinkOrId } from '@/api/taskMap';
 
 interface Props {
   userId: string;
@@ -126,9 +126,13 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
     return () => clearTimeout(timer);
   }, [isOpen, cleanSearch]);
 
-  // Spelling variants people type: "xfinite" = "xfnite", "vip scale" = "vipscale"
-  const normalizeForSearch = (s: string) => s.toLowerCase().replace(/xfinite/g, 'xfnite').replace(/vip\s+scale/g, 'vipscale');
-  const searchWords = normalizeForSearch(cleanSearch).split(/\s+/).filter(Boolean);
+  const isSearchMatching = (t: TaskMapItem) => {
+    if (!cleanSearch) return true;
+    if (matchesTaskLinkOrId(t, cleanSearch)) return true;
+    const title = (t.title || '').toLowerCase();
+    const client = (t.progress?.client || t.list?.name || '').toLowerCase();
+    const folder = (t.list?.folder?.name || '').toLowerCase();
+    const desc = ((t as any).description || '').toLowerCase();
 
   /**
    * -1 = no match. Otherwise lower ranks first: 0 = title contains the whole search,
@@ -189,11 +193,12 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
       }
     }
 
-    // 3. Admin tasks from allTasks regardless of status (no status restrictions)
+    // 3. Admin tasks from allTasks regardless of status (or all tasks when searching by link)
+    const { isLink: isLinkQuery } = extractTaskLinkIdentifiers(cleanSearch);
     const extraTasks = allTasks || [];
     for (const t of extraTasks) {
       if (!t || !t.id || map.has(t.id) || queuedIdSet.has(t.id)) continue;
-      if (!isTaskUnderAdmin(t)) continue;
+      if (!isLinkQuery && !isTaskUnderAdmin(t)) continue;
       map.set(t.id, t);
     }
 

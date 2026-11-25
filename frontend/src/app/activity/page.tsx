@@ -43,6 +43,7 @@ import { CommentContent } from '@/components/ui/CommentContent';
 import { extractImagesFromContent } from '@/lib/commentImages';
 import { ActivityCard } from '@/components/ui/ActivityCard';
 import { isSystemUser } from '@/lib/taskTokens';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 type ViewMode = 'for_me' | 'show_all';
 type Category = 'all' | 'assigned' | 'status' | 'checklists' | 'audits' | 'comments' | 'drafts' | 'otp';
@@ -1809,7 +1810,7 @@ function ActivityFeedContent() {
           </div>
         ) : loading ? (
           <div className="flex items-center justify-center h-40">
-            <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+            <NexusLogoLoader size={44} />
           </div>
         ) : currentTabItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-zinc-500">
@@ -2163,7 +2164,7 @@ export default function ActivityPage() {
     <Suspense
       fallback={
         <div className="flex items-center justify-center h-full">
-          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <NexusLogoLoader size={48} />
         </div>
       }
     >

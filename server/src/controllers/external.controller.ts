@@ -17,7 +17,7 @@ import {
   safeCreateClickUpChecklistItem,
 } from '../services/clickupService';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
-import { isReviewStatus } from '../utils/auditChecklist';
+import { HIDE_INSTRUCTIONS_AUDIT, isReviewStatus } from '../utils/auditChecklist';
 import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
@@ -680,8 +680,8 @@ export async function createTask(req: Request, res: Response) {
 
     let finalChecklists = checklists && Array.isArray(checklists) ? [...checklists] : [];
     
-    // Auto-inject Instructions Audit to satisfy getRequiredAudits for external tasks
-    if (!req.body.skipAutoAudit) {
+    // Auto-inject Instructions Audit to satisfy getRequiredAudits for external tasks (unless hidden)
+    if (!req.body.skipAutoAudit && !HIDE_INSTRUCTIONS_AUDIT) {
       let auditChecklist = finalChecklists.find(c => c.name && c.name.toLowerCase().includes('audit'));
       if (!auditChecklist) {
         auditChecklist = { name: 'Task Audit', items: [] };

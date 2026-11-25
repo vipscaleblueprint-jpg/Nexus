@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Calendar, User, Flag, Loader2, RotateCw, Link2, Sparkles, ChevronDown } from 'lucide-react';
 import { Priority, Task } from '@/lib/types';
 import { usersApi } from '@/api/users';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 import { useAppStore } from '@/lib/store';
 import { isSystemUser } from '@/lib/taskTokens';
@@ -269,7 +270,7 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
             disabled={isSaving}
             className="w-full mt-2 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 disabled:opacity-50 text-white text-sm font-bold rounded-md transition-opacity shadow-lg shadow-pink-500/10"
           >
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            {isSaving ? <NexusLogoLoader size={16} inline /> : <Sparkles className="w-4 h-4" />}
             Create Task
           </button>
         </div>

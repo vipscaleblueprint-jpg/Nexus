@@ -2,6 +2,7 @@ import { prisma } from '../config/prisma';
 import { invalidateCache } from './redisService';
 import {
   AUDIT_ITEM_ORDER,
+  HIDE_INSTRUCTIONS_AUDIT,
   aiAuditExternalId,
   isCompletionStatus,
   isReviewStatus,
@@ -40,10 +41,12 @@ function toolsBaseUrl(): string {
 const plainText = (html: string | null | undefined) =>
   (html || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_DESCRIPTION_CHARS);
 
-/** Keeps only real audit names, always with Instructions Audit, in list order. */
+/** Keeps only real audit names, in list order. */
 export function toAuditItems(picked: unknown): string[] {
   const names = Array.isArray(picked) ? picked.map((p) => String(p).trim().toLowerCase()) : [];
-  return AUDIT_ITEM_ORDER.filter((a) => a === 'Instructions Audit' || names.includes(a.toLowerCase()));
+  return AUDIT_ITEM_ORDER.filter(
+    (a) => (a === 'Instructions Audit' ? !HIDE_INSTRUCTIONS_AUDIT : names.includes(a.toLowerCase()))
+  );
 }
 
 /** Audit subtasks ("--Audit Design — …") are audits, not deliverables: they get none of their own. */
@@ -58,7 +61,7 @@ const BUILD_TITLE = /\b(build|develop|implement|migrat|set\s?up|code|coding|inte
  */
 export function fallbackAudits(title: string): string[] {
   const t = (title || '').toLowerCase();
-  const audits = new Set<string>(['Instructions Audit']);
+  const audits = new Set<string>(HIDE_INSTRUCTIONS_AUDIT ? [] : ['Instructions Audit']);
   const designOnly = DESIGN_ONLY_TITLE.test(t) && !BUILD_TITLE.test(t);
   const migration = /\bmigrat/.test(t);
 

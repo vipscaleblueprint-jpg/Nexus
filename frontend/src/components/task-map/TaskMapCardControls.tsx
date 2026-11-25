@@ -6,7 +6,7 @@ import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
@@ -280,6 +280,7 @@ export const matchesPriorityFilter = (task: TaskMapItem, filter: string) => {
 
 export const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   if (!query || !query.trim()) return true;
+  if (matchesTaskLinkOrId(task, query)) return true;
   const q = query.trim().toLowerCase();
   const title = (task.title || '').toLowerCase();
   const clientName = (task.list?.name || '').toLowerCase();

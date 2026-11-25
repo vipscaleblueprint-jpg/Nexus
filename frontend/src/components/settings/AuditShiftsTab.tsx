@@ -720,7 +720,7 @@ export function AuditShiftsTab({ onRefreshUsers, readOnly = false }: AuditShifts
         onConfirm={handleResetDefaults}
         title="Reset Shifts to Defaults?"
         itemName="All Custom Shift Changes"
-        description="This will overwrite custom shifts with the standard 3 shifts: Morning (8–12), Afternoon (12–17), and Night (17–1). Are you sure?"
+        description="This will overwrite custom shifts with the standard 3 shifts: Morning (8–12), Noon (12–17), and Night (17–1). Are you sure?"
       />
     </div>
   );

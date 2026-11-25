@@ -19,6 +19,7 @@ import {
   AuditPermissionCheck,
   normalizeAuditName,
   HIDE_DESIGN_AUDIT,
+  HIDE_INSTRUCTIONS_AUDIT,
 } from '@/lib/auditChecklist';
 import { isProjectManagerOrAdmin } from '@/lib/permissions';
 import { getAssigneeAvatarColor, isSystemUser } from '@/lib/taskTokens';
@@ -30,7 +31,7 @@ export { getRequiredAudits, ALL_AUDIT_OPTIONS, normalizeAuditName };
 
 // TEMPORARY TOGGLES: Hidden per user request until process is finalized. Set to false to restore.
 export const HIDE_AUDIT_DELETE = false;
-export const HIDE_ADD_AUDIT = true;
+export const HIDE_ADD_AUDIT = false;
 export { HIDE_DESIGN_AUDIT };
 
 const generateTempChecklistId = () => `temp-cl-${Date.now()}`;
@@ -278,21 +279,23 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       if (pending && Date.now() - pending.timestamp < 1500) return;
 
       setLocalChecklists(prev => {
+        const targetClId = payload.checklistId || payload.item.checklistId;
         let foundCl = false;
         const next = prev.map(c => {
-          if (!isNexusAuditChecklist(c)) return c;
-          if (c.id === payload.checklistId || c.id === payload.item.checklistId) {
+          const isSameScopeAudit = isNexusAuditChecklist(c) && (subtaskId ? c.subtaskId === subtaskId : !c.subtaskId);
+          if (c.id === targetClId || isSameScopeAudit) {
             foundCl = true;
+            const resolvedClId = targetClId || c.id;
             const existingIdx = (c.items || []).findIndex(i =>
               i.id === payload.item.id ||
-              (typeof i.id === 'string' && i.id.startsWith('temp-') && normalizeAuditName(i.text) === norm)
+              normalizeAuditName(i.text) === norm
             );
             if (existingIdx !== -1) {
               const nextItems = [...(c.items || [])];
-              nextItems[existingIdx] = payload.item;
-              return { ...c, items: nextItems };
+              nextItems[existingIdx] = { ...nextItems[existingIdx], ...payload.item, checklistId: resolvedClId };
+              return { ...c, id: resolvedClId, items: nextItems };
             }
-            return { ...c, items: [...(c.items || []), payload.item] };
+            return { ...c, id: resolvedClId, items: [...(c.items || []), { ...payload.item, checklistId: resolvedClId }] };
           }
           return c;
         });
@@ -300,7 +303,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
         const res = foundCl ? next : [
           ...prev,
           {
-            id: payload.checklistId || payload.item.checklistId || `cl-${Date.now()}`,
+            id: targetClId || `cl-${Date.now()}`,
             taskId: task.id,
             subtaskId: subtaskId || undefined,
             name: 'Audit',
@@ -324,19 +327,39 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       if (pending && Date.now() - pending.timestamp < 1500) return;
 
       setLocalChecklists(prev => {
+        const targetClId = payload.checklistId || payload.item.checklistId;
+        let foundCl = false;
         const next = prev.map(c => {
-          if (!isNexusAuditChecklist(c)) return c;
-          const items = (c.items || []).map(i => {
-            if (i.id === payload.item.id || normalizeAuditName(i.text) === norm) {
-              return { ...i, ...payload.item };
-            }
-            return i;
-          });
-          return { ...c, items };
+          const isSameScopeAudit = isNexusAuditChecklist(c) && (subtaskId ? c.subtaskId === subtaskId : !c.subtaskId);
+          if (!isSameScopeAudit && c.id !== targetClId) return c;
+          foundCl = true;
+          const resolvedClId = targetClId || c.id;
+          const existingIdx = (c.items || []).findIndex(i =>
+            i.id === payload.item.id || normalizeAuditName(i.text) === norm
+          );
+          if (existingIdx !== -1) {
+            const items = (c.items || []).map((i, idx) =>
+              idx === existingIdx ? { ...i, ...payload.item, checklistId: resolvedClId } : i
+            );
+            return { ...c, id: resolvedClId, items };
+          }
+          return { ...c, id: resolvedClId, items: [...(c.items || []), { ...payload.item, checklistId: resolvedClId }] };
         });
-        localChecklistsRef.current = next;
-        queueMicrotask(() => onUpdateChecklists(next));
-        return next;
+
+        const res = foundCl ? next : [
+          ...prev,
+          {
+            id: targetClId || `cl-${Date.now()}`,
+            taskId: task.id,
+            subtaskId: subtaskId || undefined,
+            name: 'Audit',
+            createdAt: new Date().toISOString(),
+            items: [payload.item],
+          }
+        ];
+        localChecklistsRef.current = res;
+        queueMicrotask(() => onUpdateChecklists(res));
+        return res;
       });
     };
 
@@ -485,15 +508,26 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
   // Design Audit stays hidden only on older tasks, which have no AI pick.
   const hasAiPickedAudits = getAiPickedAudits(localChecklists, subtaskId) !== null;
   const hideDesign = HIDE_DESIGN_AUDIT && !hasAiPickedAudits;
-  const requiredAuditItems = useMemo(() => Array.from(new Set([
-    ...(hasAiPickedAudits ? [] : getRequiredAudits(title, auditorRoles)),
-    ...activeChecklistItems
-  ].filter((text, i, all) => {
-    const norm = normalizeAuditName(text);
-    if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
-    if (hideDesign && norm === 'design audit') return false;
-    return all.findIndex(t => normalizeAuditName(t) === norm) === i;
-  }))), [title, auditorRoles, activeChecklistItems, excludedAudits, hasAiPickedAudits, hideDesign]);
+  const requiredAuditItems = useMemo(() => {
+    const getOrder = (name: string): number => {
+      const n = normalizeAuditName(name);
+      if (n === 'design audit') return 0;
+      if (n === 'ui ux audit') return 1;
+      if (n === 'funnel audit') return 2;
+      if (n === 'instructions audit') return 3;
+      return 4;
+    };
+    return Array.from(new Set([
+      ...(hasAiPickedAudits ? [] : getRequiredAudits(title, auditorRoles)),
+      ...activeChecklistItems
+    ].filter((text, i, all) => {
+      const norm = normalizeAuditName(text);
+      if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
+      if (hideDesign && norm === 'design audit') return false;
+      if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') return false;
+      return all.findIndex(t => normalizeAuditName(t) === norm) === i;
+    }))).sort((a, b) => getOrder(a) - getOrder(b));
+  }, [title, auditorRoles, activeChecklistItems, excludedAudits, hasAiPickedAudits, hideDesign]);
 
   const targetForAudit = useMemo(() => {
     if (!subtaskId) return { ...task, checklists: localChecklists };
@@ -550,6 +584,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
   const availableAuditsToAdd = useMemo(() => ALL_AUDIT_OPTIONS.filter(option => {
     const norm = normalizeAuditName(option.id);
     if (hideDesign && norm === 'design audit') return false;
+    if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') return false;
     return !requiredAuditItems.some(req => normalizeAuditName(req) === norm) || excludedAudits.has(norm);
   }), [requiredAuditItems, excludedAudits, hideDesign]);
 
@@ -576,6 +611,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
     // Track pending update for 5s to prevent stale server overrides
     pendingUpdatesRef.current.set(norm, {
       completed: newCompleted,
+      assigneeId: newCompleted && currentUser?.id ? [currentUser.id] : currentItem?.assigneeId,
       timestamp: Date.now(),
     });
 
@@ -697,10 +733,31 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
           return reconciled;
         });
 
+        pendingUpdatesRef.current.delete(norm);
         return { checklistId: actualChecklistId, itemId: actualItemId };
       } else {
         // Already has real database ID
-        await tasksApi.updateChecklistItem(task.id, realChecklistId, realItemId, { completed: newCompleted });
+        const res = await tasksApi.updateChecklistItem(task.id, realChecklistId, realItemId, { completed: newCompleted });
+        const serverItem = (res as any)?.item;
+        if (serverItem) {
+          setLocalChecklists(prev => {
+            const reconciled = prev.map(c => {
+              if (c.id !== realChecklistId && !isNexusAuditChecklist(c)) return c;
+              return {
+                ...c,
+                items: (c.items || []).map(i =>
+                  i.id === realItemId || normalizeAuditName(i.text) === norm
+                    ? { ...i, ...serverItem }
+                    : i
+                ),
+              };
+            });
+            localChecklistsRef.current = reconciled;
+            queueMicrotask(() => onUpdateChecklists(reconciled));
+            return reconciled;
+          });
+        }
+        pendingUpdatesRef.current.delete(norm);
         return { checklistId: realChecklistId, itemId: realItemId };
       }
     });
@@ -1375,8 +1432,12 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
                 {requiredAuditItems.map((text, idx) => {
                   const item = getAuditItem(text);
                   const isCompleted = !!item?.completed;
-                  // Only show/assign unchecked audit assignees when the status is IN REVIEW
-                  const assigneeIds = isStatusInReview || isCompleted ? (item?.assigneeId || []) : [];
+                  // Only show/assign unchecked audit assignees when the status is IN REVIEW;
+                  // for completed items, fall back to checkedById if assigneeId is empty.
+                  const rawAssigneeIds = item?.assigneeId && item.assigneeId.length > 0
+                    ? item.assigneeId
+                    : (isCompleted && item?.checkedById ? [item.checkedById] : []);
+                  const assigneeIds = isStatusInReview || isCompleted ? rawAssigneeIds : [];
 
                   const isItemNeeded = Boolean(
                     highlightedAudits &&

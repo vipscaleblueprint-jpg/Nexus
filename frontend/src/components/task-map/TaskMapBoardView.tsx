@@ -25,9 +25,13 @@ import {
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
   formatManilaTime,
+  parseManilaTimeToIso,
   getManilaDateKey,
+  extractTaskLinkIdentifiers,
+  matchesTaskLinkOrId,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
@@ -52,6 +56,7 @@ import { TaskMapInProgressDropCard } from './TaskMapInProgressDropCard';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnTaskTypeDropdown, matchesTaskTypeFilter } from './ColumnTaskTypeDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
+import { InstructionLiveColumn } from './InstructionLiveColumn';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 
 export function doesProgressMatchUser(progMaName?: string | null, userName?: string | null): boolean {
@@ -127,9 +132,9 @@ import {
   useSensor,
   useSensors,
   DragStartEvent,
-  DragOverEvent,
   DragEndEvent,
   CollisionDetection,
+  useDndContext,
   useDroppable,
   useDraggable,
 } from '@dnd-kit/core';
@@ -159,6 +164,17 @@ interface Props {
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
   maSortMode?: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC';
+  superviseChecks?: any[];
+  onSuperviseCheck?: (payload: {
+    maName: string;
+    dateKey?: string;
+    timeIn: string;
+    taskId?: string | null;
+    taskTitle?: string | null;
+    client?: string | null;
+    note?: string | null;
+  }) => Promise<void> | void;
+  onSuperviseUncheck?: (sessionKey: string) => Promise<void> | void;
 }
 
 // Priority ranking for user columns:
@@ -333,22 +349,41 @@ const sortColumnTasks = (items: TaskMapItem[], userName?: string) => {
     const inProgB = isTaskActiveInProgress(b, userName) ? 1 : 0;
     if (inProgA !== inProgB) return inProgB - inProgA;
 
-    // 4. Always prioritize urgent tasks at the top among remaining active tasks
+    // 4. Tasks logged in today's Sheets historical log sort ahead of unlogged queued tasks,
+    //    ordered by most recent sheet submission / Time In for that day
+    const hasSheetA = Boolean(a.progress?.dailySheetLogId || a.progress?.timeIn) ? 1 : 0;
+    const hasSheetB = Boolean(b.progress?.dailySheetLogId || b.progress?.timeIn) ? 1 : 0;
+    if (hasSheetA !== hasSheetB) return hasSheetB - hasSheetA;
+    if (hasSheetA && hasSheetB) {
+      const sheetTimeA = a.progress?.updatedAt
+        ? new Date(a.progress.updatedAt).getTime()
+        : a.progress?.startedAt
+        ? new Date(a.progress.startedAt).getTime()
+        : 0;
+      const sheetTimeB = b.progress?.updatedAt
+        ? new Date(b.progress.updatedAt).getTime()
+        : b.progress?.startedAt
+        ? new Date(b.progress.startedAt).getTime()
+        : 0;
+      if (sheetTimeA !== sheetTimeB) return sheetTimeB - sheetTimeA;
+    }
+
+    // 5. Always prioritize urgent tasks at the top among remaining queued tasks
     const urgentA = isTaskUrgent(a) ? 1 : 0;
     const urgentB = isTaskUrgent(b) ? 1 : 0;
     if (urgentA !== urgentB) return urgentB - urgentA;
 
-    // 5. High priority
+    // 6. High priority
     const highA = isTaskHigh(a) ? 1 : 0;
     const highB = isTaskHigh(b) ? 1 : 0;
     if (highA !== highB) return highB - highA;
 
-    // 6. Most recently updated progress (e.g. latest sheet input)
+    // 7. Most recently updated progress
     const progTimeA = a.progress?.updatedAt ? new Date(a.progress.updatedAt).getTime() : 0;
     const progTimeB = b.progress?.updatedAt ? new Date(b.progress.updatedAt).getTime() : 0;
     if (progTimeA !== progTimeB) return progTimeB - progTimeA;
 
-    // 7. Newer tasks
+    // 8. Newer tasks
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return dateB - dateA;
@@ -393,11 +428,10 @@ const DraggableTaskCard: React.FC<{
     >
       {isSaving && !isDragging && (
         <div
-          className="absolute top-1.5 right-1.5 z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-950/95 border border-blue-500/50 text-blue-200 text-[10px] font-semibold shadow-md pointer-events-none animate-in fade-in duration-100"
-          title="Saving changes to database..."
+          className="absolute top-1.5 right-1.5 z-20 inline-flex items-center justify-center p-1 rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700/80 shadow-md pointer-events-none animate-in fade-in duration-100"
+          title="Saving changes..."
         >
-          <Loader2 className="size-2.5 animate-spin text-blue-400 shrink-0" />
-          <span>Saving...</span>
+          <NexusLogoLoader inline size={15} />
         </div>
       )}
       {children}
@@ -422,7 +456,7 @@ const DroppableColumn: React.FC<{
       ref={setNodeRef}
       data-task-column={id}
       data-droppable-column="true"
-      className={`${className || ''} cursor-default transition-colors duration-150 ${isOver ? 'ring-2 ring-blue-500/70 bg-blue-950/20 shadow-xl shadow-blue-950/30' : ''
+      className={`${className || ''} cursor-default transition-colors duration-150 ${isOver ? 'ring-1 ring-zinc-600/80 bg-zinc-900/30' : ''
         }`}
     >
       {children}
@@ -466,40 +500,155 @@ const DroppableInProgressSlot: React.FC<{
 // Card Cut-Out Snapping Placeholder
 // Appears in target column when dragging a task across/different columns
 // ---------------------------------------------------------------------------
+const DragPreviewCard: React.FC<{
+  item: TaskMapItem;
+  fallbackListName?: string;
+  isGhost?: boolean;
+  getSubStatusStyle?: (status: string, item: TaskMapItem) => { color: string; textColor?: string };
+}> = memo(({ item, fallbackListName, isGhost = false, getSubStatusStyle }) => {
+  const priorityConfig = getPriorityConfig(item.priority);
+  const isClosed =
+    (item.status || '').toUpperCase() === 'CLOSED' ||
+    (item.status || '').toUpperCase() === 'DONE';
+  const primarySubStatus =
+    (item.taskMap?.statuses || [])[0] ||
+    getDefaultTaskMapSubStatuses(item.status)[0] ||
+    'Sub-Status';
+  const subStyle = getSubStatusStyle
+    ? getSubStatusStyle(primarySubStatus, item)
+    : getTaskMapSubStatusStyle(primarySubStatus, []);
+
+  return (
+    <div
+      className={`p-3 rounded-xl flex items-stretch gap-3 min-h-[112px] ${
+        isGhost
+          ? 'bg-zinc-900/30 border border-dashed border-zinc-700/75 opacity-60'
+          : 'bg-card border border-zinc-600/80 shadow-lg shadow-black/45'
+      }`}
+    >
+      {/* Left: Task Info */}
+      <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+        <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[190px] mb-1 flex items-center gap-1.5">
+          {item.isSubtask && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 shrink-0">
+              <CornerDownRight className="size-2.5" />
+            </span>
+          )}
+          <span className="truncate">{item.list?.name || fallbackListName || 'General'}</span>
+        </div>
+        <h4 className="text-[13px] font-bold text-zinc-900 dark:text-white line-clamp-2 leading-snug my-0.5 h-[36px]">
+          {item.isSubtask ? (item.title || '').replace(/^--\s*/, '') : item.title}
+        </h4>
+        <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
+          <span className="shrink-0 flex items-center">
+            {isClosed ? (
+              <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
+            ) : (
+              <CustomCircleDot
+                className="size-3.5 shrink-0"
+                style={{
+                  color: resolveTaskStatusColor(
+                    item.status,
+                    item.listId || item.list?.id,
+                    item.list?.statuses
+                  ),
+                }}
+              />
+            )}
+          </span>
+          <TaskDescriptionButton
+            description={item.description}
+            taskTitle={item.title}
+          />
+          <span className="flex items-center gap-1 font-medium text-[11px]">
+            <Flag className={`size-3 ${priorityConfig.iconColor}`} />
+            <span className={priorityConfig.color}>{priorityConfig.label}</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Separator */}
+      <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
+
+      {/* Right: Sub-Status snapshot */}
+      <div className="w-[125px] shrink-0 flex flex-col justify-between py-0.5">
+        <div className="flex justify-end items-center">
+          <TaskTimeProgressSlot task={item} />
+        </div>
+        <div className="w-full">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">
+              Sub-Status
+            </span>
+          </div>
+          <div
+            className="on-solid px-2 py-1 text-xs rounded-md font-medium truncate border border-black/10 dark:border-white/10"
+            style={{
+              backgroundColor: subStyle.color,
+              color: subStyle.textColor,
+            }}
+          >
+            {primarySubStatus}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 const CardCutoutPlaceholder: React.FC<{
   task: TaskMapItem;
   targetName: string;
   isUnassign?: boolean;
-}> = memo(({ task, targetName, isUnassign }) => {
+  carriedSubtasks?: TaskMapItem[];
+  getSubStatusStyle?: (status: string, item: TaskMapItem) => { color: string; textColor?: string };
+}> = memo(({ task, carriedSubtasks = [], getSubStatusStyle }) => {
   return (
-    <div className="p-3 bg-blue-500/10 border-2 border-dashed border-blue-400/90 rounded-xl min-h-[112px] flex items-stretch gap-3 ring-2 ring-blue-500/25 shadow-lg shadow-blue-950/40 my-1 pointer-events-none select-none">
-      {/* Left: Ghost task info */}
-      <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-        <div>
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-blue-400 truncate max-w-[200px] mb-1">
-            <Sparkles className="size-3 text-blue-400 shrink-0" />
-            <span className="truncate">{task.list?.name || 'General'}</span>
-          </div>
-          <h4 className="text-[13px] font-bold text-zinc-900 dark:text-white/95 line-clamp-2 leading-snug my-0.5 h-[36px]">
-            {task.title}
-          </h4>
-        </div>
-        <div className="flex items-center gap-1.5 pt-1 text-[11px] font-bold text-blue-300">
-          <CornerDownRight className="size-3.5 text-blue-400 shrink-0" />
-          <span>Snap here → {targetName}</span>
-        </div>
-      </div>
+    <div className="my-1 pointer-events-none select-none space-y-2 animate-in fade-in slide-in-from-top-1 duration-150 ease-out">
+      <DragPreviewCard item={task} isGhost getSubStatusStyle={getSubStatusStyle} />
 
-      {/* Right: Snap Target Stencil */}
-      <div className="w-[110px] shrink-0 border-l border-blue-500/30 pl-2.5 flex flex-col justify-between py-0.5">
-        <div className="text-[10px] text-blue-400/80 font-mono text-right font-medium">
-          SNAPPING
+      {carriedSubtasks.length > 0 && (
+        <div className="pl-4 space-y-2 relative">
+          <div className="absolute left-1.5 top-0 bottom-3 w-px bg-zinc-700/45" />
+          {carriedSubtasks.slice(0, 3).map((sub) => (
+            <DragPreviewCard
+              key={sub.id}
+              item={sub}
+              fallbackListName={task.list?.name}
+              isGhost
+              getSubStatusStyle={getSubStatusStyle}
+            />
+          ))}
+          {carriedSubtasks.length > 3 && (
+            <div className="px-2.5 py-1 rounded-lg border border-dashed border-zinc-700/70 bg-zinc-900/25 text-[11px] font-medium text-zinc-500 text-center">
+              +{carriedSubtasks.length - 3} more subtask{carriedSubtasks.length - 3 > 1 ? 's' : ''}
+            </div>
+          )}
         </div>
-        <div className="w-full py-1.5 px-2 rounded-lg bg-blue-500/25 border border-blue-400/50 text-center text-[10px] font-bold text-blue-200 uppercase tracking-wider shadow-xs">
-          {isUnassign ? 'Return to Pool' : 'Assign to Queue'}
-        </div>
-      </div>
+      )}
     </div>
+  );
+});
+
+const ColumnDropCutout: React.FC<{
+  columnId: string;
+  canShow: boolean;
+  task: TaskMapItem | null;
+  targetName: string;
+  isUnassign?: boolean;
+  carriedSubtasks?: TaskMapItem[];
+  getSubStatusStyle?: (status: string, item: TaskMapItem) => { color: string; textColor?: string };
+}> = memo(({ columnId, canShow, task, targetName, isUnassign, carriedSubtasks, getSubStatusStyle }) => {
+  const { over } = useDndContext();
+  if (!canShow || !task || over?.id !== columnId) return null;
+  return (
+    <CardCutoutPlaceholder
+      task={task}
+      targetName={targetName}
+      isUnassign={isUnassign}
+      carriedSubtasks={carriedSubtasks}
+      getSubStatusStyle={getSubStatusStyle}
+    />
   );
 });
 
@@ -526,6 +675,7 @@ const matchesPriorityFilter = (task: TaskMapItem, filter: string) => {
 
 const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   if (!query || !query.trim()) return true;
+  if (matchesTaskLinkOrId(task, query)) return true;
   const q = query.trim().toLowerCase();
   const title = (task.title || '').toLowerCase();
   const clientName = (task.list?.name || '').toLowerCase();
@@ -1111,6 +1261,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
   search = '',
   trackFilter = 'ALL',
   maSortMode = 'DEFAULT',
+  superviseChecks = [],
+  onSuperviseCheck,
+  onSuperviseUncheck,
 }) => {
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
@@ -1131,7 +1284,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
   }, []);
 
   const [activeDragTask, setActiveDragTask] = useState<TaskMapItem | null>(null);
-  const [activeOverId, setActiveOverId] = useState<string | null>(null);
+  const remainingAvailableSubtasks = useMemo(() => {
+    if (!activeDragTask || activeDragTask.isSubtask) return [];
+    return availablePool.filter(
+      (sub) =>
+        sub.isSubtask &&
+        sub.parentTaskId === activeDragTask.id &&
+        !sub.isClosed &&
+        !sub.assigneeId
+    );
+  }, [activeDragTask, availablePool]);
   const [localShowAdmin, setLocalShowAdmin] = useState(false);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [columnPriorityFilters, setColumnPriorityFilters] = useState<Record<string, string>>({});
@@ -1175,6 +1337,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
     nextStatuses?: string[];
     realTaskId?: string;
   } | null>(null);
+  const submittingDeliverablesRef = useRef<Set<string>>(new Set());
+  const recentlyClockedOutRef = useRef<Map<string, number>>(new Map());
   const collapsedStorageKey = currentUser?.id
     ? `nexus_taskmap_collapsed_columns_v2_${currentUser.id}`
     : 'nexus_taskmap_collapsed_columns_v2';
@@ -1497,17 +1661,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
     };
 
-    const isAllShifts =
-      !currentShift ||
-      currentShift === 'ALL' ||
-      currentShift
-        .split(',')
-        .map((s) => s.trim().toUpperCase())
-        .includes('ALL');
+    const shiftTokens = (currentShift || '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const isAllShifts = shiftTokens.length === 0 || shiftTokens.includes('ALL');
+    const isCustomShift = shiftTokens.includes('CUSTOM');
+    const allowNonShiftColumns = isAllShifts || isCustomShift || trackFilter !== 'ALL';
 
-    // When viewing All shifts or filtering by Live/Active, include all non-system workspace users
+    // When viewing All shifts, Custom, or filtering by Live/Active, include all non-system workspace users;
+    // when viewing a specific Audit Shift (e.g. Morning, Afternoon, Night), strictly base columns on shiftUsers.
     const baseUsers =
-      (isAllShifts || trackFilter !== 'ALL') && allUsers && allUsers.length > 0 ? allUsers : shiftUsers;
+      allowNonShiftColumns && allUsers && allUsers.length > 0 ? allUsers : shiftUsers;
 
     baseUsers.forEach((u) => {
       if (!u || !u.id || isSystemAccount(u)) return;
@@ -1529,46 +1694,47 @@ export const TaskMapBoardView: React.FC<Props> = ({
       });
     }
 
-    // Always ensure the logged-in user (current viewer) is present in userColumnsMap
-    if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
-      userColumnsMap[currentUser.id] = {
-        user: getUserProfile(currentUser.id, currentUser),
-        tasks: [],
-      };
+    // Ensure the logged-in user, live-working users, active sessions, and searched users from allUsers
+    // are only injected when not strictly scoped to a specific Audit Shift.
+    if (allowNonShiftColumns) {
+      if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
+        userColumnsMap[currentUser.id] = {
+          user: getUserProfile(currentUser.id, currentUser),
+          tasks: [],
+        };
+      }
+
+      [...tasks, ...availablePool].forEach((t) => {
+        if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
+          const matchingUser = findBestUserMatch(t.progress.maName, allUsers, (u) => !isSystemAccount(u));
+          if (matchingUser && !userColumnsMap[matchingUser.id]) {
+            userColumnsMap[matchingUser.id] = {
+              user: getUserProfile(matchingUser.id, matchingUser),
+              tasks: [],
+            };
+          }
+        }
+      });
+
+      Object.values(maActiveSessions || {}).forEach((sess: any) => {
+        if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
+          const matchingUser = findBestUserMatch(sess.maName, allUsers, (u) => !isSystemAccount(u));
+          if (matchingUser && !userColumnsMap[matchingUser.id]) {
+            userColumnsMap[matchingUser.id] = {
+              user: getUserProfile(matchingUser.id, matchingUser),
+              tasks: [],
+            };
+          }
+        }
+      });
     }
-
-    // Ensure any user who is actively live working on a task (or pool task) gets a column in userColumnsMap
-    [...tasks, ...availablePool].forEach((t) => {
-      if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
-        const matchingUser = findBestUserMatch(t.progress.maName, allUsers, (u) => !isSystemAccount(u));
-        if (matchingUser && !userColumnsMap[matchingUser.id]) {
-          userColumnsMap[matchingUser.id] = {
-            user: getUserProfile(matchingUser.id, matchingUser),
-            tasks: [],
-          };
-        }
-      }
-    });
-
-    // Ensure any user who has a held or active sheet session gets a column in userColumnsMap
-    Object.values(maActiveSessions || {}).forEach((sess: any) => {
-      if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
-        const matchingUser = findBestUserMatch(sess.maName, allUsers, (u) => !isSystemAccount(u));
-        if (matchingUser && !userColumnsMap[matchingUser.id]) {
-          userColumnsMap[matchingUser.id] = {
-            user: getUserProfile(matchingUser.id, matchingUser),
-            tasks: [],
-          };
-        }
-      }
-    });
 
     const isUserSearchMatch = (u: any) => {
       if (!cleanSearch || !u) return false;
       return matchesMarketingNameSearch(u, cleanSearch);
     };
 
-    if (cleanSearch && allUsers && allUsers.length > 0) {
+    if (allowNonShiftColumns && cleanSearch && allUsers && allUsers.length > 0) {
       allUsers.forEach((u) => {
         if (!u || !u.id || isSystemAccount(u)) return;
         if (isUserSearchMatch(u) && !userColumnsMap[u.id]) {
@@ -2031,17 +2197,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
 
     setActiveDragTask(task);
-    setActiveOverId(null);
-  };
-
-  const handleDragOver = (event: DragOverEvent) => {
-    const nextOverId = event.over ? String(event.over.id) : null;
-    setActiveOverId((prev) => (prev === nextOverId ? prev : nextOverId));
   };
 
   const handleDragCancel = () => {
     setActiveDragTask(null);
-    setActiveOverId(null);
   };
 
   // Dynamically resolve and ensure role restrictions for the assigned user:
@@ -2074,7 +2233,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const { active, over } = event;
     const dragTask = activeDragTask;
     setActiveDragTask(null);
-    setActiveOverId(null);
 
     if (!over) return;
 
@@ -2116,10 +2274,25 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
       const nextRoles = getResolvedRoleRestrictionsForUser(currentTask, targetUser);
       const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY'].includes((currentTask?.status || '').toUpperCase().trim());
-      toast.success(isCadence ? `Task assigned to ${targetUser?.name || 'user'}` : `Task set In Progress for ${targetUser?.name || 'user'}`);
+      const subSuffix =
+        remainingAvailableSubtasks.length > 0
+          ? ` (+${remainingAvailableSubtasks.length} available subtask${remainingAvailableSubtasks.length > 1 ? 's' : ''})`
+          : '';
+      toast.success(
+        (isCadence
+          ? `Task assigned to ${targetUser?.name || 'user'}`
+          : `Task set In Progress for ${targetUser?.name || 'user'}`) + subSuffix
+      );
       try {
         if (onAssignTask) {
           await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
+          if (remainingAvailableSubtasks.length > 0) {
+            await Promise.all(
+              remainingAvailableSubtasks.map((sub) =>
+                onAssignTask(sub.id, targetUserId, 'QUEUE', getResolvedRoleRestrictionsForUser(sub, targetUser))
+              )
+            );
+          }
         } else {
           const nextStatus = isCadence ? toCanonicalTaskStatus(currentTask!.status) : 'IN PROGRESS';
           await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
@@ -2127,6 +2300,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
             await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
           } else {
             await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+          }
+          if (remainingAvailableSubtasks.length > 0) {
+            await Promise.all(
+              remainingAvailableSubtasks.map((sub) =>
+                taskMapApi.assignTask(sub.id, targetUserId, 'QUEUE', {
+                  assigneeRoleRestrictions: getResolvedRoleRestrictionsForUser(sub, targetUser),
+                })
+              )
+            );
           }
           onDataRefresh();
         }
@@ -2176,16 +2358,36 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
 
       const nextRoles = getResolvedRoleRestrictionsForUser(currentTask, targetUser);
-      toast.success(`Task queued for ${targetUser?.name || 'user'}`);
+      const subSuffix =
+        remainingAvailableSubtasks.length > 0
+          ? ` (+${remainingAvailableSubtasks.length} available subtask${remainingAvailableSubtasks.length > 1 ? 's' : ''})`
+          : '';
+      toast.success(`Task queued for ${targetUser?.name || 'user'}${subSuffix}`);
       try {
         if (onAssignTask) {
           await onAssignTask(taskId, targetUserId, 'QUEUE', nextRoles);
+          if (remainingAvailableSubtasks.length > 0) {
+            await Promise.all(
+              remainingAvailableSubtasks.map((sub) =>
+                onAssignTask(sub.id, targetUserId, 'QUEUE', getResolvedRoleRestrictionsForUser(sub, targetUser))
+              )
+            );
+          }
         } else {
           await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE', { assigneeRoleRestrictions: nextRoles });
           if (onTaskUpdate) {
             await onTaskUpdate(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
           } else {
             await tasksApi.updateTask(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+          }
+          if (remainingAvailableSubtasks.length > 0) {
+            await Promise.all(
+              remainingAvailableSubtasks.map((sub) =>
+                taskMapApi.assignTask(sub.id, targetUserId, 'QUEUE', {
+                  assigneeRoleRestrictions: getResolvedRoleRestrictionsForUser(sub, targetUser),
+                })
+              )
+            );
           }
           onDataRefresh();
         }
@@ -2418,149 +2620,181 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const { task, targetStatus, user: modalUser, realTaskId } = deliverablesModalTarget;
     const isHandover = targetStatus.toLowerCase().replace(/[\s_-]+/g, '') === 'handover';
     const effectiveTaskId = realTaskId || task.id;
+    const lockKey = `${effectiveTaskId}::${targetStatus}`;
+    if (submittingDeliverablesRef.current.has(lockKey)) return;
+    submittingDeliverablesRef.current.add(lockKey);
+    recentlyClockedOutRef.current.set(task.id, Date.now());
+    recentlyClockedOutRef.current.set(effectiveTaskId, Date.now());
+
     const nowTimeOut = data.timeOut || formatManilaTime(new Date());
 
-    // 1. If it's an assumption block
-    if (task.isAssumptionBlock) {
-      const targetMainStatus = isHandover ? (toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS') : 'IN REVIEW';
-      task.status = targetMainStatus;
-      task.taskMap = {
-        ...task.taskMap,
-        statuses: [targetStatus],
-        ...(isHandover ? { handedOver: true } : {}),
-      };
+    try {
+      // 1. If it's an assumption block
+      if (task.isAssumptionBlock) {
+        const targetMainStatus = isHandover ? (toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS') : 'IN REVIEW';
+        task.status = targetMainStatus;
+        task.taskMap = {
+          ...task.taskMap,
+          statuses: [targetStatus],
+          ...(isHandover ? { handedOver: true } : {}),
+        };
+        if (task.progress) {
+          task.progress.timeOut = nowTimeOut;
+          task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
+          task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
+        }
+        const uName = modalUser?.name || task.assignee?.name || currentUser?.name;
+        if (uName) {
+          useAppStore.getState().updateMaActiveSession(uName, null);
+        }
+
+        const linkedId =
+          task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+            ? task.linkedTaskId
+            : null;
+
+        const origTimeIn = task.progress?.timeIn;
+        const origDate = task.progress?.date;
+        let startDt: Date | undefined = undefined;
+        if (origTimeIn) {
+          try {
+            const iso = parseManilaTimeToIso(origDate, origTimeIn);
+            if (iso) startDt = new Date(iso);
+          } catch (_) {}
+        }
+
+        // Persist sheet clock-out FIRST so any subsequent loadData(true) sees timeOut populated
+        await taskMapApi.syncScheduleToSpreadsheet({
+          taskId: linkedId || task.id,
+          subtaskId: task.subtaskId || null,
+          sheetRow: task.progress?.sheetRow,
+          taskTitle: task.title,
+          clientName: task.progress?.client || task.list?.name || 'General',
+          status: targetStatus,
+          mode: 'STOP',
+          startedAt: startDt,
+          stoppedAt: new Date(),
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        }).catch(console.error);
+
+        if (linkedId) {
+          await taskMapApi.updateTaskStatuses(linkedId, [targetStatus], {
+            timeOut: nowTimeOut,
+            taskDeliverablesDescription: data.taskDeliverablesDescription,
+            taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+            sheetRow: task.progress?.sheetRow,
+            timeIn: task.progress?.timeIn || undefined,
+            skipN8nSync: true,
+          }).catch(console.error);
+          if (onTaskUpdate) {
+            await onTaskUpdate(linkedId, {
+              assigneeId: null,
+              status: targetMainStatus,
+            });
+          }
+        }
+
+        toast.success(
+          isHandover
+            ? `Task handed over — clocked out at ${nowTimeOut}`
+            : `Deliverables submitted to Review — clocked out at ${nowTimeOut}`
+        );
+        setDeliverablesModalTarget(null);
+        return;
+      }
+
+      // 2. Real task or subtask — clear live session & set timeOut immediately
+      const targetAssigneeUser = modalUser?.name ? modalUser : task.assignee;
+      if (targetAssigneeUser?.name) {
+        useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
+      }
       if (task.progress) {
         task.progress.timeOut = nowTimeOut;
         task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
         task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
       }
-      const uName = modalUser?.name || task.assignee?.name || currentUser?.name;
-      if (uName) {
-        const sKey = uName.trim().toLowerCase();
-        const prevSess = useAppStore.getState().maActiveSessions[sKey] || {};
-        useAppStore.getState().updateMaActiveSession(uName, {
-          ...prevSess,
-          taskStatus: targetMainStatus,
-          status: targetMainStatus,
-          subStatuses: [targetStatus],
-          timeOut: nowTimeOut,
-          taskDeliverablesDescription: data.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-          cleared: true,
-        });
-        useAppStore.getState().updateMaActiveSession(uName, null);
+
+      const origRealTimeIn = task.progress?.timeIn;
+      const origRealDate = task.progress?.date;
+      let realStartDt: Date | undefined = undefined;
+      if (origRealTimeIn) {
+        try {
+          const iso = parseManilaTimeToIso(origRealDate, origRealTimeIn);
+          if (iso) realStartDt = new Date(iso);
+        } catch (_) {}
       }
 
-      const linkedId =
-        task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
-          ? task.linkedTaskId
-          : null;
-      if (linkedId) {
-        await taskMapApi.updateTaskStatuses(linkedId, [targetStatus], {
-          timeOut: nowTimeOut,
-          taskDeliverablesDescription: data.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-        }).catch(console.error);
-        if (onTaskUpdate) {
-          await onTaskUpdate(linkedId, {
-            assigneeId: null,
-            status: targetMainStatus,
-          });
-        }
-      }
-
-      // Also trigger sheet schedule row sync
-      taskMapApi.syncScheduleToSpreadsheet({
-        taskId: linkedId || task.id,
-        subtaskId: task.subtaskId || null,
+      // Persist DailySheetLog & spreadsheet STOP BEFORE onTaskUpdate triggers loadData(true)
+      await taskMapApi.syncScheduleToSpreadsheet({
+        taskId: effectiveTaskId,
+        subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
+        sheetRow: task.progress?.sheetRow,
         taskTitle: task.title,
         clientName: task.progress?.client || task.list?.name || 'General',
         status: targetStatus,
         mode: 'STOP',
+        startedAt: realStartDt,
         stoppedAt: new Date(),
         taskDeliverablesDescription: data.taskDeliverablesDescription,
         taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
       }).catch(console.error);
 
-      toast.success(
-        isHandover
-          ? `Task handed over — clocked out at ${nowTimeOut}`
-          : `Deliverables submitted to Review — clocked out at ${nowTimeOut}`
-      );
+      onStatusChange(effectiveTaskId, [targetStatus]);
+      const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
+
+      if (isHandover) {
+        const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], {
+          timeOut: nowTimeOut,
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+          sheetRow: task.progress?.sheetRow,
+          timeIn: task.progress?.timeIn || undefined,
+          skipN8nSync: true,
+        }).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
+        } else {
+          await tasksApi.updateTask(effectiveTaskId, { assigneeId: null } as any).catch(console.error);
+          onDataRefresh();
+        }
+
+        toast.info(`Task handed over — clocked out at ${nowTimeOut}`);
+      } else {
+        // To Review
+        if (ownerId) {
+          setRecentlyMovedToReviewByUser((prev) => {
+            const existing = prev[ownerId] || [];
+            if (existing.some((t) => t.id === effectiveTaskId)) return prev;
+            return {
+              ...prev,
+              [ownerId]: [{ ...task, status: 'IN REVIEW', assigneeId: null }, ...existing],
+            };
+          });
+        }
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['To Review'], {
+          timeOut: nowTimeOut,
+          taskDeliverablesDescription: data.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+          sheetRow: task.progress?.sheetRow,
+          timeIn: task.progress?.timeIn || undefined,
+          skipN8nSync: true,
+        }).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null });
+        } else {
+          await tasksApi.updateTask(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null } as any).catch(console.error);
+          onDataRefresh();
+        }
+
+        toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
+      }
+
       setDeliverablesModalTarget(null);
-      return;
+    } finally {
+      submittingDeliverablesRef.current.delete(lockKey);
     }
-
-    // 2. Real task or subtask
-    onStatusChange(effectiveTaskId, [targetStatus]);
-    if (task.progress) {
-      task.progress.timeOut = nowTimeOut;
-      task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
-      task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
-    }
-
-    const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
-    const targetAssigneeUser = modalUser?.name ? modalUser : task.assignee;
-    if (targetAssigneeUser?.name) {
-      useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
-    }
-
-    if (isHandover) {
-      const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
-      if (onTaskUpdate) {
-        await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
-      } else {
-        await tasksApi.updateTask(effectiveTaskId, { assigneeId: null } as any).catch(console.error);
-        onDataRefresh();
-      }
-      await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], {
-        timeOut: nowTimeOut,
-        taskDeliverablesDescription: data.taskDeliverablesDescription,
-        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-      }).catch(console.error);
-
-      toast.info(`Task handed over — clocked out at ${nowTimeOut}`);
-    } else {
-      // To Review
-      if (ownerId) {
-        setRecentlyMovedToReviewByUser((prev) => {
-          const existing = prev[ownerId] || [];
-          if (existing.some((t) => t.id === effectiveTaskId)) return prev;
-          return {
-            ...prev,
-            [ownerId]: [{ ...task, status: 'IN REVIEW', assigneeId: null }, ...existing],
-          };
-        });
-      }
-      if (onTaskUpdate) {
-        await onTaskUpdate(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null });
-      } else {
-        await tasksApi.updateTask(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null } as any).catch(console.error);
-        onDataRefresh();
-      }
-      await taskMapApi.updateTaskStatuses(effectiveTaskId, ['To Review'], {
-        timeOut: nowTimeOut,
-        taskDeliverablesDescription: data.taskDeliverablesDescription,
-        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-      }).catch(console.error);
-
-      toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
-    }
-
-    // Trigger syncScheduleToSpreadsheet
-    taskMapApi.syncScheduleToSpreadsheet({
-      taskId: effectiveTaskId,
-      subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
-      taskTitle: task.title,
-      clientName: task.progress?.client || task.list?.name || 'General',
-      status: targetStatus,
-      mode: 'STOP',
-      stoppedAt: new Date(),
-      taskDeliverablesDescription: data.taskDeliverablesDescription,
-      taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-    }).catch(console.error);
-
-    setDeliverablesModalTarget(null);
   };
 
   const handleTaskMapSubStatusToggle = async (
@@ -2575,6 +2809,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const norm = label.trim().toLowerCase();
       const compactNorm = norm.replace(/[\s_-]+/g, '');
       if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+        const lastClockOut = recentlyClockedOutRef.current.get(task.id);
+        if (lastClockOut && Date.now() - lastClockOut < 15000) {
+          toast.info('Already clocked out — syncing spreadsheet...');
+          return;
+        }
         setDeliverablesModalTarget({
           task,
           targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
@@ -2608,6 +2847,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     // Intercept Hand Over & To Review selection for deliverables input & clock out
     if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+      const lastClockOut = recentlyClockedOutRef.current.get(task.id);
+      if (lastClockOut && Date.now() - lastClockOut < 15000) {
+        toast.info('Already clocked out — syncing spreadsheet...');
+        return;
+      }
       setDeliverablesModalTarget({
         task,
         targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
@@ -2807,7 +3051,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
       sensors={sensors}
       collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
@@ -2826,10 +3069,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const availableFilter = columnPriorityFilters['available'] || 'ALL';
           const availableTaskTypeFilter = columnTaskTypeFilters['available'] || 'ALL';
           const availableSubStatusFilter = columnSubStatusFilters['available'] || 'ALL';
-          const filteredDisplayPool = displayPool.filter((t) =>
-            matchesPriorityFilter(t, availableFilter) &&
-            matchesTaskTypeFilter(t, availableTaskTypeFilter) &&
-            matchesSubStatusFilter(t, availableSubStatusFilter) &&
+          const isLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
+          const baseAvailablePool = isLinkQuery ? availablePool : displayPool;
+          const filteredDisplayPool = baseAvailablePool.filter((t) =>
+            (isLinkQuery || (
+              matchesPriorityFilter(t, availableFilter) &&
+              matchesTaskTypeFilter(t, availableTaskTypeFilter) &&
+              matchesSubStatusFilter(t, availableSubStatusFilter)
+            )) &&
             matchesSearchFilter(t, searchQuery)
           );
           // Exclude On-hold tasks from the task number indicator per user requirement
@@ -2869,8 +3116,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             );
           }
 
-          const showAvailableCutout = Boolean(
-            activeOverId === 'available-pool' &&
+          const canShowAvailableCutout = Boolean(
             activeDragTask &&
             isPmUser &&
             (activeDragTask.assigneeId || !poolIds.has(activeDragTask.id))
@@ -3002,10 +3248,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
               {/* Cards List */}
               <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
-                {showAvailableCutout && (
-                  <CardCutoutPlaceholder task={activeDragTask!} targetName="Available Tasks" isUnassign />
-                )}
-                {filteredDisplayPool.length === 0 && !showAvailableCutout ? (
+                <ColumnDropCutout
+                  columnId="available-pool"
+                  canShow={canShowAvailableCutout}
+                  task={activeDragTask}
+                  targetName="Available Tasks"
+                  isUnassign
+                  carriedSubtasks={remainingAvailableSubtasks}
+                  getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
+                />
+                {filteredDisplayPool.length === 0 ? (
                   <p className="text-xs text-zinc-600 italic text-center py-12">
                     {displayPool.length > 0
                       ? 'No tasks match the selected priority filter.'
@@ -3265,6 +3517,40 @@ export const TaskMapBoardView: React.FC<Props> = ({
           );
         })()}
 
+        {/* 1.5 Supervise Column (PMs & Admins only; live progress >= 20 mins) */}
+        {isPmUser && (
+          <InstructionLiveColumn
+            sortedUserColumns={sortedUserColumns}
+            isCollapsed={resolveColumnCollapsedState(
+              'instruction-live',
+              collapsedColumns,
+              currentUser?.id,
+              isPmUser
+            )}
+            isPinned={!!pinnedColumns['instruction-live']}
+            onToggleCollapse={() => toggleCollapseColumn('instruction-live')}
+            onTogglePin={() => togglePinColumn('instruction-live')}
+            onOpenDetail={onOpenDetail}
+            isTaskLiveWorking={isTaskLiveWorking}
+            upworkClients={upworkClients}
+            upworkProjectClients={upworkProjectClients}
+            currentDate={currentDate}
+            superviseChecks={superviseChecks}
+            onSuperviseCheck={onSuperviseCheck}
+            onSuperviseUncheck={onSuperviseUncheck}
+            onTaskUpdate={onTaskUpdate}
+            onDataRefresh={onDataRefresh}
+            onOpenDeliverables={(targetTask, targetStatus, targetUser, rTaskId) => {
+              setDeliverablesModalTarget({
+                task: targetTask,
+                targetStatus,
+                user: targetUser,
+                realTaskId: rTaskId,
+              });
+            }}
+          />
+        )}
+
         {/* 2. User Shift Columns (Matches Image 1 & 4) */}
         {sortedUserColumns.map(([userId, { user, tasks: userTasks }]) => {
           const initials = (user.name || 'U').substring(0, 2).toUpperCase();
@@ -3284,11 +3570,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const userClientFilter = columnClientFilters[userId] || 'ALL';
           const userShowAdmin = columnShowAdmin[userId] ?? (isDeveloperUser(user, workspaceTeams) ? true : effectiveShowAdmin);
 
+          const isColLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
           const filteredUserTasks = userTasks.filter((t) => {
+            if (!matchesSearchFilter(t, searchQuery)) return false;
+            if (isColLinkQuery) return true;
             if (!matchesPriorityFilter(t, userPriorityFilter)) return false;
             if (!matchesTaskTypeFilter(t, userTaskTypeFilter)) return false;
             if (!matchesSubStatusFilter(t, userSubStatusFilter)) return false;
-            if (!matchesSearchFilter(t, searchQuery)) return false;
 
             // Admin task check: hide all tasks that are for the admin by default,
             // except the General Task (assumption block) or real tasks inputted by this MA from the spreadsheet!
@@ -3980,7 +4268,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   ? getEffectiveTaskMapHandlerId(activeDragTask)
                   : null;
                 const canShowColumnCutout = Boolean(
-                  activeOverId === `user-${userId}` &&
                   activeDragTask &&
                   canDropTaskMapCard({
                     isPmUser,
@@ -3991,7 +4278,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   }).allowed &&
                   (activeDragIsFromPool || !activeDragTask.assigneeId || activeDragTask.assigneeId !== userId)
                 );
-                const showColumnCutout = canShowColumnCutout;
                 const allowStartInProgress = canStartInProgressSlot({
                   isPmUser,
                   currentUserId: currentUser?.id,
@@ -4033,18 +4319,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   {liveSlotLabel}
                                 </span>
                               </div>
-                              {isColumnLiveWorking && (
-                                <span
-                                  className="text-[10px] font-mono font-semibold flex items-center gap-1"
-                                  style={{ color: liveSlotColor }}
-                                >
-                                  <span
-                                    className="size-1.5 rounded-full animate-ping shrink-0"
-                                    style={{ backgroundColor: liveSlotColor }}
-                                  />
-                                  Live Working
-                                </span>
-                              )}
                             </>
                           );
                         })()}
@@ -4070,17 +4344,22 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     </div>
 
                     {/* QUEUE SECTION */}
-                    {(queuedTasks.length > 0 || showColumnCutout) && (
+                    {(queuedTasks.length > 0 || canShowColumnCutout) && (
                       <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
                         <div className="flex items-center justify-between px-1">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                            Queue ({countNonOnHoldTasks(queuedTasks) + (showColumnCutout && (!activeDragTask || !isTaskOnHold(activeDragTask)) ? 1 : 0)})
+                            Queue ({countNonOnHoldTasks(queuedTasks)})
                           </span>
                         </div>
                         <div className="space-y-2.5">
-                          {showColumnCutout && (
-                            <CardCutoutPlaceholder task={activeDragTask!} targetName={user.name} />
-                          )}
+                          <ColumnDropCutout
+                            columnId={`user-${userId}`}
+                            canShow={canShowColumnCutout}
+                            task={activeDragTask}
+                            targetName={user.name}
+                            carriedSubtasks={remainingAvailableSubtasks}
+                            getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
+                          />
                           {queuedTasks.map((t) => renderCard(t))}
                         </div>
                       </div>
@@ -4107,92 +4386,42 @@ export const TaskMapBoardView: React.FC<Props> = ({
         })}
       </div>
 
-      {/* Drag Overlay Preview (High-fidelity card using board's signature drag animation) */}
+      {/* Drag Overlay Preview (1:1 card & carried subtasks, lightweight lift) */}
       <DragOverlay
         zIndex={100}
-        className="will-change-transform"
+        className="will-change-transform transform-gpu"
         dropAnimation={{
-          duration: 180,
+          duration: 150,
           easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
         }}
       >
-        {activeDragTask ? (() => {
-          const priorityConfig = getPriorityConfig(activeDragTask.priority);
-          const isClosed =
-            (activeDragTask.status || '').toUpperCase() === 'CLOSED' ||
-            (activeDragTask.status || '').toUpperCase() === 'DONE';
-          const primarySubStatus =
-            (activeDragTask.taskMap.statuses || [])[0] ||
-            getDefaultTaskMapSubStatuses(activeDragTask.status)[0] ||
-            'Sub-Status';
+        {activeDragTask ? (
+          <div className="w-[340px] pointer-events-none cursor-grabbing transform-gpu will-change-transform animate-in fade-in zoom-in-[0.98] duration-100 ease-out">
+            <DragPreviewCard
+              item={activeDragTask}
+              getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
+            />
 
-          return (
-            <div className="w-[340px] rotate-2 scale-105 p-3 bg-card border border-blue-500/80 rounded-xl shadow-2xl shadow-black/80 ring-1 ring-blue-500/50 flex items-stretch gap-3 min-h-[112px] pointer-events-none cursor-grabbing">
-              {/* Left: Task Info */}
-              <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-                <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[190px] mb-1 flex items-center gap-1.5">
-                  {activeDragTask.isSubtask && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-[10px] shrink-0">
-                      --
-                    </span>
-                  )}
-                  <span className="truncate">{activeDragTask.list?.name || 'General'}</span>
-                </div>
-                <h4 className="text-[13px] font-bold text-zinc-900 dark:text-white line-clamp-2 leading-snug my-0.5 h-[36px]">
-                  {activeDragTask.isSubtask ? (activeDragTask.title || '').replace(/^--\s*/, '') : activeDragTask.title}
-                </h4>
-                <div className="flex items-center gap-2 text-xs text-zinc-500 pt-1">
-                  <span className="shrink-0 flex items-center">
-                    {isClosed ? (
-                      <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
-                    ) : (
-                      <CustomCircleDot
-                        className="size-3.5 shrink-0"
-                        style={{
-                          color: resolveTaskStatusColor(
-                            activeDragTask.status,
-                            activeDragTask.listId || activeDragTask.list?.id,
-                            activeDragTask.list?.statuses
-                          ),
-                        }}
-                      />
-                    )}
-                  </span>
-                  <span className="flex items-center gap-1 font-medium text-[11px]">
-                    <Flag className={`size-3 ${priorityConfig.iconColor}`} />
-                    <span className={priorityConfig.color}>
-                      {priorityConfig.label}
-                    </span>
-                  </span>
-                </div>
-              </div>
-
-              {/* Separator */}
-              <div className="w-px bg-zinc-800/80 self-stretch my-0.5 shrink-0" />
-
-              {/* Right: Sub-Status snapshot */}
-              <div className="w-[125px] shrink-0 flex flex-col justify-between py-0.5">
-                <div className="flex justify-end items-center">
-                  <TaskTimeProgressSlot task={activeDragTask} />
-                </div>
-                <div className="w-full">
-                  <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
-                    Sub-Status
-                  </span>
-                  <div
-                    className="on-solid px-2 py-1 text-xs rounded-md font-medium truncate border border-black/10 dark:border-white/10"
-                    style={{
-                      backgroundColor: getTaskMapSubStatusStyle(primarySubStatus, getUnifiedTaskMapOptions(activeDragTask)).color,
-                      color: getTaskMapSubStatusStyle(primarySubStatus, getUnifiedTaskMapOptions(activeDragTask)).textColor,
-                    }}
-                  >
-                    {primarySubStatus}
+            {remainingAvailableSubtasks.length > 0 && (
+              <div className="pl-4 mt-2 space-y-2 relative">
+                <div className="absolute left-1.5 top-0 bottom-3 w-px bg-zinc-700/60" />
+                {remainingAvailableSubtasks.slice(0, 3).map((sub) => (
+                  <DragPreviewCard
+                    key={sub.id}
+                    item={sub}
+                    fallbackListName={activeDragTask.list?.name}
+                    getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
+                  />
+                ))}
+                {remainingAvailableSubtasks.length > 3 && (
+                  <div className="px-2.5 py-1 rounded-lg bg-zinc-900/90 border border-zinc-700/80 text-[11px] font-medium text-zinc-300 text-center shadow-md">
+                    +{remainingAvailableSubtasks.length - 3} more available subtask{remainingAvailableSubtasks.length - 3 > 1 ? 's' : ''}
                   </div>
-                </div>
+                )}
               </div>
-            </div>
-          );
-        })() : null}
+            )}
+          </div>
+        ) : null}
       </DragOverlay>
 
       {/* Action Error Modal for role restriction failures & permission issues */}
@@ -4248,6 +4477,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           initialDeliverables={deliverablesModalTarget.task.progress?.taskDeliverablesDescription || deliverablesModalTarget.task.title}
           initialUpdate={deliverablesModalTarget.task.progress?.taskUpdateAndDeliverables || ''}
           userName={deliverablesModalTarget.user?.name || deliverablesModalTarget.task.assignee?.name}
+          timeIn={deliverablesModalTarget.task.progress?.timeIn || ''}
         />
       )}
     </DndContext>

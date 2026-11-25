@@ -10,6 +10,7 @@ import {
   getRequiredAudits,
   getAiPickedAudits,
   hidesDesignAudit,
+  HIDE_INSTRUCTIONS_AUDIT,
   isNexusAuditChecklist,
   canPerformAudit,
   isUiUxAudit,
@@ -73,6 +74,15 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     if (norm === 'instruction audit' || norm === 'instructions audit') subStatusAudits.push('Instructions Audit');
   });
 
+  const getAuditSortOrder = (name: string): number => {
+    const norm = normalizeAuditName(name);
+    if (norm === 'design audit') return 0;
+    if (norm === 'ui ux audit' || norm === 'ui/ux audit') return 1;
+    if (norm === 'funnel audit') return 2;
+    if (norm === 'instructions audit' || norm === 'instruction audit') return 3;
+    return 4;
+  };
+
   const allAuditNames = Array.from(
     new Set([
       ...requiredTitles,
@@ -81,6 +91,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     ].filter((name) => {
       const norm = normalizeAuditName(name);
       if (!name || name.startsWith('!') || excludedSet.has(norm)) return false;
+      if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') return false;
       if (
         hideDesign &&
         norm === 'design audit' &&
@@ -91,7 +102,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       }
       return true;
     }))
-  );
+  ).sort((a, b) => getAuditSortOrder(a) - getAuditSortOrder(b));
 
   if (allAuditNames.length === 0) {
     return null;
@@ -265,15 +276,6 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
           <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
             Audit Checklist
           </span>
-          {isQueueColumn && (
-            <span
-              className="flex items-center gap-0.5 text-[9px] text-zinc-500 font-medium"
-              title="Must be assigned to an auditor first"
-            >
-              <Lock className="size-2.5" />
-              <span>Queue</span>
-            </span>
-          )}
         </div>
         <span
           className={`text-[9px] font-mono px-1.5 py-0.2 rounded-full font-semibold border ${

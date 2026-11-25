@@ -71,6 +71,11 @@ import {
   isOnHoldStatus,
   cascadeParentOnHoldToSubtasks,
 } from '../services/taskMapService';
+import {
+  upsertDailySheetLog,
+  getDailySheetLogsForDate,
+  getDailySheetLogsIndexForDate,
+} from '../services/dailySheetLogService';
 
 // Closed status check matching Nexus conventions
 const isClosedStatus = (status?: string | null) => {
@@ -120,14 +125,16 @@ async function triggerN8nStartTaskWebhook(params: {
   userName: string;
   userEmail?: string | null;
   dailySheetUrl?: string | null;
-  taskId: string;
+  taskId?: string | null;
   subtaskId?: string | null;
+  sheetRow?: number | null;
   taskTitle: string;
   clientName: string;
   taskLink?: string | null;
   status?: string;
   timeIn?: string;
   timeOut?: string | null;
+  timeTracker?: string | null;
   taskDeliverablesDescription?: string | null;
   taskUpdateAndDeliverables?: string | null;
   description?: string | null;
@@ -136,10 +143,17 @@ async function triggerN8nStartTaskWebhook(params: {
 }) {
   const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
   try {
+    // Strip automation-managed sheet columns (Task Link, Task Status, Was Deliverables Submitted?, IsRecorded?)
+    // so Nexus never overwrites Google Sheet formulas / Apps Script automations.
+    const {
+      taskLink: _omitTaskLink,
+      status: _omitStatus,
+      ...safePayload
+    } = params;
     const res = await fetch(n8nUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify(safePayload),
     });
     logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);
   } catch (err: any) {
@@ -245,6 +259,152 @@ async function fetchClientDashboardLists(): Promise<Array<{ id: string; name: st
 /**
  * Fetch all tasks mapped to Task Map with their status options, shifts, and pool
  */
+/**
+ * Extracts task/subtask/external IDs from a Nexus or ClickUp URL or raw ID query.
+ */
+function extractTaskLinkIds(query: string): { isLink: boolean; ids: string[] } {
+  const raw = (query || '').trim();
+  if (!raw) return { isLink: false, ids: [] };
+
+  const ids = new Set<string>();
+  const isUrlLike =
+    /^https?:\/\//i.test(raw) ||
+    raw.startsWith('/') ||
+    raw.startsWith('?') ||
+    /(?:nexus\.vipscaleph\.com|app\.clickup\.com)/i.test(raw);
+
+  if (isUrlLike) {
+    try {
+      const url =
+        raw.startsWith('/') || raw.startsWith('?')
+          ? new URL(raw, 'https://nexus.vipscaleph.com')
+          : /^https?:\/\//i.test(raw)
+            ? new URL(raw)
+            : new URL(`https://${raw}`);
+      const taskParam = url.searchParams.get('task');
+      const subtaskParam = url.searchParams.get('subtask');
+      if (taskParam) ids.add(taskParam.trim().toLowerCase());
+      if (subtaskParam) ids.add(subtaskParam.trim().toLowerCase());
+
+      const nexusTaskMatch = url.pathname.match(/\/tasks\/([a-zA-Z0-9_-]+)/i);
+      if (nexusTaskMatch?.[1]) ids.add(nexusTaskMatch[1].trim().toLowerCase());
+
+      const clickupMatch = url.pathname.match(/\/t\/([a-zA-Z0-9_-]+)(?:\/([a-zA-Z0-9_-]+))?/i);
+      if (clickupMatch?.[1]) ids.add(clickupMatch[1].trim().toLowerCase());
+      if (clickupMatch?.[2]) ids.add(clickupMatch[2].trim().toLowerCase());
+    } catch {
+      for (const m of raw.matchAll(/[?&](?:task|subtask)=([a-zA-Z0-9_-]+)/gi)) {
+        if (m[1]) ids.add(m[1].trim().toLowerCase());
+      }
+      const pathMatch = raw.match(/\/(?:tasks|t)\/([a-zA-Z0-9_-]+)/i);
+      if (pathMatch?.[1]) ids.add(pathMatch[1].trim().toLowerCase());
+    }
+  } else if (/^[a-zA-Z0-9_-]{6,}$/.test(raw)) {
+    ids.add(raw.toLowerCase());
+  }
+
+  return { isLink: isUrlLike, ids: Array.from(ids) };
+}
+
+function matchesTaskSearchQuery(task: any, searchQuery: string): boolean {
+  if (!searchQuery) return true;
+  const { isLink, ids } = extractTaskLinkIds(searchQuery);
+  if (ids.length > 0) {
+    const candidates = [task.id, task.subtaskId, task.parentTaskId, task.externalId]
+      .filter(Boolean)
+      .map((v) => String(v).trim().toLowerCase());
+    if (candidates.some((c) => ids.includes(c))) return true;
+    if (!isLink && ids.length === 1 && ids[0].length >= 6 && candidates.some((c) => c.includes(ids[0]))) {
+      return true;
+    }
+    if (isLink) return false;
+  }
+
+  const titleMatch = (task.title || '').toLowerCase().includes(searchQuery);
+  const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
+  const assigneeMatch =
+    (task.assignee?.name || '').toLowerCase().includes(searchQuery) ||
+    (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery)) ||
+    (task.progress?.maName || '').toLowerCase().includes(searchQuery) ||
+    (task.progress?.userName || '').toLowerCase().includes(searchQuery);
+  const statusMatch = (task.taskMap?.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
+  return titleMatch || clientMatch || assigneeMatch || statusMatch;
+}
+
+/**
+ * Resolves shiftUsers strictly from AuditShiftConfig for the requested shift tokens.
+ */
+async function resolveShiftUsersForTokens(
+  users: any[],
+  shiftTokens: string[],
+  isAllShifts: boolean
+): Promise<any[]> {
+  const shiftAuditorIdSet = new Set<string>();
+  const shiftMemberIdSet = new Set<string>();
+  const shiftMemberNameSet = new Set<string>();
+  const shiftAuditorNameSet = new Set<string>();
+
+  if (isAllShifts) {
+    const allShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+      where: { isActive: true },
+    });
+    for (const cfg of allShiftConfigs) {
+      (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+      (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+      (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+      (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+    }
+  } else {
+    const auditShiftKeys = Array.from(
+      new Set(
+        shiftTokens.flatMap((token) => {
+          const norm = token.trim().toUpperCase();
+          if (norm === 'DAY' || norm === 'AM' || norm === 'MORNING') return ['AM', 'DAY', 'MORNING'];
+          if (norm === 'NOON' || norm === 'PM_AFTERNOON' || norm === 'AFTERNOON') return ['PM_AFTERNOON', 'NOON', 'AFTERNOON'];
+          if (norm === 'NIGHT' || norm === 'PM_NIGHT') return ['PM_NIGHT', 'NIGHT'];
+          return [norm, fromTaskMapShiftKey(norm), toTaskMapShiftKey(norm)];
+        })
+      )
+    );
+    const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+      where: { shiftKey: { in: auditShiftKeys }, isActive: true },
+    });
+    for (const cfg of activeShiftConfigs) {
+      (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+      (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+      (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+      (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+    }
+  }
+
+  const hasExplicitIds = shiftMemberIdSet.size > 0 || shiftAuditorIdSet.size > 0;
+
+  return users
+    .filter((u) => {
+      if (isAllShifts && !hasExplicitIds && shiftMemberNameSet.size === 0 && shiftAuditorNameSet.size === 0) {
+        return true;
+      }
+      if (shiftMemberIdSet.has(u.id) || shiftAuditorIdSet.has(u.id)) return true;
+      const uName = (u.name || '').trim().toLowerCase();
+      if (!uName) return false;
+      if (shiftMemberNameSet.has(uName) || shiftAuditorNameSet.has(uName)) {
+        return true;
+      }
+      if (!hasExplicitIds) {
+        for (const token of [...shiftMemberNameSet, ...shiftAuditorNameSet]) {
+          if (token && (uName.startsWith(`${token} `) || (token.length >= 3 && uName.includes(token)))) {
+            return true;
+          }
+        }
+      }
+      return false;
+    })
+    .map((u) => ({
+      ...u,
+      isAudit: isAuditorRole(u.roles) || shiftAuditorIdSet.has(u.id),
+    }));
+}
+
 export const getTaskMapData = async (req: Request, res: Response) => {
   try {
     const shiftQuery = (req.query.shift as string || '').toUpperCase();
@@ -365,19 +525,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         }
 
         if (searchQuery) {
-          const filterFn = (task: any) => {
-            const titleMatch = (task.title || '').toLowerCase().includes(searchQuery);
-            const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
-            const assigneeMatch = (task.assignee?.name || '').toLowerCase().includes(searchQuery) ||
-              (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery)) ||
-              (task.progress?.maName || '').toLowerCase().includes(searchQuery) ||
-              (task.progress?.userName || '').toLowerCase().includes(searchQuery);
-            const statusMatch = (task.taskMap?.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
-            return titleMatch || clientMatch || assigneeMatch || statusMatch;
-          };
-          tasks = tasks.filter(filterFn);
-          availablePool = availablePool.filter(filterFn);
+          tasks = tasks.filter((task: any) => matchesTaskSearchQuery(task, searchQuery));
+          availablePool = availablePool.filter((task: any) => matchesTaskSearchQuery(task, searchQuery));
         }
+
+        const filteredSnapshotShiftUsers = await resolveShiftUsersForTokens(
+          snapshotAllUsers.length > 0 ? snapshotAllUsers : snapshotShiftUsers,
+          shiftTokens,
+          isAllShifts
+        );
 
         if (clientQuery && clientQuery !== 'ALL') {
           const clientFilterFn = (task: any) => {
@@ -407,11 +563,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           currentShift,
           pmUsers: snapshotPmUsers,
           allUsers: snapshotAllUsers,
-          shiftUsers: snapshotShiftUsers,
+          shiftUsers: filteredSnapshotShiftUsers,
           activeUpworkSessions: existingSnapshot.activeUpworkSessions || [],
           upworkClients: existingSnapshot.upworkClients || [],
           upworkProjectClients: existingSnapshot.upworkProjectClients || [],
           maActiveSessions: existingSnapshot.maActiveSessions || {},
+          dailySheetLogs: await getDailySheetLogsForDate(requestedDate).catch(() => existingSnapshot.dailySheetLogs || []),
         };
         await setCache(cacheKey, historyPayload, 3600, cacheGen);
         return historyPayload;
@@ -545,64 +702,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     ]);
 
     // Determine shift members (normal users + auditors) for the selected shift from AuditShiftConfig
-    const shiftAuditorIdSet = new Set<string>();
-    const shiftMemberIdSet = new Set<string>();
-    const shiftMemberNameSet = new Set<string>();
-    const shiftAuditorNameSet = new Set<string>();
-
-    if (isAllShifts) {
-      const allShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
-        where: { isActive: true },
-      });
-      for (const cfg of allShiftConfigs) {
-        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
-        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
-        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
-        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
-      }
-    } else {
-      const auditShiftKeys = Array.from(
-        new Set(
-          shiftTokens.flatMap((token) => {
-            const norm = token.trim().toUpperCase();
-            if (norm === 'DAY' || norm === 'AM' || norm === 'MORNING') return ['AM', 'DAY', 'MORNING'];
-            if (norm === 'NOON' || norm === 'PM_AFTERNOON' || norm === 'AFTERNOON') return ['PM_AFTERNOON', 'NOON', 'AFTERNOON'];
-            if (norm === 'NIGHT' || norm === 'PM_NIGHT') return ['PM_NIGHT', 'NIGHT'];
-            return [norm, fromTaskMapShiftKey(norm), toTaskMapShiftKey(norm)];
-          })
-        )
-      );
-      const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
-        where: { shiftKey: { in: auditShiftKeys }, isActive: true },
-      });
-      for (const cfg of activeShiftConfigs) {
-        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
-        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
-        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
-        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
-      }
-    }
-
-    const shiftUsers = allUsers
-      .filter((u) => {
-        if (isAllShifts && (shiftMemberIdSet.size === 0 && shiftAuditorIdSet.size === 0)) return true;
-        if (shiftMemberIdSet.has(u.id) || shiftAuditorIdSet.has(u.id)) return true;
-        const uName = (u.name || '').trim().toLowerCase();
-        if (!uName) return false;
-        if (shiftMemberNameSet.has(uName) || shiftAuditorNameSet.has(uName)) {
-          return true;
-        }
-        for (const token of [...shiftMemberNameSet, ...shiftAuditorNameSet]) {
-          if (token && (uName.startsWith(`${token} `) || (token.length >= 3 && uName.includes(token)))) {
-            return true;
-          }
-        }
-        return false;
-      })
-      .map((u) => ({
-        ...u,
-        isAudit: isAuditorRole(u.roles) || shiftAuditorIdSet.has(u.id),
-      }));
+    const shiftUsers = await resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts);
 
     const isPmUser = (u: any) => {
       if (u.systemRole === 'ADMIN') return true;
@@ -618,8 +718,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-      if (statusKey === 'CRM') return ['Ready to Send'];
-      if (statusKey === 'WAITING') return ['Waiting'];
+      if (statusKey === 'CRM') return ['To send'];
+      if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
       if (
         statusKey === 'INREVIEW' ||
@@ -645,6 +745,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const s = (st.status || (st.completed ? 'CLOSED' : 'PENDING')).toUpperCase().replace(/[\s_-]+/g, '');
       return st.completed || isClosedStatus(s);
     };
+
+    // Fetch today's DailySheetLog index so sorting and live state base from historical sheet submissions for that day
+    const dailySheetIndex = await getDailySheetLogsIndexForDate(requestedDate);
 
     // Build enriched task items + surface open subtasks as independent board items
     const enrichedTasks: any[] = [];
@@ -704,8 +807,31 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
       }
 
-      // Check sheet progress
-      let progress: any = reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+      // Check sheet progress: prefer today's DailySheetLog entry as the source of truth, fallback to pmReviews SHEET_PROGRESS
+      const sheetLog = dailySheetIndex.byTaskId.get(task.id);
+      let progress: any = sheetLog
+        ? {
+            type: 'SHEET_PROGRESS',
+            dailySheetLogId: sheetLog.id,
+            timeIn: sheetLog.timeIn,
+            timeOut: sheetLog.timeOut,
+            isMissingTime: sheetLog.isMissingTime,
+            isUpwork: sheetLog.isUpwork,
+            client: sheetLog.client,
+            timeTracker: sheetLog.timeTracker,
+            maName: sheetLog.maName,
+            status: sheetLog.status,
+            date: sheetLog.dateDisplay || sheetLog.dateKey,
+            dateKey: sheetLog.dateKey,
+            sheetRow: sheetLog.sheetRow ?? undefined,
+            subtaskId: sheetLog.subtaskId || null,
+            taskDeliverables: sheetLog.taskDeliverables,
+            taskUpdateAndDeliverables: sheetLog.taskUpdateAndDeliverables,
+            isLive: sheetLog.isLive,
+            startedAt: sheetLog.startedAt ? sheetLog.startedAt.toISOString() : null,
+            updatedAt: sheetLog.submittedAt ? sheetLog.submittedAt.toISOString() : new Date().toISOString(),
+          }
+        : reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
 
       const clientOrListName = `${task.list?.name || ''} ${progress?.client || ''}`.toLowerCase();
       const isLauren = clientOrListName.includes('lauren');
@@ -751,6 +877,28 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             ...mapRecord,
             statuses: mapRecord.statuses.filter((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'),
           };
+        }
+      }
+
+      // Normalize stale TaskMapRecord.statuses for WAITING / CRM tasks (e.g. 'Available Task' left over from TaskDetailModal status change)
+      const taskStatusNorm = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+      if (taskStatusNorm === 'WAITING' || taskStatusNorm === 'SENT') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        const staleForWaiting = new Set([
+          'AVAILABLETASK', 'TOSEND', 'READYTOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
+        ]);
+        if (cur.length === 0 || cur.every((s: string) => staleForWaiting.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+          mapRecord = { ...mapRecord, statuses: ['Sent but Waiting'] };
+        }
+      } else if (taskStatusNorm === 'CRM') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        const staleForCrm = new Set([
+          'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+        ]);
+        if (cur.length === 0 || cur.every((s: string) => staleForCrm.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+          mapRecord = { ...mapRecord, statuses: ['To send'] };
         }
       }
 
@@ -978,17 +1126,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     }
 
     // Filter by search query if present
-    const searchedTasks = enrichedTasks.filter((task: any) => {
-      if (!searchQuery) return true;
-      const titleMatch = task.title.toLowerCase().includes(searchQuery);
-      const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
-      const assigneeMatch = (task.assignee?.name || '').toLowerCase().includes(searchQuery) ||
-        (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery)) ||
-        (task.progress?.maName || '').toLowerCase().includes(searchQuery) ||
-        (task.progress?.userName || '').toLowerCase().includes(searchQuery);
-      const statusMatch = (task.taskMap.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
-      return titleMatch || clientMatch || assigneeMatch || statusMatch;
-    });
+    const searchedTasks = enrichedTasks.filter((task: any) => matchesTaskSearchQuery(task, searchQuery));
 
     // Filter by client query if present
     const filteredTasks = searchedTasks.filter((task: any) => {
@@ -1330,6 +1468,33 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
+    // Also ensure any live DailySheetLog entry for today is represented in maActiveSessions
+    for (const log of (dailySheetIndex?.logs || [])) {
+      if (!log?.maName || !log.isLive || !log.timeIn || log.timeOut || log.isMissingTime) continue;
+      const maKey = log.maKey || log.maName.toLowerCase().trim();
+      const existing = maActiveSessions[maKey];
+      const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+      const incomingUpdatedMs = log.submittedAt ? new Date(log.submittedAt).getTime() : 0;
+      const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+        maActiveSessions[maKey] = {
+          maName: log.maName,
+          taskId: log.taskId || null,
+          subtaskId: log.subtaskId || null,
+          timeIn: log.timeIn,
+          timeOut: null,
+          client: log.client || 'General',
+          taskName: log.taskName || log.taskDeliverables || 'No task inputted',
+          date: log.dateKey || todayManila,
+          status: log.status || 'IN PROGRESS',
+          isUpwork: Boolean(log.isUpwork),
+          rowNumber: log.sheetRow || null,
+          updatedAt: log.submittedAt ? new Date(log.submittedAt).toISOString() : new Date().toISOString(),
+          active: true,
+        };
+      }
+    }
+
     // Enrich all maActiveSessions with lightweight task metadata (excluding description so it only loads on click)
     const enrichedTaskById = new Map<string, any>();
     const listByNameLower = new Map<string, { id: string; name: string }>();
@@ -1438,6 +1603,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       await captureTaskMapDailySnapshot(requestedDate, snapshotPayload, (req as any).user?.id || 'system');
     }
 
+    const activeSuperviseChecks = await (prisma as any).superviseCheck.findMany({
+      where: {
+        dateKey: requestedDate,
+        reappearAt: { gt: new Date() },
+      },
+      orderBy: { checkedAt: 'desc' },
+    }).catch(() => []);
+
     const responsePayload = {
       success: true,
       isHistory: isPastDate,
@@ -1446,6 +1619,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       launchTasks,
       availablePool,
       allClients,
+      dailySheetLogs: dailySheetIndex.logs,
+      superviseChecks: activeSuperviseChecks,
       options,
       shifts,
       statusCounts,
@@ -1631,8 +1806,8 @@ const parsePmReviewsArray = (raw: any): any[] => {
 
 const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
   const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (statusKey === 'CRM') return ['Ready to Send'];
-  if (statusKey === 'WAITING') return ['Waiting'];
+  if (statusKey === 'CRM') return ['To send'];
+  if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
   if (statusKey === 'ONHOLD') return ['On-hold'];
   if (
     statusKey === 'INREVIEW' ||
@@ -1707,7 +1882,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         requestedStatuses: statuses,
       });
 
-      await prisma.auditLog.create({
+      const revLog = await prisma.auditLog.create({
         data: {
           action: 'TASK_MAP_STATUS_CHANGE',
           entity: 'TASK',
@@ -1720,7 +1895,26 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             actor: actorDisplayName,
           },
         },
-      }).catch(() => {});
+      }).catch(() => null);
+
+      await invalidateCache(`task:activities:${revResult.taskId}`, `task:${revResult.taskId}`).catch(() => {});
+      if (revLog) {
+        io.emit('task_activity', {
+          taskId: revResult.taskId,
+          activity: {
+            id: revLog.id,
+            type: 'task_map_status_change',
+            author: actorDisplayName,
+            oldStatus: null,
+            newStatus: revResult.statuses.length > 0 ? revResult.statuses.join(', ') : 'None',
+            oldStatuses: [],
+            newStatuses: revResult.statuses,
+            subtaskId: revResult.subtaskId,
+            date: revLog.createdAt,
+            user: actorUser ? { id: actorUser.id, name: actorDisplayName } : { id: user?.id || 'system', name: actorDisplayName },
+          },
+        });
+      }
 
       const freshRecord = await getOrCreateTaskMapRecord(revResult.taskId);
       const responseTaskMap = revResult.subtaskId
@@ -1878,9 +2072,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       }
 
       const updatedParent = await updateTaskMapRecord(subtask.taskId, { pmReviews });
-      await invalidateCache('task:*', 'tasks:all', `task:${subtask.taskId}`, `task:${subtask.id}`, 'task_map:*');
+      await invalidateCache('task:*', 'tasks:all', `task:${subtask.taskId}`, `task:${subtask.id}`, `task:activities:${subtask.taskId}`, 'task_map:*');
 
-      await prisma.auditLog.create({
+      const subLog = await prisma.auditLog.create({
         data: {
           action: 'TASK_MAP_STATUS_CHANGE',
           entity: 'TASK',
@@ -1893,6 +2087,24 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             subtaskTitle: subtask.title,
             actor: actorDisplayName,
           },
+        },
+      });
+
+      io.emit('task_activity', {
+        listId: subtask.task?.listId || undefined,
+        taskId: subtask.taskId,
+        activity: {
+          id: subLog.id,
+          type: 'task_map_status_change',
+          author: actorDisplayName,
+          oldStatus: oldStatuses.length > 0 ? oldStatuses.join(', ') : null,
+          newStatus: statuses.length > 0 ? statuses.join(', ') : 'None',
+          oldStatuses,
+          newStatuses: statuses,
+          subtaskId: subtask.id,
+          subtaskTitle: subtask.title,
+          date: subLog.createdAt,
+          user: actorUser ? { id: actorUser.id, name: actorDisplayName } : { id: user?.id || 'system', name: actorDisplayName },
         },
       });
 
@@ -2257,7 +2469,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     }
 
     // Create AuditLog
-    await prisma.auditLog.create({
+    const mainLog = await prisma.auditLog.create({
       data: {
         action: 'TASK_MAP_STATUS_CHANGE',
         entity: 'TASK',
@@ -2268,6 +2480,24 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           newStatuses: statuses,
           actor: actorDisplayName,
         },
+      },
+    });
+
+    await invalidateCache(`task:activities:${id}`, `task:${id}`).catch(() => {});
+
+    io.emit('task_activity', {
+      listId: currentTask?.listId || undefined,
+      taskId: id,
+      activity: {
+        id: mainLog.id,
+        type: 'task_map_status_change',
+        author: actorDisplayName,
+        oldStatus: oldStatuses.length > 0 ? oldStatuses.join(', ') : null,
+        newStatus: statuses.length > 0 ? statuses.join(', ') : 'None',
+        oldStatuses,
+        newStatuses: statuses,
+        date: mainLog.createdAt,
+        user: actorUser ? { id: actorUser.id, name: actorDisplayName } : { id: user?.id || 'system', name: actorDisplayName },
       },
     });
 
@@ -2598,7 +2828,7 @@ async function executeTaskMapAssignment(
         'tasks:all',
         'dashboard:all',
         'lists:all',
-        'task_map:all'
+        'task_map:*'
       ).catch(() => {});
 
       const prevSubAssignees =
@@ -3120,7 +3350,7 @@ async function executeTaskMapAssignment(
       'tasks:all',
       'dashboard:all',
       'lists:all',
-      'task_map:all'
+      'task_map:*'
     ).catch(() => { });
 
     const prevTaskAssignees =
@@ -3411,7 +3641,7 @@ export const claimTask = async (req: Request, res: Response) => {
       'tasks:all',
       'dashboard:all',
       'lists:all',
-      'task_map:all'
+      'task_map:*'
     ).catch(() => { });
 
     // AuditLog
@@ -3501,7 +3731,7 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
         },
       });
 
-      await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
+      await invalidateCache('task_map:*', `task:${id}`).catch(() => { });
       io.emit('task_map:updated', { taskId: id, taskMap: updated });
       io.emit('task:updated', { id });
       return res.json({ success: true, taskMap: updated });
@@ -3558,7 +3788,7 @@ export const handlePmReviewAction = async (req: Request, res: Response) => {
         },
       });
 
-      await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
+      await invalidateCache('task_map:*', `task:${id}`).catch(() => { });
       io.emit('task_map:updated', { taskId: id, taskMap: updated });
       io.emit('task:updated', { id });
       return res.json({ success: true, taskMap: updated });
@@ -3663,7 +3893,7 @@ export const runRollover = async (req: Request, res: Response) => {
       rolledCount++;
     }
 
-    await invalidateCache('task_map:all').catch(() => { });
+    await invalidateCache('task_map:*').catch(() => { });
     io.emit('task_map:updated');
     res.json({ success: true, rolledCount, nextShift });
   } catch (error: any) {
@@ -3740,7 +3970,7 @@ export const updateTaskMeta = async (req: Request, res: Response) => {
     if (shift !== undefined) data.shift = String(shift).toUpperCase();
 
     const updated = await updateTaskMapRecord(id, data);
-    await invalidateCache('task_map:all', `task:${id}`).catch(() => { });
+    await invalidateCache('task_map:*', `task:${id}`).catch(() => { });
     io.emit('task_map:updated', { taskId: id, taskMap: updated });
     res.json({ success: true, taskMap: updated });
   } catch (error: any) {
@@ -4508,10 +4738,10 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
           },
         });
         await updateTaskMapRecord(t.id, { statuses: [] });
-        await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
+        await invalidateCache(`task:${t.id}`, 'task_map:*', 'tasks:all');
       }
 
-      await invalidateCache('task_map:all').catch(() => { });
+      await invalidateCache('task_map:*').catch(() => { });
     io.emit('task_map:updated');
       return res.json({
         success: true,
@@ -4555,7 +4785,7 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
         revs = [];
       }
       await updateTaskMapRecord(t.id, { statuses: cleanedStatuses, pmReviews: revs, handedOver: true });
-      await invalidateCache(`task:${t.id}`, 'task_map:all', 'tasks:all');
+      await invalidateCache(`task:${t.id}`, 'task_map:*', 'tasks:all');
       resetTaskIds.push(t.id);
     }
 
@@ -4606,11 +4836,11 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
       else revs.push(nextSubState);
 
       await updateTaskMapRecord(st.taskId, { pmReviews: revs });
-      await invalidateCache(`task:${st.taskId}`, `task:${st.id}`, 'task_map:all', 'tasks:all');
+      await invalidateCache(`task:${st.taskId}`, `task:${st.id}`, 'task_map:*', 'tasks:all');
       resetTaskIds.push(`subtask:${st.id}`);
     }
 
-    await invalidateCache('task_map:all').catch(() => { });
+    await invalidateCache('task_map:*').catch(() => { });
     io.emit('task_map:updated');
     return res.json({
       success: true,
@@ -4996,166 +5226,170 @@ export const getClientLockStatusHandler = async (req: Request, res: Response) =>
 };
 
 /**
- * Returns the daily schedule spreadsheet configuration for the given or current user.
- * Resolves `dailySheetUrl` directly from the User record in PostgreSQL.
- */
-export const getUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
-  try {
-    const user = (req as any).user;
-    const targetUserId = (req.query.userId as string) || user?.id;
-    if (!targetUserId) {
-      return res.status(400).json({ error: 'User ID is required' });
-    }
-    const targetUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { id: true, name: true, email: true, dailySheetUrl: true, avatarUrl: true, roles: true },
-    });
-    if (!targetUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const rawUrl = targetUser.dailySheetUrl || '';
-    const match = rawUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    const spreadsheetId = match ? match[1] : null;
-
-    return res.json({
-      success: true,
-      userId: targetUser.id,
-      userName: targetUser.name,
-      userEmail: targetUser.email,
-      dailySheetUrl: targetUser.dailySheetUrl || null,
-      spreadsheetId,
-      hasSpreadsheetLink: Boolean(targetUser.dailySheetUrl && targetUser.dailySheetUrl.trim()),
-    });
-  } catch (err: any) {
-    logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
-    return res.status(500).json({ error: err.message });
-  }
-};
-
-/**
  * Handles explicit schedule row sync from frontend to spreadsheet / n8n
  */
+const recentSpreadsheetStopDedupe = new Map<string, number>();
+
 export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => {
   try {
-    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, userId } = req.body;
+    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, source } = req.body;
     const user = (req as any).user;
 
-    const targetUserId = userId || user?.id;
-    const actorUser = targetUserId
+    const actorUser = user?.id
       ? await prisma.user.findUnique({
-          where: { id: targetUserId },
+          where: { id: user.id },
           select: { id: true, name: true, email: true, dailySheetUrl: true },
         })
       : null;
     const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
 
     const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-
-    // Strict validation: Select client and task first before time in and out
-    if (targetRow) {
-      const hasTime = Boolean(
-        (targetRow.timeIn && String(targetRow.timeIn).trim()) ||
-        (targetRow.timeOut && String(targetRow.timeOut).trim())
-      );
-      const clientStr = (targetRow.client || '').toString().trim();
-      const taskStr = (targetRow.task || '').toString().trim();
-      const hasClient = Boolean(clientStr && clientStr.toLowerCase() !== 'general' && clientStr.toLowerCase() !== 'no client inputted');
-      const hasTask = Boolean(taskStr && taskStr.toLowerCase() !== 'task' && taskStr.toLowerCase() !== 'no task inputted');
-
-      if (hasTime && (!hasClient || !hasTask)) {
+    if (targetRow && (targetRow.timeIn || targetRow.timeOut)) {
+      if (!String(targetRow.client || '').trim() || !String(targetRow.task || '').trim()) {
         return res.status(400).json({
-          success: false,
-          error: 'Select client and task first before time in and out',
-          fieldErrors: {
-            ...(!hasClient ? { client: 'Client must be selected first' } : {}),
-            ...(!hasTask ? { task: 'Task must be selected first' } : {}),
-          },
+          error: 'Client and Task are required before logging Time In or Time Out.',
         });
       }
     }
 
     const cleanTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
-    if (cleanTaskId) {
+    const nowTimeOut = targetRow?.timeOut || new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date());
+    const effectiveTimeOut = mode === 'STOP' ? nowTimeOut : (targetRow?.timeOut || null);
+    let resolvedSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+
+    if (cleanTaskId && targetRow) {
       const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
       let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
 
-      if (targetRow) {
-        const nowTimeOut = targetRow.timeOut || new Intl.DateTimeFormat('en-US', {
-          timeZone: 'Asia/Manila',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-        }).format(new Date());
-
-        let matched = false;
-        for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
-            if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
-              r.timeOut = nowTimeOut;
-              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
-              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
-              matched = true;
-            } else if (!r.timeOut) {
-              r.timeOut = nowTimeOut;
-              if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
-              if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
-              matched = true;
-            }
+      let matched = false;
+      for (const r of pmReviews) {
+        if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
+          if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
+            r.timeOut = effectiveTimeOut || '';
+            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+            if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
+            matched = true;
+          } else if (!r.timeOut) {
+            r.timeOut = effectiveTimeOut || '';
+            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
+            if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
+            matched = true;
           }
         }
-        if (!matched && mode === 'STOP') {
-          pmReviews.push({
-            type: 'SHEET_PROGRESS',
-            taskId: cleanTaskId,
-            subtaskId: subtaskId || null,
-            timeIn: targetRow.timeIn || '',
-            timeOut: nowTimeOut,
-            client: targetRow.client || 'General',
-            task: targetRow.task || 'Task',
-            taskDeliverables: targetRow.taskDeliverablesDescription || null,
-            taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        await updateTaskMapRecord(cleanTaskId, { pmReviews });
       }
-
-      if (mode === 'STOP') {
-        await deleteMaActiveSession(actorDisplayName).catch(() => {});
-        const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
-        io.emit('ma:session_updated', clearedPayload);
-        io.emit('task_map:ma_progress_changed', clearedPayload);
-        io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
+      if (!matched && mode === 'STOP') {
+        pmReviews.push({
+          type: 'SHEET_PROGRESS',
+          taskId: cleanTaskId,
+          subtaskId: subtaskId || null,
+          timeIn: targetRow.timeIn || '',
+          timeOut: nowTimeOut,
+          client: targetRow.client || 'General',
+          task: targetRow.task || 'Task',
+          taskDeliverables: targetRow.taskDeliverablesDescription || null,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
+          updatedAt: new Date().toISOString(),
+        });
       }
+      await updateTaskMapRecord(cleanTaskId, { pmReviews });
     }
 
-    // Always forward row to n8n webhook for realtime spreadsheet update based on user's dailySheetUrl from database
+    let savedLog = null;
     if (targetRow) {
-      triggerN8nStartTaskWebhook({
-        userId: actorUser?.id || user?.id,
-        userName: actorDisplayName,
-        userEmail: actorUser?.email,
-        dailySheetUrl: actorUser?.dailySheetUrl,
-        taskId: cleanTaskId || taskId || 'general-task',
+      savedLog = await upsertDailySheetLog({
+        date: targetRow.date || getManilaDateStr(),
+        maName: actorDisplayName,
+        userId: actorUser?.id || user?.id || null,
+        taskId: cleanTaskId || null,
         subtaskId: subtaskId || null,
-        taskTitle: targetRow.task || 'Task',
-        clientName: targetRow.client || 'General',
-        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : ''),
-        status: targetRow.taskStatus || mode,
-        timeIn: targetRow.timeIn,
-        timeOut: targetRow.timeOut,
-        taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
-        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
-        description: targetRow.taskDeliverablesDescription || targetRow.task,
-        date: targetRow.date,
-        mode: mode || (targetRow.timeOut ? 'STOP' : 'START'),
+        sheetRow: resolvedSheetRow,
+        client: targetRow.client || 'General',
+        taskName: targetRow.task || 'Task',
+        timeIn: targetRow.timeIn || null,
+        timeOut: effectiveTimeOut,
+        isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
+        timeTracker: targetRow.timeTracker || null,
+        status: targetRow.taskStatus || (mode === 'STOP' ? 'Completed' : 'In Progress'),
+        taskDeliverables: targetRow.taskDeliverablesDescription || null,
+        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
+        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
+        source: source || (cleanTaskId ? 'NEXUS_BOARD' : 'NEXUS_DAILY_TRACKER'),
+      }).catch((err) => {
+        logger.warn({ err }, 'Failed to upsert DailySheetLog from syncSpreadsheetRowHandler');
+        return null;
       });
+      if (!resolvedSheetRow && savedLog?.sheetRow) {
+        resolvedSheetRow = Number(savedLog.sheetRow);
+      }
+      if (savedLog) {
+        io.emit('daily_sheet_log:updated', { log: savedLog });
+      }
+      await invalidateCache('task_map:*').catch(() => {});
+    }
+
+    if (cleanTaskId && mode === 'STOP') {
+      await deleteMaActiveSession(actorDisplayName).catch(() => {});
+      const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
+      io.emit('ma:session_updated', clearedPayload);
+      io.emit('task_map:ma_progress_changed', clearedPayload);
+      io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
+    }
+
+    // Forward to n8n webhook to update the user's personal Google Spreadsheet (with STOP deduplication)
+    if (targetRow) {
+      let skipDuplicateWebhook = false;
+      if (mode === 'STOP') {
+        const dedupeKey = `${String(targetRow.date || getManilaDateStr()).split('T')[0]}::${actorDisplayName.trim().toLowerCase()}::${String(targetRow.timeIn || '').trim()}::${cleanTaskId || 'none'}`;
+        if (isRedisReady()) {
+          const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
+          if (!acquired) skipDuplicateWebhook = true;
+        } else {
+          const prevTs = recentSpreadsheetStopDedupe.get(dedupeKey);
+          const nowTs = Date.now();
+          if (prevTs && nowTs - prevTs < 30000) {
+            skipDuplicateWebhook = true;
+          } else {
+            recentSpreadsheetStopDedupe.set(dedupeKey, nowTs);
+          }
+        }
+      }
+
+      if (!skipDuplicateWebhook) {
+        await triggerN8nStartTaskWebhook({
+          userId: user?.id,
+          userName: actorDisplayName,
+          userEmail: actorUser?.email,
+          dailySheetUrl: actorUser?.dailySheetUrl,
+          taskId: cleanTaskId || null,
+          subtaskId: subtaskId || null,
+          sheetRow: resolvedSheetRow,
+          taskTitle: targetRow.task || 'Task',
+          clientName: targetRow.client || 'General',
+          taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
+          status: targetRow.taskStatus || mode,
+          date: targetRow.date,
+          timeIn: targetRow.timeIn,
+          timeOut: effectiveTimeOut,
+          timeTracker: targetRow.timeTracker || null,
+          taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
+          description: targetRow.taskDeliverablesDescription || targetRow.task,
+          mode: mode || 'UPDATE',
+        });
+      }
     }
 
     return res.json({
       success: true,
       rows: rows || [],
+      log: savedLog,
       isSplitAcrossMidnight: Boolean(isSplitAcrossMidnight),
     });
   } catch (err: any) {
@@ -5163,5 +5397,241 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     return res.status(500).json({ error: err.message });
   }
 };
+
+export const getDailySheetLogsHandler = async (req: Request, res: Response) => {
+  try {
+    const date = (req.query.date as string) || getManilaDateStr();
+    const maName = (req.query.maName as string) || undefined;
+    const search = (req.query.search as string) || undefined;
+
+    const logs = await getDailySheetLogsForDate(date, { maName, search });
+    return res.json({
+      success: true,
+      date: date.trim().split('T')[0],
+      logs,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getDailySheetLogsHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const createDailySheetLogHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const {
+      date,
+      maName,
+      taskId,
+      subtaskId,
+      sheetRow,
+      client,
+      taskName,
+      timeIn,
+      timeOut,
+      isMissingTime,
+      isUpwork,
+      timeTracker,
+      status,
+      taskDeliverables,
+      taskUpdateAndDeliverables,
+      taskLink,
+    } = req.body;
+
+    const effectiveMaName = (maName || user?.name || user?.email || '').trim();
+    if (!effectiveMaName) {
+      return res.status(400).json({ error: 'maName is required' });
+    }
+
+    const log = await upsertDailySheetLog({
+      date: date || getManilaDateStr(),
+      maName: effectiveMaName,
+      userId: user?.id || null,
+      taskId: taskId || null,
+      subtaskId: subtaskId || null,
+      sheetRow: sheetRow ? Number(sheetRow) : null,
+      client: client || null,
+      taskName: taskName || null,
+      timeIn: timeIn || null,
+      timeOut: timeOut || null,
+      isMissingTime: Boolean(isMissingTime),
+      isUpwork: Boolean(isUpwork),
+      timeTracker: timeTracker || null,
+      status: status || null,
+      taskDeliverables: taskDeliverables || null,
+      taskUpdateAndDeliverables: taskUpdateAndDeliverables || null,
+      taskLink: taskLink || null,
+      source: 'NEXUS_SHEETS',
+    });
+
+    if (log) {
+      io.emit('daily_sheet_log:updated', { log });
+    }
+    await invalidateCache('task_map:*').catch(() => {});
+
+    return res.json({ success: true, log });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in createDailySheetLogHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
+  try {
+    const requestedUserId = (req.query.userId as string) || (req as any).user?.id;
+    if (!requestedUserId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: requestedUserId },
+      select: { id: true, name: true, email: true, dailySheetUrl: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const match = user.dailySheetUrl?.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return res.json({
+      success: true,
+      userId: user.id,
+      userName: user.name,
+      dailySheetUrl: user.dailySheetUrl || null,
+      spreadsheetId: match ? match[1] : null,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const SUPERVISE_TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const SUPERVISE_THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+function parseManilaSessionStart(dateKey: string, timeIn: string, now: Date): Date | null {
+  const m = String(timeIn || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!m) return null;
+  let hours = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const period = (m[3] || '').toUpperCase();
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  if (hours < 0 || hours > 23 || mins < 0 || mins > 59) return null;
+
+  const cleanDate = String(dateKey || '').split('T')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  let start = new Date(`${cleanDate}T${pad(hours)}:${pad(mins)}:00+08:00`);
+  if (isNaN(start.getTime())) return null;
+
+  if (start.getTime() - now.getTime() > SUPERVISE_TWO_HOURS_MS) {
+    start = new Date(start.getTime() - 24 * 60 * 60 * 1000);
+  }
+  return start;
+}
+
+function computeNextSuperviseReappearAt(dateKey: string, timeIn: string, checkedAt: Date): Date {
+  const start = parseManilaSessionStart(dateKey, timeIn, checkedAt);
+  if (!start) {
+    return new Date(checkedAt.getTime() + SUPERVISE_TWO_HOURS_MS);
+  }
+  const elapsedMs = Math.max(0, checkedAt.getTime() - start.getTime());
+  const nextMilestoneMs =
+    elapsedMs < SUPERVISE_TWO_HOURS_MS
+      ? SUPERVISE_TWO_HOURS_MS
+      : SUPERVISE_TWO_HOURS_MS +
+        (Math.floor((elapsedMs - SUPERVISE_TWO_HOURS_MS) / SUPERVISE_THREE_HOURS_MS) + 1) *
+          SUPERVISE_THREE_HOURS_MS;
+  return new Date(start.getTime() + nextMilestoneMs);
+}
+
+export const createSuperviseCheckHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const {
+      maName,
+      dateKey,
+      timeIn,
+      taskId,
+      taskTitle,
+      client,
+      note,
+    } = req.body || {};
+
+    if (!maName || !timeIn) {
+      return res.status(400).json({ error: 'maName and timeIn are required' });
+    }
+
+    const effectiveDateKey = String(dateKey || getManilaDateStr()).trim().split('T')[0];
+    const maKey = String(maName).trim().toLowerCase();
+    const cleanTimeIn = String(timeIn).trim();
+    const cleanTaskId = taskId ? String(taskId).trim() : null;
+    const sessionKey = `${effectiveDateKey}::${maKey}::${cleanTimeIn}::${cleanTaskId || 'none'}`;
+
+    const checkedAt = new Date();
+    const reappearAt = computeNextSuperviseReappearAt(effectiveDateKey, cleanTimeIn, checkedAt);
+
+    const check = await (prisma as any).superviseCheck.upsert({
+      where: { sessionKey },
+      update: {
+        maKey,
+        maName: String(maName).trim(),
+        dateKey: effectiveDateKey,
+        timeIn: cleanTimeIn,
+        taskId: cleanTaskId,
+        taskTitle: taskTitle ? String(taskTitle).trim() : null,
+        client: client ? String(client).trim() : null,
+        note: note ? String(note).trim() : null,
+        checkedById: user?.id || null,
+        checkedByName: user?.name || user?.email || 'Supervisor',
+        checkedAt,
+        reappearAt,
+      },
+      create: {
+        sessionKey,
+        maKey,
+        maName: String(maName).trim(),
+        dateKey: effectiveDateKey,
+        timeIn: cleanTimeIn,
+        taskId: cleanTaskId,
+        taskTitle: taskTitle ? String(taskTitle).trim() : null,
+        client: client ? String(client).trim() : null,
+        note: note ? String(note).trim() : null,
+        checkedById: user?.id || null,
+        checkedByName: user?.name || user?.email || 'Supervisor',
+        checkedAt,
+        reappearAt,
+      },
+    });
+
+    io.emit('supervise:updated', { action: 'check', check });
+    await invalidateCache('task_map:*').catch(() => {});
+
+    return res.json({ success: true, check });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in createSuperviseCheckHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const deleteSuperviseCheckHandler = async (req: Request, res: Response) => {
+  try {
+    const { sessionKey } = req.body || {};
+    if (!sessionKey) {
+      return res.status(400).json({ error: 'sessionKey is required' });
+    }
+
+    await (prisma as any).superviseCheck.deleteMany({
+      where: { sessionKey: String(sessionKey) },
+    });
+
+    io.emit('supervise:updated', { action: 'uncheck', sessionKey: String(sessionKey) });
+    await invalidateCache('task_map:*').catch(() => {});
+
+    return res.json({ success: true, sessionKey: String(sessionKey) });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in deleteSuperviseCheckHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 
 

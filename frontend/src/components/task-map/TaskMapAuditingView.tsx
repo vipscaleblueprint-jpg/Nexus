@@ -23,6 +23,7 @@ import {
   formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { useLiveClock } from '@/lib/liveClock';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -131,11 +132,10 @@ const DraggableTaskCard: React.FC<{
     >
       {isSaving && (
         <div
-          className="absolute top-2 right-2 z-20 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[9px] font-bold shadow-md pointer-events-none backdrop-blur-xs"
-          title="Saving changes to database..."
+          className="absolute top-2 right-2 z-20 inline-flex items-center justify-center p-1 rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700/80 shadow-md pointer-events-none backdrop-blur-xs"
+          title="Saving changes..."
         >
-          <Loader2 className="size-2.5 animate-spin text-amber-400" />
-          <span>Saving...</span>
+          <NexusLogoLoader inline size={15} />
         </div>
       )}
       {children}
@@ -1242,7 +1242,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // 1. Search-matching auditor columns move to the front
   // 2. Pinned columns come next
   // 3. Current viewing user column next (showing on the right side of To Review)
-  // 4. Alphabetical order (A-Z)
+  // 4. Audit specialization order: Design -> UI/UX -> Funnel -> Instruction -> Other
+  // 5. Alphabetical order (A-Z)
+  const getAuditorTypeOrder = (user: any): number => {
+    const label = getAuditorBadge(user).label;
+    if (label === 'Design Auditor') return 0;
+    if (label === 'UI/UX Auditor') return 1;
+    if (label === 'Funnel Auditor') return 2;
+    if (label === 'Instruction Auditor') return 3;
+    return 4;
+  };
+
   const curUserId = currentUser?.id;
   const curUserName = (currentUser?.name || '').trim().toLowerCase();
 
@@ -1282,7 +1292,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     if (isCurA && !isCurB) return -1;
     if (!isCurA && isCurB) return 1;
 
-    // 4. Alphabetical order (A-Z)
+    // 4. Audit specialization order: Design First, then UI/UX, then Funnel
+    const typeOrderA = getAuditorTypeOrder(colA.auditorUser);
+    const typeOrderB = getAuditorTypeOrder(colB.auditorUser);
+    if (typeOrderA !== typeOrderB) return typeOrderA - typeOrderB;
+
+    // 5. Alphabetical order (A-Z)
     return (colA.title || '').localeCompare(colB.title || '', undefined, { sensitivity: 'base' });
   });
 
@@ -1602,18 +1617,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                                   {liveSlotLabel}
                                 </span>
                               </div>
-                              {isColumnLiveWorking && (
-                                <span
-                                  className="text-[10px] font-mono font-semibold flex items-center gap-1"
-                                  style={{ color: liveSlotColor }}
-                                >
-                                  <span
-                                    className="size-1.5 rounded-full animate-ping shrink-0"
-                                    style={{ backgroundColor: liveSlotColor }}
-                                  />
-                                  Live Working
-                                </span>
-                              )}
                             </div>
 
                             {activeInProgTask ? (

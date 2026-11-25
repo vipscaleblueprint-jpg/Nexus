@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { format } from 'date-fns';
 import { X, Loader2 } from 'lucide-react';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import {
   CrmFollowUpResponseAction,
   CrmWaitingMeta,
@@ -340,7 +341,7 @@ export const CrmTaskFollowUpModal: React.FC<CrmTaskFollowUpModalProps> = ({
                 disabled={isSubmitting || !note.trim()}
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#22A3AE] hover:bg-[#1d8e98] text-white text-xs font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {isSubmitting && <NexusLogoLoader size={15} inline />}
                 <span>{isSubmitting ? 'Submitting…' : 'Submit Response'}</span>
               </button>
             </div>

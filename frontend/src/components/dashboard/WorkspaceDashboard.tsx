@@ -51,7 +51,7 @@ import {
 import { useAppStore } from "@/lib/store";
 import { tasksApi } from "@/api";
 import type { MyAuditItem } from "@/api/tasks";
-import { HIDE_DESIGN_AUDIT, normalizeAuditName } from "@/lib/auditChecklist";
+import { HIDE_DESIGN_AUDIT, HIDE_INSTRUCTIONS_AUDIT, normalizeAuditName } from "@/lib/auditChecklist";
 import { clickUpApi } from "@/api/clickup";
 import { io, Socket } from "socket.io-client";
 import { API_BASE_URL } from "@/api/client";
@@ -777,7 +777,11 @@ function WorkspaceDashboardContent({
     tasksApi
       .getMyAudits()
       .then((res) => setMyAudits(
-        (res.audits || []).filter((a) => !(a as any).completed && !(HIDE_DESIGN_AUDIT && !a.aiPicked && normalizeAuditName(a.text) === "design audit")),
+        (res.audits || []).filter((a) =>
+          !(a as any).completed &&
+          !(HIDE_DESIGN_AUDIT && !a.aiPicked && normalizeAuditName(a.text) === "design audit") &&
+          !(HIDE_INSTRUCTIONS_AUDIT && normalizeAuditName(a.text) === "instructions audit")
+        ),
       ))
       .catch((err) => console.error("Failed to load my audits:", err));
   }, [currentTab]);

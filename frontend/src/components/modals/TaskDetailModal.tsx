@@ -21,7 +21,7 @@ import { EstimatedHoursField } from './EstimatedHoursField';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
-import { taskMapApi, getTaskCrmWaitingInfo, CrmWaitingMeta } from '@/api/taskMap';
+import { taskMapApi, getTaskCrmWaitingInfo, CrmWaitingMeta, normalizeTaskMapSubStatuses } from '@/api/taskMap';
 
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
@@ -280,7 +280,7 @@ const getHexColor = (color: string) => {
 const isActivityVisible = (act: any): boolean => {
   if (!act) return false;
   const t = act.type;
-  if (t === 'status_change') return true;
+  if (t === 'status_change' || t === 'task_map_status_change') return true;
   if (t === 'assignment' || t === 'unassignment' || t === 'add_follower' || t === 'remove_follower' || t === 'followers_change') return true;
   if (t === 'title_change') return true;
   if (t === 'priority_change') return true;
@@ -916,6 +916,14 @@ export function TaskDetailModalContent({
           if (incoming.assigneeRoleRestrictions !== undefined) {
             setLocalRoleRestrictions(incoming.assigneeRoleRestrictions);
             latestRoleRestrictionsRef.current = incoming.assigneeRoleRestrictions;
+          }
+        }
+        if (Date.now() - lastPriorityUpdateTimestampRef.current > 5000) {
+          if (incoming.priority !== undefined) {
+            setLocalPriority(incoming.priority as Priority);
+            if (taskRef.current) {
+              taskRef.current.priority = incoming.priority;
+            }
           }
         }
       }
@@ -1566,6 +1574,15 @@ export function TaskDetailModalContent({
       latestRoleRestrictionsRef.current = fromProps;
     }
   }, [task?.assigneeRoleRestrictions]);
+
+  const [localPriority, setLocalPriority] = useState<Priority | null>(() => (task?.priority as Priority) || null);
+  const lastPriorityUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastPriorityUpdateTimestampRef.current > 5000) {
+      setLocalPriority((task?.priority as Priority) || null);
+    }
+  }, [task?.id, task?.priority]);
 
   const hasTeamRole = Boolean(localRoleRestrictions && localRoleRestrictions.length > 0);
   const canAssignMember = canAssignTask && hasTeamRole;
@@ -2296,7 +2313,7 @@ export function TaskDetailModalContent({
         const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
         const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+          const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
           if (c.id === payload.checklistId || isAudit) {
             const hasItem = (c.items || []).some((i: any) =>
               i.id === payload.item.id ||
@@ -2327,7 +2344,7 @@ export function TaskDetailModalContent({
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
-              const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
+              const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
               if (c.id === payload.checklistId || isAudit) {
                 const hasItem = (c.items || []).some((i: any) =>
                   i.id === payload.item.id ||
@@ -2819,7 +2836,24 @@ export function TaskDetailModalContent({
               : st
           )
         : currentTask.subtasks;
-    const updatedTask = { ...currentTask, status: newStatus, ...(cascadedSubtasks ? { subtasks: cascadedSubtasks } : {}) };
+    const nextSubStatuses = normalizeTaskMapSubStatuses(
+      newStatus,
+      (currentTask as any).taskMap?.statuses,
+      {
+        isAssigned: Boolean(
+          currentTask.assigneeId || (currentTask.assignees && currentTask.assignees.length > 0)
+        ),
+      }
+    );
+    const updatedTask = {
+      ...currentTask,
+      status: newStatus,
+      ...(cascadedSubtasks ? { subtasks: cascadedSubtasks } : {}),
+      taskMap: {
+        ...((currentTask as any).taskMap || {}),
+        statuses: nextSubStatuses,
+      },
+    };
     useAppStore.getState().updateTask(updatedTask);
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
 
@@ -2896,7 +2930,7 @@ export function TaskDetailModalContent({
   const lastAssigneeUpdateTimestampRef = useRef<number>(0);
 
   useEffect(() => {
-    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 5000) {
       const fromProps = (task?.assignees && task.assignees.length > 0)
         ? task.assignees
         : (task?.assignee ? [task.assignee] : []);
@@ -3175,14 +3209,20 @@ export function TaskDetailModalContent({
 
   const handlePriorityChange = async (p: Priority) => {
     if (!task) return;
-    const oldPriority = task.priority;
+    const oldPriority = (localPriority ?? task.priority ?? null) as Priority;
+    setLocalPriority(p || null);
+    lastPriorityUpdateTimestampRef.current = Date.now();
+    if (taskRef.current) {
+      taskRef.current.priority = p;
+    }
+    const updatedTask = { ...task, priority: p };
     if (onUpdateTask) {
-      onUpdateTask({ ...task, priority: p });
+      onUpdateTask(updatedTask);
     } else {
       task.priority = p;
     }
-    useAppStore.getState().updateTask({ ...task, priority: p });
-    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: { ...task, priority: p } } }));
+    useAppStore.getState().updateTask(updatedTask);
+    window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
     setIsPriorityOpen(false);
 
     // Optimistically append activity immediately
@@ -3211,6 +3251,13 @@ export function TaskDetailModalContent({
       toast.success(`Priority set to ${getPriorityConfig(p).label}`);
     } catch (err: any) {
       // Rollback on error
+      setLocalPriority(oldPriority || null);
+      if (taskRef.current) {
+        taskRef.current.priority = oldPriority;
+      }
+      const revertedTask = { ...task, priority: oldPriority };
+      if (onUpdateTask) onUpdateTask(revertedTask);
+      useAppStore.getState().updateTask(revertedTask);
       setActivities(prev => prev.filter(a => a.id !== optimisticId));
       toast.error(err.message || 'Failed to update priority');
     }
@@ -4297,12 +4344,12 @@ export function TaskDetailModalContent({
                     <Popover.Trigger asChild>
                       <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
                         {(() => {
-                          const config = getPriorityConfig(task.priority);
+                          const config = getPriorityConfig(localPriority);
                           return (
                             <>
-                              {task.priority && <Flag className={`w-3.5 h-3.5 shrink-0 ${config.iconColor}`} />}
+                              {localPriority && <Flag className={`w-3.5 h-3.5 shrink-0 ${config.iconColor}`} />}
                               <span className={`font-medium ${config.color}`}>
-                                {task.priority ? config.label : 'Empty'}
+                                {localPriority ? config.label : 'Empty'}
                               </span>
                             </>
                           );
@@ -4317,14 +4364,14 @@ export function TaskDetailModalContent({
                             <button
                               key={p}
                               onClick={() => { handlePriorityChange(p); setIsPriorityOpen(false); }}
-                              className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${task.priority === p ? 'bg-zinc-800/50' : ''}`}
+                              className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${localPriority === p ? 'bg-zinc-800/50' : ''}`}
                             >
                               <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
                               <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
-                              {task.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
+                              {localPriority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                             </button>
                           ))}
-                          {task.priority && (
+                          {localPriority && (
                             <div className="border-t border-zinc-800/60 mt-1 pt-1">
                               <button
                                 className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
@@ -5195,7 +5242,8 @@ export function TaskDetailModalContent({
                               if (item.isActivityType) {
                               const act = item;
                               const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                              if (act.type === 'status_change') {
+                              if (act.type === 'status_change' || act.type === 'task_map_status_change') {
+                                const isSubStatusChange = act.type === 'task_map_status_change';
                                 return (
                                   <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start">
                                     <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
@@ -5203,7 +5251,8 @@ export function TaskDetailModalContent({
                                       <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                       {act.subtaskTitle ? (
                                         <>
-                                          changed status of subtask <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span>
+                                          {isSubStatusChange ? 'changed sub-status of subtask' : 'changed status of subtask'}{' '}
+                                          <span className="font-medium text-zinc-300 px-1">{act.subtaskTitle}</span>
                                           {act.oldStatus && (
                                             <>from <span
                                               className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
@@ -5215,7 +5264,7 @@ export function TaskDetailModalContent({
                                         </>
                                       ) : (
                                         <>
-                                          changed status
+                                          {isSubStatusChange ? 'changed sub-status' : 'changed status'}
                                           {act.oldStatus && (
                                             <> from <span
                                               className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(internalListStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
@@ -6127,6 +6176,15 @@ export function SubtaskDetailView({
     }
   }, [subtask?.assigneeRoleRestrictions]);
 
+  const [localPriority, setLocalPriority] = useState<Priority | null>(() => (subtask?.priority as Priority) || null);
+  const lastPriorityUpdateTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (Date.now() - lastPriorityUpdateTimestampRef.current > 5000) {
+      setLocalPriority((subtask?.priority as Priority) || null);
+    }
+  }, [subtask?.id, subtask?.priority]);
+
   const subtaskAssignableUsers = React.useMemo(() => {
     return resolveAssignableUsersFromRoleRestrictions(localRoleRestrictions, workspaceUsers, workspaceTeams || []).users;
   }, [localRoleRestrictions, workspaceUsers, workspaceTeams]);
@@ -6892,11 +6950,24 @@ export function SubtaskDetailView({
       });
     }
 
+    const nextSubtaskSubStatuses = normalizeTaskMapSubStatuses(
+      newStatus,
+      (currentSubtask as any).taskMap?.statuses,
+      {
+        isAssigned: Boolean(
+          currentSubtask.assigneeId || (currentSubtask.assignees && currentSubtask.assignees.length > 0)
+        ),
+      }
+    );
     const updatedSubtask = {
       ...currentSubtask,
       status: newStatus,
       completed: isCompleted,
-      checklists: updatedChecklists
+      checklists: updatedChecklists,
+      taskMap: {
+        ...((currentSubtask as any).taskMap || {}),
+        statuses: nextSubtaskSubStatuses,
+      },
     };
 
     // 2. Instantly append optimistic activity to local subtask feed
@@ -7420,7 +7491,7 @@ export function SubtaskDetailView({
   const lastAssigneeUpdateTimestampRef = useRef<number>(0);
 
   useEffect(() => {
-    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 1500) {
+    if (Date.now() - lastAssigneeUpdateTimestampRef.current > 5000) {
       const fromProps = subtask.assignees || (subtask.User ? [subtask.User] : (subtask.assignee ? [subtask.assignee] : []));
       setLocalAssignees(fromProps);
       latestAssigneesRef.current = fromProps;
@@ -7448,6 +7519,11 @@ export function SubtaskDetailView({
           if (targetSubtask.assigneeRoleRestrictions !== undefined) {
             setLocalRoleRestrictions(targetSubtask.assigneeRoleRestrictions);
             latestRoleRestrictionsRef.current = targetSubtask.assigneeRoleRestrictions;
+          }
+        }
+        if (Date.now() - lastPriorityUpdateTimestampRef.current > 5000) {
+          if (targetSubtask.priority !== undefined) {
+            setLocalPriority((targetSubtask.priority as Priority) || null);
           }
         }
         if (Date.now() - lastStatusUpdateTimestampRef.current > 1500 && targetSubtask.status !== undefined) {
@@ -7682,7 +7758,9 @@ export function SubtaskDetailView({
   };
 
   const handleUpdatePriority = (newPriority: string | null) => {
-    const oldPriority = subtaskRef.current?.priority;
+    const oldPriority = (localPriority ?? subtaskRef.current?.priority ?? null) as Priority | null;
+    setLocalPriority((newPriority as Priority) || null);
+    lastPriorityUpdateTimestampRef.current = Date.now();
     const updatedSubtask = { ...subtaskRef.current, priority: newPriority };
     syncSubtaskToParent(updatedSubtask);
     setIsPriorityOpen(false);
@@ -7705,6 +7783,8 @@ export function SubtaskDetailView({
     tasksApi.updateSubtask(parentTask.id, subtask.id, { priority: newPriority } as any)
       .catch((err: any) => {
         console.error("Failed to update subtask priority", err);
+        setLocalPriority(oldPriority);
+        syncSubtaskToParent({ ...subtaskRef.current, priority: oldPriority });
         setActivities(prev => prev.filter(a => a.id !== optimisticPriorityId));
       });
   };
@@ -9055,16 +9135,16 @@ export function SubtaskDetailView({
                 <Popover.Root open={isPriorityOpen && canEditTask} onOpenChange={setIsPriorityOpen}>
                   <Popover.Trigger asChild>
                     <div
-                      title={subtask.completed ? 'Locked' : (subtask.priority ? subtask.priority.toLowerCase() : 'No priority')}
+                      title={subtask.completed ? 'Locked' : (localPriority ? localPriority.toLowerCase() : 'No priority')}
                       className={`inline-flex items-center h-7 px-2.5 rounded-md text-[11px] font-semibold tracking-wide select-none w-fit transition-all ${
                         subtask.completed
                           ? 'bg-zinc-800/40 cursor-not-allowed opacity-60'
                           : 'cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50'
                       }`}
                     >
-                      {subtask.priority && <Flag className={`w-3.5 h-3.5 shrink-0 mr-1.5 ${getPriorityConfig(subtask.priority).iconColor}`} />}
-                      <span className={getPriorityConfig(subtask.priority).color}>
-                        {subtask.priority ? getPriorityConfig(subtask.priority).label : 'Empty'}
+                      {localPriority && <Flag className={`w-3.5 h-3.5 shrink-0 mr-1.5 ${getPriorityConfig(localPriority).iconColor}`} />}
+                      <span className={getPriorityConfig(localPriority).color}>
+                        {localPriority ? getPriorityConfig(localPriority).label : 'Empty'}
                       </span>
                     </div>
                   </Popover.Trigger>
@@ -9076,14 +9156,14 @@ export function SubtaskDetailView({
                           <button
                             key={p}
                             onClick={() => { handleUpdatePriority(p); setIsPriorityOpen(false); }}
-                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${subtask.priority === p ? 'bg-zinc-800/50' : ''}`}
+                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm transition-colors cursor-pointer ${localPriority === p ? 'bg-zinc-800/50' : ''}`}
                           >
                             <Flag className={`w-3.5 h-3.5 shrink-0 ${getPriorityConfig(p).iconColor}`} />
                             <span className={`font-medium ${getPriorityConfig(p).color}`}>{getPriorityConfig(p).label}</span>
-                            {subtask.priority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
+                            {localPriority === p && <Check className="w-4 h-4 ml-auto text-blue-500" />}
                           </button>
                         ))}
-                        {subtask.priority && (
+                        {localPriority && (
                           <div className="border-t border-zinc-800/60 mt-1 pt-1">
                             <button
                               className="w-full flex items-center gap-2.5 px-2.5 py-2 hover:bg-zinc-800 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
@@ -9785,13 +9865,14 @@ export function SubtaskDetailView({
                             if (item.isActivityType) {
                             const act = item;
                             const timeStr = new Date(act.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                            if (act.type === 'status_change') {
+                            if (act.type === 'status_change' || act.type === 'task_map_status_change') {
+                              const isSubStatusChange = act.type === 'task_map_status_change';
                               return (
                                 <div key={act.id} className="flex gap-4 text-sm text-zinc-400 items-start mb-2">
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                   <div className="flex-1 leading-relaxed">
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
-                                    changed status
+                                    {isSubStatusChange ? 'changed sub-status' : 'changed status'}
                                     {act.oldStatus && (
                                       <> from <span
                                           className={`font-medium px-1.5 py-0.5 rounded text-[11px] mx-1 inline-block whitespace-nowrap ${!(listStatuses?.find((s: any) => (s.name || s.title || s.status) === act.oldStatus))?.color ? (STATUS_COLORS[(act.oldStatus || '').toUpperCase()] || 'bg-zinc-800 text-zinc-300') : 'on-solid text-white shadow-sm'}`}
@@ -10480,6 +10561,7 @@ export function TaskDetailModal(props: Props) {
   // Fields the user changed while the background fetch below was in flight; its (older) copy must not
   // overwrite them, or the edit appears to revert.
   const locallyEditedKeysRef = useRef<Set<string>>(new Set());
+  const locallyEditedAtRef = useRef<Map<string, number>>(new Map());
   const hasPushedHistoryRef = useRef(false);
   const syncedHistoryTaskIdRef = useRef<string | null>(null);
   const isHandlingPopStateRef = useRef(false);
@@ -10611,10 +10693,16 @@ export function TaskDetailModal(props: Props) {
     if (props.isOpen && incomingTask && fullTask && incomingTask.id === fullTask.id) {
       setFullTask(prev => {
         if (!prev) return incomingTask;
-        const merged = { ...prev, ...incomingTask };
+        const merged: any = { ...prev, ...incomingTask };
         if (!incomingTask.subtasks && prev.subtasks) merged.subtasks = prev.subtasks;
         if (!incomingTask.checklists && prev.checklists) merged.checklists = prev.checklists;
         if (!incomingTask.comments && prev.comments) merged.comments = prev.comments;
+        const now = Date.now();
+        for (const [key, ts] of locallyEditedAtRef.current.entries()) {
+          if (now - ts < 5000 && (prev as any)[key] !== undefined) {
+            merged[key] = (prev as any)[key];
+          }
+        }
         return merged;
       });
     }
@@ -10625,11 +10713,21 @@ export function TaskDetailModal(props: Props) {
       const incoming = e.detail?.task;
       const targetId = fullTask?.id || props.task?.id;
       if (!incoming || !targetId || incoming.id !== targetId) return;
-      for (const key of Object.keys(incoming)) {
-        locallyEditedKeysRef.current.add(key);
-      }
+      const now = Date.now();
       setFullTask(prev => {
-        if (!prev) return incoming;
+        if (!prev) {
+          for (const key of Object.keys(incoming)) {
+            locallyEditedKeysRef.current.add(key);
+            locallyEditedAtRef.current.set(key, now);
+          }
+          return incoming;
+        }
+        for (const key of Object.keys(incoming)) {
+          if ((incoming as any)[key] !== (prev as any)[key]) {
+            locallyEditedKeysRef.current.add(key);
+            locallyEditedAtRef.current.set(key, now);
+          }
+        }
         return { ...prev, ...incoming };
       });
     };
@@ -10651,7 +10749,17 @@ export function TaskDetailModal(props: Props) {
             );
             if (matchInList) status = matchInList.name || matchInList.title || matchInList.status;
           }
-          return { ...prev, ...incoming, ...(status ? { status } : {}) };
+          const merged: any = { ...prev, ...incoming, ...(status ? { status } : {}) };
+          if (!incoming.subtasks && prev.subtasks) merged.subtasks = prev.subtasks;
+          if (!incoming.checklists && prev.checklists) merged.checklists = prev.checklists;
+          if (!incoming.comments && prev.comments) merged.comments = prev.comments;
+          const now = Date.now();
+          for (const [key, ts] of locallyEditedAtRef.current.entries()) {
+            if (now - ts < 5000 && (prev as any)[key] !== undefined) {
+              merged[key] = (prev as any)[key];
+            }
+          }
+          return merged;
         });
       }
     };
@@ -10834,14 +10942,31 @@ export function TaskDetailModal(props: Props) {
 
 
   const handleUpdateTask = (updatedTask: Task) => {
+    const now = Date.now();
     if (fullTask) {
       for (const key of Object.keys(updatedTask)) {
-        if ((updatedTask as any)[key] !== (fullTask as any)[key]) locallyEditedKeysRef.current.add(key);
+        if ((updatedTask as any)[key] !== (fullTask as any)[key]) {
+          locallyEditedKeysRef.current.add(key);
+          locallyEditedAtRef.current.set(key, now);
+        }
       }
     }
-    if (updatedTask.assigneeRoleRestrictions) locallyEditedKeysRef.current.add('assigneeRoleRestrictions');
-    if (updatedTask.assignees) locallyEditedKeysRef.current.add('assignees');
-    if (updatedTask.assigneeIds) locallyEditedKeysRef.current.add('assigneeIds');
+    if (updatedTask.assigneeRoleRestrictions) {
+      locallyEditedKeysRef.current.add('assigneeRoleRestrictions');
+      locallyEditedAtRef.current.set('assigneeRoleRestrictions', now);
+    }
+    if (updatedTask.assignees) {
+      locallyEditedKeysRef.current.add('assignees');
+      locallyEditedAtRef.current.set('assignees', now);
+    }
+    if (updatedTask.assigneeIds) {
+      locallyEditedKeysRef.current.add('assigneeIds');
+      locallyEditedAtRef.current.set('assigneeIds', now);
+    }
+    if (updatedTask.priority !== undefined) {
+      locallyEditedKeysRef.current.add('priority');
+      locallyEditedAtRef.current.set('priority', now);
+    }
     setFullTask(updatedTask);
     if (props.onUpdateTask) {
       setTimeout(() => props.onUpdateTask?.(updatedTask), 0);

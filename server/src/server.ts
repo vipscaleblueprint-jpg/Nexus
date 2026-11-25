@@ -31,6 +31,8 @@ import { emojiRouter } from './routes/emoji.routes';
 import draftRoutes from './routes/draft.routes';
 import { auditShiftRouter } from './routes/auditShift.routes';
 import { taskMapRouter } from './routes/taskMap.routes';
+import { prisma } from './config/prisma';
+import { invalidateCache } from './services/redisService';
 
 // Import workers to initialize them
 import './workers/task.worker';
@@ -548,6 +550,44 @@ if (!process.env.STANDALONE_SCRIPT) {
   server.listen(PORT, () => {
     logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, 'Nexus Server API listening');
   });
+
+  // Lightweight DB watcher for DailySheetLog changes (catches direct DB writes from external tools/scripts within ~2s)
+  let lastDailySheetFingerprint: string | null = null;
+  let isCheckingDailySheetDb = false;
+  setInterval(async () => {
+    if (isCheckingDailySheetDb || io.engine.clientsCount === 0) return;
+    isCheckingDailySheetDb = true;
+    try {
+      const dateKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+
+      const agg = await prisma.dailySheetLog.aggregate({
+        where: { dateKey },
+        _count: { id: true },
+        _max: { updatedAt: true },
+      });
+
+      const maxUpdatedMs = agg._max.updatedAt ? agg._max.updatedAt.getTime() : 0;
+      const fingerprint = `${dateKey}:${agg._count.id}:${maxUpdatedMs}`;
+
+      if (lastDailySheetFingerprint === null) {
+        lastDailySheetFingerprint = fingerprint;
+      } else if (fingerprint !== lastDailySheetFingerprint) {
+        lastDailySheetFingerprint = fingerprint;
+        await invalidateCache('task_map:*').catch(() => {});
+        io.emit('daily_sheet_log:updated', { date: dateKey, fromDbWatcher: true });
+        io.emit('task_map:updated', { fromDbWatcher: true });
+      }
+    } catch (err) {
+      logger.debug({ err }, 'DailySheetLog DB watcher check skipped');
+    } finally {
+      isCheckingDailySheetDb = false;
+    }
+  }, 2000);
 }
 
 process.on('unhandledRejection', (reason) => {

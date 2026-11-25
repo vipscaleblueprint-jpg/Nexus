@@ -14,11 +14,13 @@ import {
   isTaskHandedOver,
   isSessionProjectBased,
   getDefaultTaskMapSubStatuses,
+  normalizeTaskMapSubStatuses,
   isTaskMapItemOnHold,
   toCanonicalTaskStatus,
   applyOptimisticTaskMapAssignment,
   syncTaskPmReviewsWithAssignee,
   markTaskSavingToDb,
+  isTaskSavingToDb,
   collectClientDashboardLists,
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
@@ -59,6 +61,7 @@ const UncheckedAuditsModal = dynamic(
   { ssr: false }
 );
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { hasCrmAccess, canTransitionTaskStatus } from '@/lib/permissions';
@@ -81,6 +84,10 @@ const getTodayDateStr = () => {
 export const TaskMapContainer: React.FC = () => {
   const [tasks, setTasks] = useState<TaskMapItem[]>([]);
   const [availablePool, setAvailablePool] = useState<TaskMapItem[]>([]);
+  const availablePoolRef = useRef<TaskMapItem[]>([]);
+  useEffect(() => {
+    availablePoolRef.current = availablePool;
+  }, [availablePool]);
   const [options, setOptions] = useState<TaskMapOption[]>([]);
   const [shifts, setShifts] = useState<TaskMapShift[]>([]);
   const [activeShift, setActiveShift] = useState<string>('');
@@ -165,7 +172,9 @@ export const TaskMapContainer: React.FC = () => {
     }
     return getTodayDateStr();
   });
-  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER'>('BOARD');
+  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS'>('BOARD');
+  const [dailySheetLogs, setDailySheetLogs] = useState<any[]>([]);
+  const [superviseChecks, setSuperviseChecks] = useState<any[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -399,24 +408,20 @@ export const TaskMapContainer: React.FC = () => {
         // Sanitize sub-statuses: strip CRM tag (CRM is main board routing status, not a substatus label)
         // and apply innate default sub-statuses (only unassigned active tasks default to 'Available Task').
         const sanitizeStatuses = (statuses?: string[], taskStatus?: string, isAssigned = false): string[] => {
-          if (!statuses || statuses.length === 0) {
-            return getDefaultTaskMapSubStatuses(taskStatus, { isAssigned });
-          }
-          const clean = statuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
-          if (clean.length > 0) return clean.slice(0, 1);
-          return getDefaultTaskMapSubStatuses(taskStatus, { isAssigned });
+          return normalizeTaskMapSubStatuses(taskStatus, statuses, { isAssigned });
         };
 
         // Merge with local pending optimistic updates so background refreshes never flicker or uncheck
         setTasks(() => {
           const serverTasks = res.tasks || [];
-          return serverTasks.map((st) => {
+          const nowTs = Date.now();
+          const mapped = serverTasks.map((st) => {
             const pendingAssign = pendingAssignRef.current.get(st.id);
-            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
+            if (pendingAssign && nowTs - pendingAssign.timestamp < 3500) {
               return pendingAssign.task;
             }
             const pending = pendingUpdatesRef.current.get(st.id);
-            const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
+            const rawStatuses = pending && nowTs - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
             const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
             return applyLiveWorkingTaskStatus({
               ...st,
@@ -426,6 +431,17 @@ export const TaskMapContainer: React.FC = () => {
               },
             });
           });
+          // Preserve tasks optimistically dragged out of Available Pool that aren't in serverTasks yet
+          pendingAssignRef.current.forEach((pendingAssign, pId) => {
+            if (
+              nowTs - pendingAssign.timestamp < 3500 &&
+              pendingAssign.targetUserId !== null &&
+              !mapped.some((t) => t.id === pId)
+            ) {
+              mapped.unshift(pendingAssign.task);
+            }
+          });
+          return mapped;
         });
 
         setAvailablePool(() => {
@@ -504,6 +520,35 @@ export const TaskMapContainer: React.FC = () => {
             }
           }
         });
+        // Ensure any open live row in dailySheetLogs is also reflected in enrichedSessions
+        if (Array.isArray(res.dailySheetLogs)) {
+          res.dailySheetLogs.forEach((l: any) => {
+            if (!l?.maName || !l.isLive || !l.timeIn || l.timeOut || l.isMissingTime) return;
+            const key = l.maName.toLowerCase().trim();
+            const existing = enrichedSessions[key];
+            const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+            const incomingUpdatedMs = l.submittedAt ? new Date(l.submittedAt).getTime() : 0;
+            const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+            if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+              enrichedSessions[key] = {
+                maName: l.maName,
+                taskId: l.taskId || null,
+                subtaskId: l.subtaskId || null,
+                timeIn: l.timeIn,
+                timeOut: null,
+                client: l.client || 'No client inputted',
+                taskName: l.taskName || l.taskDeliverables || 'No task inputted',
+                date: l.dateKey || currentDate,
+                status: l.status || 'IN PROGRESS',
+                isUpwork: Boolean(l.isUpwork),
+                rowNumber: l.sheetRow || null,
+                updatedAt: l.submittedAt || new Date().toISOString(),
+                active: true,
+              };
+            }
+          });
+        }
+
         // Preserve any newer socket-delivered MA sessions that arrived while GET /api/task-map was in flight
         const currentStoreSessions = useAppStore.getState().maActiveSessions || {};
         Object.entries(currentStoreSessions).forEach(([key, curSess]: [string, any]) => {
@@ -523,6 +568,12 @@ export const TaskMapContainer: React.FC = () => {
           }
         });
         useAppStore.getState().setMaActiveSessions(enrichedSessions);
+        if (Array.isArray(res.dailySheetLogs)) {
+          setDailySheetLogs(res.dailySheetLogs);
+        }
+        if (Array.isArray((res as any).superviseChecks)) {
+          setSuperviseChecks((res as any).superviseChecks);
+        }
         if (res.allClients) {
           setAllDbClients(res.allClients);
         }
@@ -649,7 +700,7 @@ export const TaskMapContainer: React.FC = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
       reloadTimer = setTimeout(() => {
         loadData(true);
-      }, 400);
+      }, 150);
     };
 
     const handleTaskUpdated = (e: any) => {
@@ -660,21 +711,37 @@ export const TaskMapContainer: React.FC = () => {
         scheduleReload();
         return;
       }
-      if (pendingUpdatesRef.current.has(taskId)) {
+      if (pendingUpdatesRef.current.has(taskId) || isTaskSavingToDb(taskId)) {
+        return;
+      }
+      const pendingAssign = pendingAssignRef.current.get(taskId);
+      if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
         return;
       }
       const isClosed = task.isClosed || isClosedStatus(task.status);
       // Patch the task in memory to avoid triggering a full network reload
       setTasks((prev) =>
-        prev.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                ...task,
-                ...(isClosed ? { isClosed: true, assigneeId: null, assignee: null, assignees: [] } : {}),
-              }
-            : t
-        )
+        prev.map((t) => {
+          if (t.id !== taskId) return t;
+          const nextStatus = task.status ?? t.status;
+          const nextAssigneeId = task.assigneeId !== undefined ? task.assigneeId : t.assigneeId;
+          const nextAssignees = task.assignees !== undefined ? task.assignees : t.assignees;
+          const nextStatuses = normalizeTaskMapSubStatuses(
+            nextStatus,
+            task.taskMap?.statuses ?? t.taskMap?.statuses,
+            { isAssigned: Boolean(nextAssigneeId || (nextAssignees && nextAssignees.length > 0)) }
+          );
+          return {
+            ...t,
+            ...task,
+            taskMap: {
+              ...t.taskMap,
+              ...(task.taskMap || {}),
+              statuses: nextStatuses,
+            },
+            ...(isClosed ? { isClosed: true, assigneeId: null, assignee: null, assignees: [] } : {}),
+          };
+        })
       );
       setAvailablePool((prev) => {
         if (isClosed) {
@@ -692,7 +759,6 @@ export const TaskMapContainer: React.FC = () => {
             data.maSession.maName,
             data.maSession?.cleared ? null : data.maSession
           );
-          return;
         }
         scheduleReload();
         return;
@@ -710,9 +776,14 @@ export const TaskMapContainer: React.FC = () => {
         activeUpworkSessions: incomingActiveSessions,
       } = data;
 
-      // If this client is actively debouncing a local status change for this task, ignore older broadcast
+      // If this client is actively debouncing a local status change or saving a drag/assign for this task, ignore older broadcast
       const pending = pendingUpdatesRef.current.get(taskId);
-      if (pending?.timer) {
+      const pendingAssign = pendingAssignRef.current.get(taskId);
+      if (
+        pending?.timer ||
+        isTaskSavingToDb(taskId) ||
+        (pendingAssign && Date.now() - pendingAssign.timestamp < 3500)
+      ) {
         return;
       }
 
@@ -765,7 +836,7 @@ export const TaskMapContainer: React.FC = () => {
       setTasks((prev) => {
         const mapped = prev.map(patchItem);
         if (assignedOutOfPool && !mapped.some((t) => t.id === taskId)) {
-          const fromPool = availablePool.find((t) => t.id === taskId);
+          const fromPool = availablePoolRef.current.find((t) => t.id === taskId);
           if (fromPool) {
             return [patchItem(fromPool), ...mapped];
           }
@@ -786,14 +857,62 @@ export const TaskMapContainer: React.FC = () => {
 
     const handleProgressUpdated = (e: any) => {
       const data = e?.detail || e;
-      if (!data?.taskId) return;
+      if (!data?.taskId) {
+        scheduleReload();
+        return;
+      }
       const { taskId, progress } = data;
-      const applyProg = (t: TaskMapItem) =>
-        t.id === taskId
-          ? applyLiveWorkingTaskStatus({ ...t, progress: progress !== undefined ? progress : t.progress })
-          : t;
+      let foundInLocalState = false;
+      const applyProg = (t: TaskMapItem) => {
+        if (t.id !== taskId) return t;
+        foundInLocalState = true;
+        return applyLiveWorkingTaskStatus({ ...t, progress: progress !== undefined ? progress : t.progress });
+      };
       setTasks((prev) => prev.map(applyProg));
       setAvailablePool((prev) => prev.map(applyProg));
+      if (!foundInLocalState) {
+        scheduleReload();
+      }
+    };
+
+    const handleDailySheetLogUpdated = (e: any) => {
+      const data = e?.detail || e;
+      const log = data?.log;
+      if (log?.maName) {
+        useAppStore.getState().updateMaActiveSession(log.maName, {
+          maName: log.maName,
+          client: log.client || null,
+          taskName: log.taskName || null,
+          taskId: log.taskId || null,
+          timeIn: log.timeIn || null,
+          timeOut: log.timeOut || null,
+          date: log.dateKey || currentDate,
+          status: log.status || (log.timeOut ? 'CLOSED' : 'IN PROGRESS'),
+          isUpwork: Boolean(log.isUpwork),
+          rowNumber: log.sheetRow || null,
+          updatedAt: log.submittedAt || log.updatedAt || new Date().toISOString(),
+          active: Boolean(log.timeIn && !log.timeOut && !log.isMissingTime),
+        });
+      }
+      if (log?.taskId) {
+        const nextProgress = {
+          maName: log.maName,
+          timeIn: log.timeIn || null,
+          timeOut: log.timeOut || null,
+          date: log.dateKey || currentDate,
+          client: log.client || null,
+          status: log.status || null,
+          sheetRow: log.sheetRow || undefined,
+          isMissingTime: Boolean(log.isMissingTime),
+          isUpwork: Boolean(log.isUpwork),
+          timeTracker: log.timeTracker || null,
+        };
+        const patchLog = (t: TaskMapItem) =>
+          t.id === log.taskId ? applyLiveWorkingTaskStatus({ ...t, progress: nextProgress }) : t;
+        setTasks((prev) => prev.map(patchLog));
+        setAvailablePool((prev) => prev.map(patchLog));
+      }
+      scheduleReload();
     };
 
     const handleUpworkChanged = (e: any) => {
@@ -827,7 +946,12 @@ export const TaskMapContainer: React.FC = () => {
     const handleMaSessionUpdated = (e: any) => {
       const data = e.detail || e;
       if (data?.maName) {
-        useAppStore.getState().updateMaActiveSession(data.maName, data?.cleared ? null : data);
+        useAppStore.getState().updateMaActiveSession(
+          data.maName,
+          data?.cleared
+            ? null
+            : { ...data, updatedAt: data.updatedAt || new Date().toISOString() }
+        );
       }
     };
 
@@ -872,10 +996,25 @@ export const TaskMapContainer: React.FC = () => {
     };
 
     window.addEventListener('task:updated', handleTaskUpdated);
+    const handleSuperviseUpdated = (e: any) => {
+      const data = e?.detail || e;
+      if (!data) return;
+      if (data.action === 'check' && data.check) {
+        setSuperviseChecks((prev) => {
+          const filtered = prev.filter((c) => c.sessionKey !== data.check.sessionKey);
+          return [data.check, ...filtered];
+        });
+      } else if (data.action === 'uncheck' && data.sessionKey) {
+        setSuperviseChecks((prev) => prev.filter((c) => c.sessionKey !== data.sessionKey));
+      }
+    };
+
     window.addEventListener('task_map:updated', handleTaskMapUpdated);
+    window.addEventListener('supervise:updated', handleSuperviseUpdated);
     window.addEventListener('task_map:shifts_updated', handleShiftsUpdated);
     window.addEventListener('audit_shifts:updated', handleShiftsUpdated);
     window.addEventListener('task:progress_updated', handleProgressUpdated);
+    window.addEventListener('daily_sheet_log:updated', handleDailySheetLogUpdated);
     window.addEventListener('upwork:status_changed', handleUpworkChanged);
     window.addEventListener('ma:session_updated', handleMaSessionUpdated);
     window.addEventListener('task_map:ma_progress_changed', handleMaSessionUpdated);
@@ -886,9 +1025,11 @@ export const TaskMapContainer: React.FC = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
       window.removeEventListener('task:updated', handleTaskUpdated);
       window.removeEventListener('task_map:updated', handleTaskMapUpdated);
+      window.removeEventListener('supervise:updated', handleSuperviseUpdated);
       window.removeEventListener('task_map:shifts_updated', handleShiftsUpdated);
       window.removeEventListener('audit_shifts:updated', handleShiftsUpdated);
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
+      window.removeEventListener('daily_sheet_log:updated', handleDailySheetLogUpdated);
       window.removeEventListener('upwork:status_changed', handleUpworkChanged);
       window.removeEventListener('ma:session_updated', handleMaSessionUpdated);
       window.removeEventListener('task_map:ma_progress_changed', handleMaSessionUpdated);
@@ -898,7 +1039,7 @@ export const TaskMapContainer: React.FC = () => {
   }, [loadData, currentDate, historyDates]);
 
   const handleViewChange = useCallback(
-    (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER') => {
+    (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS') => {
       setCurrentView(nextView);
       if (nextView === 'BOARD') {
         setSelectedTaskModal(null);
@@ -1286,6 +1427,21 @@ export const TaskMapContainer: React.FC = () => {
           : {}),
         taskMap: {
           ...syncedTaskMap,
+          ...(normalizedFields.status !== undefined && !isClosing
+            ? {
+                statuses: normalizeTaskMapSubStatuses(
+                  normalizedFields.status,
+                  syncedTaskMap?.statuses,
+                  {
+                    isAssigned: Boolean(
+                      normalizedFields.assigneeId !== undefined
+                        ? normalizedFields.assigneeId
+                        : t.assigneeId || (t.assignees && t.assignees.length > 0)
+                    ),
+                  }
+                ),
+              }
+            : {}),
           ...(isClosing
             ? { statuses: ['Closed'], handedOver: false }
             : nextHandedOverState !== undefined
@@ -1885,10 +2041,7 @@ export const TaskMapContainer: React.FC = () => {
               </button>
             </div>
           ) : (
-            <>
-              <Loader2 className="size-8 animate-spin text-[#0099ff] mb-3" />
-              <p className="text-sm font-medium">Loading Task Map Journal...</p>
-            </>
+            <NexusLogoLoader size={52} label="Loading Task Map Journal..." />
           )}
         </div>
       ) : isInitialBoardLoading ? (
@@ -1974,6 +2127,20 @@ export const TaskMapContainer: React.FC = () => {
               search={search}
               trackFilter={trackFilter}
               maSortMode={maSortMode}
+              superviseChecks={superviseChecks}
+              onSuperviseCheck={async (payload) => {
+                const res = await taskMapApi.checkSuperviseSession(payload);
+                if (res?.check) {
+                  setSuperviseChecks((prev) => [
+                    res.check,
+                    ...prev.filter((c) => c.sessionKey !== res.check.sessionKey),
+                  ]);
+                }
+              }}
+              onSuperviseUncheck={async (sessionKey) => {
+                setSuperviseChecks((prev) => prev.filter((c) => c.sessionKey !== sessionKey));
+                await taskMapApi.uncheckSuperviseSession(sessionKey);
+              }}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
@@ -2019,11 +2186,14 @@ export const TaskMapContainer: React.FC = () => {
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
               search={search}
             />
-          ) : currentView === 'DAILY_TRACKER' ? (
+          ) : currentView === 'DAILY_TRACKER' || currentView === 'SHEETS' ? (
             <TaskMapDailyTrackerView
               tasks={displayedTasks.filter((t) => !t.isSubtask)}
               allTasks={tasks}
               allUsers={allUsers}
+              currentUser={currentUser}
+              initialDate={currentDate}
+              initialLogs={dailySheetLogs}
               clients={clients}
               onOpenDetail={handleOpenTaskDetail}
               onRefresh={() => loadData(true)}

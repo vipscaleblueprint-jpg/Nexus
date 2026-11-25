@@ -33,6 +33,10 @@ import {
   getClientLockStatusHandler,
   syncSpreadsheetRowHandler,
   getUserDailyScheduleConfigHandler,
+  getDailySheetLogsHandler,
+  createDailySheetLogHandler,
+  createSuperviseCheckHandler,
+  deleteSuperviseCheckHandler,
 } from '../controllers/taskMap.controller';
 import {
   previewAutoQueueHandler,
@@ -90,3 +94,9 @@ taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);
 // Spreadsheet Schedule Row Sync & User Config
 taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
 taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);
+taskMapRouter.get('/sheets/logs', getDailySheetLogsHandler);
+taskMapRouter.post('/sheets/logs', createDailySheetLogHandler);
+
+// Supervise 40-min Check-in routes
+taskMapRouter.post('/supervise/check', createSuperviseCheckHandler);
+taskMapRouter.post('/supervise/uncheck', deleteSuperviseCheckHandler);

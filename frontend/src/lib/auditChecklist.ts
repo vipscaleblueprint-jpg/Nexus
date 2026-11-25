@@ -54,7 +54,9 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
 
 // Hides Design Audit on older tasks, whose audits still come from the title/role rules below.
 // Tasks with saved AI picks (see getAiPickedAudits) show the Design Audit the AI picked.
-export const HIDE_DESIGN_AUDIT = true;
+export const HIDE_DESIGN_AUDIT = false;
+// Hides Instructions Audit globally across UI and completion checks.
+export const HIDE_INSTRUCTIONS_AUDIT = true;
 
 // Which auditor role (User.roles) audits each item. Mirrors server/src/services/auditAutoAssign.ts.
 const AUDIT_ROLE_MATCHERS: Record<string, (role: string) => boolean> = {
@@ -126,6 +128,7 @@ export function resolveRequiredAudits(opts: {
     const n = normalizeAuditName(text);
     if (!text || text.startsWith('!') || excluded.has(n) || seen.has(n)) return false;
     if (hideDesign && n === 'design audit') return false;
+    if (HIDE_INSTRUCTIONS_AUDIT && n === 'instructions audit') return false;
     seen.add(n);
     return true;
   });
@@ -137,8 +140,10 @@ export const hidesDesignAudit = (aiPicked: string[] | null) => HIDE_DESIGN_AUDIT
 export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): string[] => {
   const audits = new Set<string>();
 
-  // Every task must pass an Instructions Audit globally
-  audits.add('Instructions Audit');
+  // Every task must pass an Instructions Audit globally (unless hidden)
+  if (!HIDE_INSTRUCTIONS_AUDIT) {
+    audits.add('Instructions Audit');
+  }
 
   // Title-based checks (requested by user)
   const title = (taskTitle || '').toLowerCase();
@@ -237,6 +242,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
       const norm = normalizeAuditName(text);
       if (!text || text.startsWith('!') || excludedAudits.has(norm)) return false;
       if (hideDesign && norm === 'design audit') return false;
+      if (HIDE_INSTRUCTIONS_AUDIT && norm === 'instructions audit') return false;
       return all.findIndex(t => normalizeAuditName(t) === norm) === i;
     }))
   );

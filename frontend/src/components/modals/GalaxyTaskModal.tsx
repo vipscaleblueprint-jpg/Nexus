@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import * as Popover from '@radix-ui/react-popover';
 import { Command } from 'cmdk';
 import {
@@ -964,7 +965,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
               >
                 {submitting ? (
                   <>
-                    <Loader2 className="size-4 animate-spin" />
+                    <NexusLogoLoader size={16} inline />
                     <span>{mode === 'subtask' ? 'Creating Subtask...' : 'Creating Task...'}</span>
                   </>
                 ) : (

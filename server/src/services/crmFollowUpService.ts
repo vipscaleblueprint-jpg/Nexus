@@ -23,11 +23,14 @@ function getIo() {
 }
 
 const HIDE_DESIGN_AUDIT = true;
+const HIDE_INSTRUCTIONS_AUDIT = true;
 
 function getRequiredAuditsForClose(taskTitle: string, auditorRoles?: string[]): string[] {
   const t = (taskTitle || '').toLowerCase();
   const audits = new Set<string>();
-  audits.add('Instructions Audit');
+  if (!HIDE_INSTRUCTIONS_AUDIT) {
+    audits.add('Instructions Audit');
+  }
 
   const isFunnel =
     t.includes('funnel') ||
@@ -980,7 +983,8 @@ export async function respondToCrmFollowUp(params: {
       (r) =>
         !r.startsWith('!') &&
         !excludedAudits.has(normalizeAuditName(r)) &&
-        (!HIDE_DESIGN_AUDIT || !!aiPicked || normalizeAuditName(r) !== 'design audit')
+        (!HIDE_DESIGN_AUDIT || !!aiPicked || normalizeAuditName(r) !== 'design audit') &&
+        (!HIDE_INSTRUCTIONS_AUDIT || normalizeAuditName(r) !== 'instructions audit')
     );
     const completedTexts = new Set(
       allItems

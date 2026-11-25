@@ -19,6 +19,7 @@ import { isModalHistoryBackPending } from '@/lib/taskNavigation';
 import { LaunchMapView, CalendarViewMode } from './LaunchMapView';
 
 import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 const TaskDetailModal = dynamic(
   () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
@@ -630,8 +631,7 @@ export const LaunchMapContainer: React.FC = () => {
         />
         {showOverlayLoader && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-background/60 backdrop-blur-[1px] pointer-events-none">
-            <Loader2 className="size-7 animate-spin text-[var(--accent)] mb-2" />
-            <p className="text-xs font-medium text-muted-foreground">Loading Launch Map...</p>
+            <NexusLogoLoader size={48} label="Loading Launch Map..." />
           </div>
         )}
       </div>

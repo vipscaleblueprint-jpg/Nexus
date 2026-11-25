@@ -35,6 +35,7 @@ import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask, getManilaDateStr } from '../services/taskMapService';
+import { upsertDailySheetLog, clearDailySheetLogRow } from '../services/dailySheetLogService';
 import { verifyDailyOtp, setClientUnlockedToday, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
 
 interface LinkedTarget {
@@ -528,7 +529,7 @@ async function addAssignee(target: LinkedTarget, assignee: unknown, res: Respons
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:all');
+  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:*');
   await syncTaskMapOnDirectAssign(target.taskId, target.subtaskId, user.id);
   return res.status(200).json({ success: true, assignee: user.name, clickup_link: target.clickUpLink });
 }
@@ -564,7 +565,7 @@ async function removeAssignee(target: LinkedTarget, assignee: unknown, res: Resp
     io.to(`list:${target.listId}`).emit('task:updated', updated);
   }
 
-  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:all');
+  await invalidateCache(`task:${target.taskId}`, 'tasks:all', 'dashboard:all', 'task_map:*');
   io.emit('task_map:updated');
   return res.status(200).json({ success: true, assignee: user.name, clickup_link: target.clickUpLink });
 }
@@ -1004,7 +1005,7 @@ export const cleanUpMaActiveUpworkSessions = async (maName: string, excludedTask
           JSON.stringify(updatedRevs),
           rec.taskId
         ).catch(() => { });
-        await invalidateCache(`task:${rec.taskId}`, 'task_map:all');
+        await invalidateCache(`task:${rec.taskId}`, 'task_map:*');
         if (isRedisReady()) {
           await redis.hdel('task_map:upwork_active', rec.taskId).catch(() => { });
         }
@@ -1389,7 +1390,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           };
           // Hold user's last inputted session throughout the day until 12:00 AM rollover
           await setMaActiveSession(maKey, sessionData).catch(() => { });
-          await invalidateCache('task_map:all').catch(() => { });
+          await invalidateCache('task_map:*').catch(() => { });
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
           io.emit('task_map:updated', { maSession: sessionData });
@@ -1460,7 +1461,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
           if (currentActiveObj && matchesActiveRow) {
             await deleteMaActiveSession(maKey).catch(() => { });
-            await invalidateCache('task_map:all').catch(() => { });
+            await invalidateCache('task_map:*').catch(() => { });
             const clearedPayload = { maName: maNameStr, cleared: true };
             io.emit('ma:session_updated', clearedPayload);
             io.emit('task_map:ma_progress_changed', clearedPayload);
@@ -1503,7 +1504,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                     JSON.stringify(filteredRevs),
                     staleRec.taskId
                   );
-                  await invalidateCache(`task:${staleRec.taskId}`, 'task_map:all');
+                  await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
                   const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
                   io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
                   io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
@@ -1512,6 +1513,15 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             } catch (cleanErr) {
               console.warn('[Sheets] Failed to clean up deleted row progress for MA:', cleanErr);
             }
+          }
+
+          if (incomingRowNum > 0) {
+            await clearDailySheetLogRow({
+              date: date ? String(date).trim() : null,
+              maName: maNameStr,
+              sheetRow: incomingRowNum,
+            }).catch((err) => console.warn('[Sheets] Failed to clear DailySheetLog row:', err));
+            io.emit('daily_sheet_log:updated', { date: date ? String(date).trim() : getManilaDateStr(), maName: maNameStr, cleared: true });
           }
 
           return res.status(200).json({
@@ -1547,10 +1557,37 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
         const isOlderRowEdit = shouldSkipOlderRow(currentActiveRaw, incomingRowNum, sessionDate, sessionData.active);
 
+        // Always persist every sheet submission into DailySheetLog as historical data for that day
+        const savedUnmatchedLog = await upsertDailySheetLog({
+          date: sessionDate,
+          maName: maNameStr,
+          taskId: null,
+          subtaskId: null,
+          sheetRow: sheet_row ? Number(sheet_row) : null,
+          client: assumedClient,
+          taskName: assumedTask,
+          timeIn: cleanTimeIn,
+          timeOut: cleanTimeOut,
+          isMissingTime,
+          isUpwork,
+          timeTracker: trackerStr || (isUpwork ? 'Upwork' : 'No Need to Track'),
+          status: sessionStatus,
+          taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
+          taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
+          taskLink: task_link ? String(task_link).trim() : null,
+          source: 'GOOGLE_SHEET',
+        }).catch((err) => {
+          console.warn('[Sheets] Failed to upsert DailySheetLog (unmatched):', err);
+          return null;
+        });
+        if (savedUnmatchedLog) {
+          io.emit('daily_sheet_log:updated', { log: savedUnmatchedLog });
+        }
+
         if (!isOlderRowEdit) {
           // Hold user's last inputted session throughout the day until 12:00 AM rollover
           await setMaActiveSession(maKey, sessionData).catch(() => { });
-          await invalidateCache('task_map:all').catch(() => { });
+          await invalidateCache('task_map:*').catch(() => { });
           io.emit('ma:session_updated', sessionData);
           io.emit('task_map:ma_progress_changed', sessionData);
           io.emit('task_map:updated', {
@@ -1620,7 +1657,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 JSON.stringify(filteredRevs),
                 staleRec.taskId
               );
-              await invalidateCache(`task:${staleRec.taskId}`, 'task_map:all');
+              await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
               const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
               io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
               io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
@@ -1754,6 +1791,35 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
     reviewsList.push(progressObj);
 
+    // Persist this livework/sheet submission into DailySheetLog as historical data for that day
+    if (maNameStr) {
+      const savedLog = await upsertDailySheetLog({
+        date: date ? String(date).trim() : getManilaDateStr(),
+        maName: maNameStr,
+        taskId: target.taskId,
+        subtaskId: target.subtaskId || null,
+        sheetRow: sheet_row ? Number(sheet_row) : null,
+        client: clientStr || null,
+        taskName: task ? String(task).trim() : null,
+        timeIn: cleanTimeIn,
+        timeOut: cleanTimeOut,
+        isMissingTime,
+        isUpwork,
+        timeTracker: trackerStr || (isUpwork ? 'Upwork' : 'No Need to Track'),
+        status: statusStr || null,
+        taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
+        taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
+        taskLink: task_link ? String(task_link).trim() : null,
+        source: 'GOOGLE_SHEET',
+      }).catch((err) => {
+        console.warn('[Sheets] Failed to upsert DailySheetLog:', err);
+        return null;
+      });
+      if (savedLog) {
+        io.emit('daily_sheet_log:updated', { log: savedLog });
+      }
+    }
+
     // Clean up any other task that was previously linked to the same sheet_row for this MA (in case row was replaced)
     // and close any previous open sessions (timeIn without timeOut) for this MA so old tasks never linger as "Live Working"
     if (maNameStr) {
@@ -1824,7 +1890,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
               JSON.stringify(updatedReviews),
               otherRec.taskId
             );
-            await invalidateCache(`task:${otherRec.taskId}`, 'task_map:all');
+            await invalidateCache(`task:${otherRec.taskId}`, 'task_map:*');
             const newProgress = updatedReviews.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
             io.emit('task:progress_updated', {
               taskId: otherRec.taskId,
@@ -2204,7 +2270,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     });
 
     // Invalidate caches
-    await invalidateCache(`task:${target.taskId}`, 'task_map:all', 'tasks:all');
+    await invalidateCache(`task:${target.taskId}`, 'task_map:*', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
     if (maNameStr && !isClosedIncoming) {

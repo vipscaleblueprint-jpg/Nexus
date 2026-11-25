@@ -11,6 +11,7 @@ import dynamic from 'next/dynamic';
 import { EntityType } from '@/components/modals/CreateEntityModal';
 
 import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 const TaskDetailModal = dynamic(
   () => import('@/components/modals/TaskDetailModal').then((m) => m.TaskDetailModal),
@@ -68,7 +69,7 @@ export default function Home() {
         <Suspense
           fallback={
             <div className="flex-1 flex items-center justify-center h-full">
-              <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <NexusLogoLoader size={44} />
             </div>
           }
         >
@@ -86,7 +87,7 @@ export default function Home() {
         <Suspense
           fallback={
             <div className="flex-1 flex items-center justify-center min-h-[50vh]">
-              <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <NexusLogoLoader size={44} />
             </div>
           }
         >

@@ -22,8 +22,8 @@ interface Props {
   search: string;
   onSearchChange: (search: string) => void;
   activeUpworkSessions?: UpworkSession[];
-  currentView?: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER';
-  onViewChange?: (view: 'BOARD' | 'AUDITING' | 'CRM' | 'DAILY_TRACKER') => void;
+  currentView?: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS';
+  onViewChange?: (view: 'BOARD' | 'AUDITING' | 'CRM' | 'DAILY_TRACKER' | 'SHEETS') => void;
   clients?: ClientOption[];
   adminClients?: ClientOption[];
   adminCount?: number;
@@ -796,11 +796,13 @@ export const TaskMapHeader: React.FC<Props> = ({
 
   const shiftOptions = React.useMemo(() => {
     const baseLabel = (s: TaskMapShift) => {
-      const cleanName = (s.name || '').replace(/\s+shift$/i, '').trim();
-      if (cleanName) return cleanName;
       const k = (s.shiftKey || '').toUpperCase();
+      if (k === 'NOON' || k === 'PM_AFTERNOON' || k === 'AFTERNOON') return 'Noon';
+      const cleanName = (s.name || '').replace(/\s+shift$/i, '').trim();
+      if (cleanName) {
+        return /^afternoon$/i.test(cleanName) ? 'Noon' : cleanName;
+      }
       if (k === 'DAY' || k === 'AM' || k === 'MORNING') return 'Morning';
-      if (k === 'NOON' || k === 'PM_AFTERNOON' || k === 'AFTERNOON') return 'Afternoon';
       if (k === 'NIGHT' || k === 'PM_NIGHT') return 'Night';
       return s.shiftKey;
     };
@@ -812,11 +814,11 @@ export const TaskMapHeader: React.FC<Props> = ({
           .map((s) => ({
             key: (s.shiftKey || '').toUpperCase(),
             label: baseLabel(s),
-            hoursLabel: `${s.name} (${formatShiftHours(s)} Manila)`,
+            hoursLabel: `${(s.name || '').replace(/afternoon/gi, 'Noon')} (${formatShiftHours(s)} Manila)`,
           }))
       : [
           { key: 'DAY', label: 'Morning', hoursLabel: 'Morning Shift' },
-          { key: 'NOON', label: 'Afternoon', hoursLabel: 'Afternoon Shift' },
+          { key: 'NOON', label: 'Noon', hoursLabel: 'Noon Shift' },
           { key: 'NIGHT', label: 'Night', hoursLabel: 'Night Shift' },
         ];
 
@@ -853,6 +855,19 @@ export const TaskMapHeader: React.FC<Props> = ({
           {/* Left: View switcher tabs */}
           {onViewChange && (
             <div className="flex items-center gap-1 bg-card border border-zinc-800/80 rounded-xl p-1 text-xs font-semibold shadow-xs">
+              <button
+                type="button"
+                onClick={() => onViewChange('DAILY_TRACKER')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  currentView === 'DAILY_TRACKER'
+                    ? 'bg-emerald-600 text-white shadow-sm font-semibold'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
+                }`}
+              >
+                <Table className="size-3.5" />
+                <span>Daily Tracker</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => onViewChange('BOARD')}
@@ -923,19 +938,6 @@ export const TaskMapHeader: React.FC<Props> = ({
                   )}
                 </button>
               )}
-
-              <button
-                type="button"
-                onClick={() => onViewChange('DAILY_TRACKER')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  currentView === 'DAILY_TRACKER'
-                    ? 'bg-emerald-600 text-white shadow-sm font-semibold'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 font-medium'
-                }`}
-              >
-                <Table className="size-3.5" />
-                <span>Daily Tracker</span>
-              </button>
             </div>
           )}
 

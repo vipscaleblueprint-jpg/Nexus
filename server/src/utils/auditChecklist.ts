@@ -5,7 +5,9 @@
  */
 // Hides Design Audit on older tasks, whose audits still come from the title/role rules below.
 // Tasks with saved picks (see getAiPickedAudits) show the Design Audit the AI picked.
-export const HIDE_DESIGN_AUDIT = true;
+export const HIDE_DESIGN_AUDIT = false;
+// Hides Instructions Audit globally across UI and completion checks.
+export const HIDE_INSTRUCTIONS_AUDIT = true;
 
 /** The order audit items are listed in. */
 export const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
@@ -21,8 +23,10 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
   const t = (taskTitle || '').toLowerCase();
   const audits = new Set<string>();
 
-  // Every task must pass an Instructions Audit globally
-  audits.add('Instructions Audit');
+  // Every task must pass an Instructions Audit globally (unless hidden)
+  if (!HIDE_INSTRUCTIONS_AUDIT) {
+    audits.add('Instructions Audit');
+  }
 
   // Whatever auditor role was actually assigned determines the required audit item directly,
   // regardless of what the task title says.
@@ -139,6 +143,7 @@ export function resolveRequiredAudits(opts: {
     const n = normalizeAuditName(text);
     if (!text || text.startsWith('!') || excluded.has(n) || seen.has(n)) return false;
     if (hideDesign && n === 'design audit') return false;
+    if (HIDE_INSTRUCTIONS_AUDIT && n === 'instructions audit') return false;
     seen.add(n);
     return true;
   });

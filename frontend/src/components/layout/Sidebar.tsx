@@ -47,6 +47,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { toast } from '@/lib/toast';
+import { NexusLogo } from '@/components/ui/NexusLogo';
 
 interface DropIndicatorContextType {
   activeId: string | null;
@@ -1526,9 +1527,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               title={collapsed ? 'Nexus' : isNexusCollapsed ? 'Expand Nexus panel' : undefined}
               className={`flex items-center overflow-hidden rounded-md outline-none font-medium bg-black/10 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 cursor-pointer ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm text-left'}`}
             >
-              <div className="size-4 shrink-0 rounded bg-indigo-500 flex items-center justify-center">
-                <span className="text-[10px] font-bold text-white leading-none">N</span>
-              </div>
+              <NexusLogo size={18} />
               {!collapsed && <span className="flex-1 truncate">Nexus</span>}
             </button>
             <button onClick={toggleTheme} title={collapsed ? 'Toggle Theme' : undefined} className={`flex items-center overflow-hidden rounded-md outline-none transition-colors hover:bg-black/10 dark:hover:bg-accent hover:text-accent-foreground/80 text-zinc-900 dark:text-zinc-100 ${collapsed ? 'justify-center size-8 p-0 w-full mx-auto' : 'w-full gap-2 p-2 text-sm'}`}>
@@ -1586,9 +1585,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               ) : (
                 <>
                   <div className="flex items-center gap-2 overflow-hidden">
-                    <div className="size-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
-                      <span className="text-[9px] font-bold text-white">N</span>
-                    </div>
+                    <NexusLogo size={24} />
                     <span className="font-semibold text-sm truncate">Nexus</span>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">

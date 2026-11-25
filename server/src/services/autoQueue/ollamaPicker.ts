@@ -63,7 +63,7 @@ Reply with JSON only: {"candidate": "<label>", "reason": "<one short sentence>"}
 
 const label = (i: number) => `c${i + 1}`;
 
-function cleanText(s: string | null | undefined, max: number): string {
+export function cleanOllamaText(s: string | null | undefined, max: number): string {
   const text = (s || '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
@@ -72,21 +72,55 @@ function cleanText(s: string | null | undefined, max: number): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
-function formatDue(d?: string | Date | null): string {
+export function formatOllamaDue(d?: string | Date | null): string {
   if (!d) return 'none';
   const date = new Date(d);
   return isNaN(date.getTime()) ? 'none' : date.toISOString().slice(0, 10);
 }
 
+export async function chatWithOllama<T>(
+  config: OllamaConfig,
+  payload: unknown,
+  parse: (raw: string) => T | null,
+  logPrefix = 'AutoQueue'
+): Promise<T | null> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.username && config.password) {
+    headers.Authorization = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
+  }
+
+  try {
+    const res = await fetch(`${config.url.replace(/\/+$/, '')}/api/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    if (!res.ok) {
+      logger.warn(`[${logPrefix}] Ollama returned HTTP ${res.status}`);
+      return null;
+    }
+    const body: any = await res.json();
+    const parsed = parse(body?.message?.content || '');
+    if (!parsed) {
+      logger.warn(`[${logPrefix}] Ollama gave an unusable answer: ${String(body?.message?.content || '').slice(0, 200)}`);
+    }
+    return parsed;
+  } catch (err) {
+    logger.warn(`[${logPrefix}] Ollama request failed: ${errMsg(err)}`);
+    return null;
+  }
+}
+
 export function buildPickRequest(task: PickTask, candidates: PickCandidate[], model: string) {
   const taskLines = [
-    `Task: ${cleanText(task.title, 200)}`,
-    task.parentTaskTitle ? `Part of: ${cleanText(task.parentTaskTitle, 200)}` : null,
+    `Task: ${cleanOllamaText(task.title, 200)}`,
+    task.parentTaskTitle ? `Part of: ${cleanOllamaText(task.parentTaskTitle, 200)}` : null,
     `Client: ${task.client || 'unknown'}`,
     `Priority: ${task.priority || 'MEDIUM'}`,
-    `Due: ${formatDue(task.dueDate)}`,
+    `Due: ${formatOllamaDue(task.dueDate)}`,
     task.estimatedHours ? `Estimated time: ${task.estimatedHours}h` : null,
-    task.description ? `Description: ${cleanText(task.description, MAX_DESCRIPTION_CHARS)}` : null,
+    task.description ? `Description: ${cleanOllamaText(task.description, MAX_DESCRIPTION_CHARS)}` : null,
   ].filter(Boolean);
 
   const candidateLines = candidates.map((c, i) => {
@@ -143,28 +177,10 @@ export async function pickWithOllama(
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return { userId: candidates[0].id, reason: 'Only MA available' };
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (config.username && config.password) {
-    headers.Authorization = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
-  }
-
-  try {
-    const res = await fetch(`${config.url.replace(/\/+$/, '')}/api/chat`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(buildPickRequest(task, candidates, config.model)),
-      signal: AbortSignal.timeout(config.timeoutMs),
-    });
-    if (!res.ok) {
-      logger.warn(`[AutoQueue] Ollama returned HTTP ${res.status}`);
-      return null;
-    }
-    const body: any = await res.json();
-    const pick = parsePickResponse(body?.message?.content || '', candidates);
-    if (!pick) logger.warn(`[AutoQueue] Ollama gave an unusable answer: ${String(body?.message?.content || '').slice(0, 200)}`);
-    return pick;
-  } catch (err) {
-    logger.warn(`[AutoQueue] Ollama request failed: ${errMsg(err)}`);
-    return null;
-  }
+  return chatWithOllama(
+    config,
+    buildPickRequest(task, candidates, config.model),
+    (raw) => parsePickResponse(raw, candidates),
+    'AutoQueue'
+  );
 }

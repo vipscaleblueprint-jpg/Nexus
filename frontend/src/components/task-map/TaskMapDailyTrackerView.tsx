@@ -16,6 +16,7 @@ import {
   taskMapApi,
 } from '@/api/taskMap';
 import { TaskMapSheetsView } from './TaskMapSheetsView';
+import { hasCrmAccess } from '@/lib/permissions';
 
 interface Props {
   tasks: TaskMapItem[];
@@ -26,6 +27,8 @@ interface Props {
     name?: string | null;
     email?: string | null;
     dailySheetUrl?: string | null;
+    systemRole?: string | null;
+    roles?: string[];
   } | null;
   initialDate?: string;
   initialLogs?: DailySheetLogItem[];
@@ -73,6 +76,7 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
   onRefresh,
 }) => {
   const [viewScope, setViewScope] = useState<'PRIVATE' | 'TEAM'>('PRIVATE');
+  const canViewAllMaSheets = useMemo(() => hasCrmAccess(currentUser), [currentUser]);
   const [dailySheetUrl, setDailySheetUrl] = useState<string | null>(
     currentUser?.dailySheetUrl || null
   );
@@ -132,18 +136,20 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
               <Lock className="size-3" />
               <span>My Daily Tracker</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setViewScope('TEAM')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                viewScope === 'TEAM'
-                  ? 'bg-sky-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-              }`}
-            >
-              <Users className="size-3" />
-              <span>All MAs (Sheets)</span>
-            </button>
+            {canViewAllMaSheets && (
+              <button
+                type="button"
+                onClick={() => setViewScope('TEAM')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
+                  viewScope === 'TEAM'
+                    ? 'bg-sky-600 text-white shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+              >
+                <Users className="size-3" />
+                <span>All MAs (Sheets)</span>
+              </button>
+            )}
           </div>
 
           {viewScope === 'PRIVATE' && (
@@ -173,7 +179,7 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
       </div>
 
       {/* MAIN CONTENT */}
-      {viewScope === 'TEAM' ? (
+      {viewScope === 'TEAM' && canViewAllMaSheets ? (
         <TaskMapSheetsView
           allTasks={allTasks}
           allUsers={allUsers}

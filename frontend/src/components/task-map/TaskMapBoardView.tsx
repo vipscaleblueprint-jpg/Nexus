@@ -3517,37 +3517,39 @@ export const TaskMapBoardView: React.FC<Props> = ({
           );
         })()}
 
-        {/* 1.5 Supervise Column (Only live progress >= 20 mins) */}
-        <InstructionLiveColumn
-          sortedUserColumns={sortedUserColumns}
-          isCollapsed={resolveColumnCollapsedState(
-            'instruction-live',
-            collapsedColumns,
-            currentUser?.id,
-            isPmUser
-          )}
-          isPinned={!!pinnedColumns['instruction-live']}
-          onToggleCollapse={() => toggleCollapseColumn('instruction-live')}
-          onTogglePin={() => togglePinColumn('instruction-live')}
-          onOpenDetail={onOpenDetail}
-          isTaskLiveWorking={isTaskLiveWorking}
-          upworkClients={upworkClients}
-          upworkProjectClients={upworkProjectClients}
-          currentDate={currentDate}
-          superviseChecks={superviseChecks}
-          onSuperviseCheck={onSuperviseCheck}
-          onSuperviseUncheck={onSuperviseUncheck}
-          onTaskUpdate={onTaskUpdate}
-          onDataRefresh={onDataRefresh}
-          onOpenDeliverables={(targetTask, targetStatus, targetUser, rTaskId) => {
-            setDeliverablesModalTarget({
-              task: targetTask,
-              targetStatus,
-              user: targetUser,
-              realTaskId: rTaskId,
-            });
-          }}
-        />
+        {/* 1.5 Supervise Column (PMs & Admins only; live progress >= 20 mins) */}
+        {isPmUser && (
+          <InstructionLiveColumn
+            sortedUserColumns={sortedUserColumns}
+            isCollapsed={resolveColumnCollapsedState(
+              'instruction-live',
+              collapsedColumns,
+              currentUser?.id,
+              isPmUser
+            )}
+            isPinned={!!pinnedColumns['instruction-live']}
+            onToggleCollapse={() => toggleCollapseColumn('instruction-live')}
+            onTogglePin={() => togglePinColumn('instruction-live')}
+            onOpenDetail={onOpenDetail}
+            isTaskLiveWorking={isTaskLiveWorking}
+            upworkClients={upworkClients}
+            upworkProjectClients={upworkProjectClients}
+            currentDate={currentDate}
+            superviseChecks={superviseChecks}
+            onSuperviseCheck={onSuperviseCheck}
+            onSuperviseUncheck={onSuperviseUncheck}
+            onTaskUpdate={onTaskUpdate}
+            onDataRefresh={onDataRefresh}
+            onOpenDeliverables={(targetTask, targetStatus, targetUser, rTaskId) => {
+              setDeliverablesModalTarget({
+                task: targetTask,
+                targetStatus,
+                user: targetUser,
+                realTaskId: rTaskId,
+              });
+            }}
+          />
+        )}
 
         {/* 2. User Shift Columns (Matches Image 1 & 4) */}
         {sortedUserColumns.map(([userId, { user, tasks: userTasks }]) => {

@@ -54,7 +54,7 @@ export function isNexusAuditChecklist(c: ChecklistLike): boolean {
 
 // Hides Design Audit on older tasks, whose audits still come from the title/role rules below.
 // Tasks with saved AI picks (see getAiPickedAudits) show the Design Audit the AI picked.
-export const HIDE_DESIGN_AUDIT = true;
+export const HIDE_DESIGN_AUDIT = false;
 // Hides Instructions Audit globally across UI and completion checks.
 export const HIDE_INSTRUCTIONS_AUDIT = true;
 

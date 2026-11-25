@@ -25,7 +25,10 @@ import {
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
   formatManilaTime,
+  parseManilaTimeToIso,
   getManilaDateKey,
+  extractTaskLinkIdentifiers,
+  matchesTaskLinkOrId,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -333,22 +336,41 @@ const sortColumnTasks = (items: TaskMapItem[], userName?: string) => {
     const inProgB = isTaskActiveInProgress(b, userName) ? 1 : 0;
     if (inProgA !== inProgB) return inProgB - inProgA;
 
-    // 4. Always prioritize urgent tasks at the top among remaining active tasks
+    // 4. Tasks logged in today's Sheets historical log sort ahead of unlogged queued tasks,
+    //    ordered by most recent sheet submission / Time In for that day
+    const hasSheetA = Boolean(a.progress?.dailySheetLogId || a.progress?.timeIn) ? 1 : 0;
+    const hasSheetB = Boolean(b.progress?.dailySheetLogId || b.progress?.timeIn) ? 1 : 0;
+    if (hasSheetA !== hasSheetB) return hasSheetB - hasSheetA;
+    if (hasSheetA && hasSheetB) {
+      const sheetTimeA = a.progress?.updatedAt
+        ? new Date(a.progress.updatedAt).getTime()
+        : a.progress?.startedAt
+        ? new Date(a.progress.startedAt).getTime()
+        : 0;
+      const sheetTimeB = b.progress?.updatedAt
+        ? new Date(b.progress.updatedAt).getTime()
+        : b.progress?.startedAt
+        ? new Date(b.progress.startedAt).getTime()
+        : 0;
+      if (sheetTimeA !== sheetTimeB) return sheetTimeB - sheetTimeA;
+    }
+
+    // 5. Always prioritize urgent tasks at the top among remaining queued tasks
     const urgentA = isTaskUrgent(a) ? 1 : 0;
     const urgentB = isTaskUrgent(b) ? 1 : 0;
     if (urgentA !== urgentB) return urgentB - urgentA;
 
-    // 5. High priority
+    // 6. High priority
     const highA = isTaskHigh(a) ? 1 : 0;
     const highB = isTaskHigh(b) ? 1 : 0;
     if (highA !== highB) return highB - highA;
 
-    // 6. Most recently updated progress (e.g. latest sheet input)
+    // 7. Most recently updated progress
     const progTimeA = a.progress?.updatedAt ? new Date(a.progress.updatedAt).getTime() : 0;
     const progTimeB = b.progress?.updatedAt ? new Date(b.progress.updatedAt).getTime() : 0;
     if (progTimeA !== progTimeB) return progTimeB - progTimeA;
 
-    // 7. Newer tasks
+    // 8. Newer tasks
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return dateB - dateA;
@@ -526,6 +548,7 @@ const matchesPriorityFilter = (task: TaskMapItem, filter: string) => {
 
 const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   if (!query || !query.trim()) return true;
+  if (matchesTaskLinkOrId(task, query)) return true;
   const q = query.trim().toLowerCase();
   const title = (task.title || '').toLowerCase();
   const clientName = (task.list?.name || '').toLowerCase();
@@ -1497,17 +1520,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
     };
 
-    const isAllShifts =
-      !currentShift ||
-      currentShift === 'ALL' ||
-      currentShift
-        .split(',')
-        .map((s) => s.trim().toUpperCase())
-        .includes('ALL');
+    const shiftTokens = (currentShift || '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const isAllShifts = shiftTokens.length === 0 || shiftTokens.includes('ALL');
+    const isCustomShift = shiftTokens.includes('CUSTOM');
+    const allowNonShiftColumns = isAllShifts || isCustomShift || trackFilter !== 'ALL';
 
-    // When viewing All shifts or filtering by Live/Active, include all non-system workspace users
+    // When viewing All shifts, Custom, or filtering by Live/Active, include all non-system workspace users;
+    // when viewing a specific Audit Shift (e.g. Morning, Afternoon, Night), strictly base columns on shiftUsers.
     const baseUsers =
-      (isAllShifts || trackFilter !== 'ALL') && allUsers && allUsers.length > 0 ? allUsers : shiftUsers;
+      allowNonShiftColumns && allUsers && allUsers.length > 0 ? allUsers : shiftUsers;
 
     baseUsers.forEach((u) => {
       if (!u || !u.id || isSystemAccount(u)) return;
@@ -1529,46 +1553,47 @@ export const TaskMapBoardView: React.FC<Props> = ({
       });
     }
 
-    // Always ensure the logged-in user (current viewer) is present in userColumnsMap
-    if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
-      userColumnsMap[currentUser.id] = {
-        user: getUserProfile(currentUser.id, currentUser),
-        tasks: [],
-      };
+    // Ensure the logged-in user, live-working users, active sessions, and searched users from allUsers
+    // are only injected when not strictly scoped to a specific Audit Shift.
+    if (allowNonShiftColumns) {
+      if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
+        userColumnsMap[currentUser.id] = {
+          user: getUserProfile(currentUser.id, currentUser),
+          tasks: [],
+        };
+      }
+
+      [...tasks, ...availablePool].forEach((t) => {
+        if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
+          const matchingUser = findBestUserMatch(t.progress.maName, allUsers, (u) => !isSystemAccount(u));
+          if (matchingUser && !userColumnsMap[matchingUser.id]) {
+            userColumnsMap[matchingUser.id] = {
+              user: getUserProfile(matchingUser.id, matchingUser),
+              tasks: [],
+            };
+          }
+        }
+      });
+
+      Object.values(maActiveSessions || {}).forEach((sess: any) => {
+        if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
+          const matchingUser = findBestUserMatch(sess.maName, allUsers, (u) => !isSystemAccount(u));
+          if (matchingUser && !userColumnsMap[matchingUser.id]) {
+            userColumnsMap[matchingUser.id] = {
+              user: getUserProfile(matchingUser.id, matchingUser),
+              tasks: [],
+            };
+          }
+        }
+      });
     }
-
-    // Ensure any user who is actively live working on a task (or pool task) gets a column in userColumnsMap
-    [...tasks, ...availablePool].forEach((t) => {
-      if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
-        const matchingUser = findBestUserMatch(t.progress.maName, allUsers, (u) => !isSystemAccount(u));
-        if (matchingUser && !userColumnsMap[matchingUser.id]) {
-          userColumnsMap[matchingUser.id] = {
-            user: getUserProfile(matchingUser.id, matchingUser),
-            tasks: [],
-          };
-        }
-      }
-    });
-
-    // Ensure any user who has a held or active sheet session gets a column in userColumnsMap
-    Object.values(maActiveSessions || {}).forEach((sess: any) => {
-      if (sess?.maName && (sess?.active || sess?.timeIn || sess?.timeOut || sess?.client || sess?.taskName) && allUsers) {
-        const matchingUser = findBestUserMatch(sess.maName, allUsers, (u) => !isSystemAccount(u));
-        if (matchingUser && !userColumnsMap[matchingUser.id]) {
-          userColumnsMap[matchingUser.id] = {
-            user: getUserProfile(matchingUser.id, matchingUser),
-            tasks: [],
-          };
-        }
-      }
-    });
 
     const isUserSearchMatch = (u: any) => {
       if (!cleanSearch || !u) return false;
       return matchesMarketingNameSearch(u, cleanSearch);
     };
 
-    if (cleanSearch && allUsers && allUsers.length > 0) {
+    if (allowNonShiftColumns && cleanSearch && allUsers && allUsers.length > 0) {
       allUsers.forEach((u) => {
         if (!u || !u.id || isSystemAccount(u)) return;
         if (isUserSearchMatch(u) && !userColumnsMap[u.id]) {
@@ -2460,6 +2485,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
           timeOut: nowTimeOut,
           taskDeliverablesDescription: data.taskDeliverablesDescription,
           taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+          sheetRow: task.progress?.sheetRow,
+          timeIn: task.progress?.timeIn || undefined,
+          skipN8nSync: true,
         }).catch(console.error);
         if (onTaskUpdate) {
           await onTaskUpdate(linkedId, {
@@ -2469,14 +2497,26 @@ export const TaskMapBoardView: React.FC<Props> = ({
         }
       }
 
+      const origTimeIn = task.progress?.timeIn;
+      const origDate = task.progress?.date;
+      let startDt: Date | undefined = undefined;
+      if (origTimeIn) {
+        try {
+          const iso = parseManilaTimeToIso(origDate, origTimeIn);
+          if (iso) startDt = new Date(iso);
+        } catch (_) {}
+      }
+
       // Also trigger sheet schedule row sync
       taskMapApi.syncScheduleToSpreadsheet({
         taskId: linkedId || task.id,
         subtaskId: task.subtaskId || null,
+        sheetRow: task.progress?.sheetRow,
         taskTitle: task.title,
         clientName: task.progress?.client || task.list?.name || 'General',
         status: targetStatus,
         mode: 'STOP',
+        startedAt: startDt,
         stoppedAt: new Date(),
         taskDeliverablesDescription: data.taskDeliverablesDescription,
         taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
@@ -2505,6 +2545,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
       useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
     }
 
+    const origRealTimeIn = task.progress?.timeIn;
+    const origRealDate = task.progress?.date;
+    let realStartDt: Date | undefined = undefined;
+    if (origRealTimeIn) {
+      try {
+        const iso = parseManilaTimeToIso(origRealDate, origRealTimeIn);
+        if (iso) realStartDt = new Date(iso);
+      } catch (_) {}
+    }
+
     if (isHandover) {
       const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
       if (onTaskUpdate) {
@@ -2517,6 +2567,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
         timeOut: nowTimeOut,
         taskDeliverablesDescription: data.taskDeliverablesDescription,
         taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        sheetRow: task.progress?.sheetRow,
+        timeIn: task.progress?.timeIn || undefined,
+        skipN8nSync: true,
       }).catch(console.error);
 
       toast.info(`Task handed over — clocked out at ${nowTimeOut}`);
@@ -2542,19 +2595,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
         timeOut: nowTimeOut,
         taskDeliverablesDescription: data.taskDeliverablesDescription,
         taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        sheetRow: task.progress?.sheetRow,
+        timeIn: task.progress?.timeIn || undefined,
+        skipN8nSync: true,
       }).catch(console.error);
 
       toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
     }
 
-    // Trigger syncScheduleToSpreadsheet
+    // Trigger syncScheduleToSpreadsheet with explicit sheetRow and startedAt preserving same row
     taskMapApi.syncScheduleToSpreadsheet({
       taskId: effectiveTaskId,
       subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
+      sheetRow: task.progress?.sheetRow,
       taskTitle: task.title,
       clientName: task.progress?.client || task.list?.name || 'General',
       status: targetStatus,
       mode: 'STOP',
+      startedAt: realStartDt,
       stoppedAt: new Date(),
       taskDeliverablesDescription: data.taskDeliverablesDescription,
       taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
@@ -2826,10 +2884,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const availableFilter = columnPriorityFilters['available'] || 'ALL';
           const availableTaskTypeFilter = columnTaskTypeFilters['available'] || 'ALL';
           const availableSubStatusFilter = columnSubStatusFilters['available'] || 'ALL';
-          const filteredDisplayPool = displayPool.filter((t) =>
-            matchesPriorityFilter(t, availableFilter) &&
-            matchesTaskTypeFilter(t, availableTaskTypeFilter) &&
-            matchesSubStatusFilter(t, availableSubStatusFilter) &&
+          const isLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
+          const baseAvailablePool = isLinkQuery ? availablePool : displayPool;
+          const filteredDisplayPool = baseAvailablePool.filter((t) =>
+            (isLinkQuery || (
+              matchesPriorityFilter(t, availableFilter) &&
+              matchesTaskTypeFilter(t, availableTaskTypeFilter) &&
+              matchesSubStatusFilter(t, availableSubStatusFilter)
+            )) &&
             matchesSearchFilter(t, searchQuery)
           );
           // Exclude On-hold tasks from the task number indicator per user requirement
@@ -3284,11 +3346,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const userClientFilter = columnClientFilters[userId] || 'ALL';
           const userShowAdmin = columnShowAdmin[userId] ?? (isDeveloperUser(user, workspaceTeams) ? true : effectiveShowAdmin);
 
+          const isColLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
           const filteredUserTasks = userTasks.filter((t) => {
+            if (!matchesSearchFilter(t, searchQuery)) return false;
+            if (isColLinkQuery) return true;
             if (!matchesPriorityFilter(t, userPriorityFilter)) return false;
             if (!matchesTaskTypeFilter(t, userTaskTypeFilter)) return false;
             if (!matchesSubStatusFilter(t, userSubStatusFilter)) return false;
-            if (!matchesSearchFilter(t, searchQuery)) return false;
 
             // Admin task check: hide all tasks that are for the admin by default,
             // except the General Task (assumption block) or real tasks inputted by this MA from the spreadsheet!

@@ -71,6 +71,11 @@ import {
   isOnHoldStatus,
   cascadeParentOnHoldToSubtasks,
 } from '../services/taskMapService';
+import {
+  upsertDailySheetLog,
+  getDailySheetLogsForDate,
+  getDailySheetLogsIndexForDate,
+} from '../services/dailySheetLogService';
 
 // Closed status check matching Nexus conventions
 const isClosedStatus = (status?: string | null) => {
@@ -245,6 +250,152 @@ async function fetchClientDashboardLists(): Promise<Array<{ id: string; name: st
 /**
  * Fetch all tasks mapped to Task Map with their status options, shifts, and pool
  */
+/**
+ * Extracts task/subtask/external IDs from a Nexus or ClickUp URL or raw ID query.
+ */
+function extractTaskLinkIds(query: string): { isLink: boolean; ids: string[] } {
+  const raw = (query || '').trim();
+  if (!raw) return { isLink: false, ids: [] };
+
+  const ids = new Set<string>();
+  const isUrlLike =
+    /^https?:\/\//i.test(raw) ||
+    raw.startsWith('/') ||
+    raw.startsWith('?') ||
+    /(?:nexus\.vipscaleph\.com|app\.clickup\.com)/i.test(raw);
+
+  if (isUrlLike) {
+    try {
+      const url =
+        raw.startsWith('/') || raw.startsWith('?')
+          ? new URL(raw, 'https://nexus.vipscaleph.com')
+          : /^https?:\/\//i.test(raw)
+            ? new URL(raw)
+            : new URL(`https://${raw}`);
+      const taskParam = url.searchParams.get('task');
+      const subtaskParam = url.searchParams.get('subtask');
+      if (taskParam) ids.add(taskParam.trim().toLowerCase());
+      if (subtaskParam) ids.add(subtaskParam.trim().toLowerCase());
+
+      const nexusTaskMatch = url.pathname.match(/\/tasks\/([a-zA-Z0-9_-]+)/i);
+      if (nexusTaskMatch?.[1]) ids.add(nexusTaskMatch[1].trim().toLowerCase());
+
+      const clickupMatch = url.pathname.match(/\/t\/([a-zA-Z0-9_-]+)(?:\/([a-zA-Z0-9_-]+))?/i);
+      if (clickupMatch?.[1]) ids.add(clickupMatch[1].trim().toLowerCase());
+      if (clickupMatch?.[2]) ids.add(clickupMatch[2].trim().toLowerCase());
+    } catch {
+      for (const m of raw.matchAll(/[?&](?:task|subtask)=([a-zA-Z0-9_-]+)/gi)) {
+        if (m[1]) ids.add(m[1].trim().toLowerCase());
+      }
+      const pathMatch = raw.match(/\/(?:tasks|t)\/([a-zA-Z0-9_-]+)/i);
+      if (pathMatch?.[1]) ids.add(pathMatch[1].trim().toLowerCase());
+    }
+  } else if (/^[a-zA-Z0-9_-]{6,}$/.test(raw)) {
+    ids.add(raw.toLowerCase());
+  }
+
+  return { isLink: isUrlLike, ids: Array.from(ids) };
+}
+
+function matchesTaskSearchQuery(task: any, searchQuery: string): boolean {
+  if (!searchQuery) return true;
+  const { isLink, ids } = extractTaskLinkIds(searchQuery);
+  if (ids.length > 0) {
+    const candidates = [task.id, task.subtaskId, task.parentTaskId, task.externalId]
+      .filter(Boolean)
+      .map((v) => String(v).trim().toLowerCase());
+    if (candidates.some((c) => ids.includes(c))) return true;
+    if (!isLink && ids.length === 1 && ids[0].length >= 6 && candidates.some((c) => c.includes(ids[0]))) {
+      return true;
+    }
+    if (isLink) return false;
+  }
+
+  const titleMatch = (task.title || '').toLowerCase().includes(searchQuery);
+  const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
+  const assigneeMatch =
+    (task.assignee?.name || '').toLowerCase().includes(searchQuery) ||
+    (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery)) ||
+    (task.progress?.maName || '').toLowerCase().includes(searchQuery) ||
+    (task.progress?.userName || '').toLowerCase().includes(searchQuery);
+  const statusMatch = (task.taskMap?.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
+  return titleMatch || clientMatch || assigneeMatch || statusMatch;
+}
+
+/**
+ * Resolves shiftUsers strictly from AuditShiftConfig for the requested shift tokens.
+ */
+async function resolveShiftUsersForTokens(
+  users: any[],
+  shiftTokens: string[],
+  isAllShifts: boolean
+): Promise<any[]> {
+  const shiftAuditorIdSet = new Set<string>();
+  const shiftMemberIdSet = new Set<string>();
+  const shiftMemberNameSet = new Set<string>();
+  const shiftAuditorNameSet = new Set<string>();
+
+  if (isAllShifts) {
+    const allShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+      where: { isActive: true },
+    });
+    for (const cfg of allShiftConfigs) {
+      (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+      (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+      (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+      (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+    }
+  } else {
+    const auditShiftKeys = Array.from(
+      new Set(
+        shiftTokens.flatMap((token) => {
+          const norm = token.trim().toUpperCase();
+          if (norm === 'DAY' || norm === 'AM' || norm === 'MORNING') return ['AM', 'DAY', 'MORNING'];
+          if (norm === 'NOON' || norm === 'PM_AFTERNOON' || norm === 'AFTERNOON') return ['PM_AFTERNOON', 'NOON', 'AFTERNOON'];
+          if (norm === 'NIGHT' || norm === 'PM_NIGHT') return ['PM_NIGHT', 'NIGHT'];
+          return [norm, fromTaskMapShiftKey(norm), toTaskMapShiftKey(norm)];
+        })
+      )
+    );
+    const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
+      where: { shiftKey: { in: auditShiftKeys }, isActive: true },
+    });
+    for (const cfg of activeShiftConfigs) {
+      (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
+      (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
+      (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
+      (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
+    }
+  }
+
+  const hasExplicitIds = shiftMemberIdSet.size > 0 || shiftAuditorIdSet.size > 0;
+
+  return users
+    .filter((u) => {
+      if (isAllShifts && !hasExplicitIds && shiftMemberNameSet.size === 0 && shiftAuditorNameSet.size === 0) {
+        return true;
+      }
+      if (shiftMemberIdSet.has(u.id) || shiftAuditorIdSet.has(u.id)) return true;
+      const uName = (u.name || '').trim().toLowerCase();
+      if (!uName) return false;
+      if (shiftMemberNameSet.has(uName) || shiftAuditorNameSet.has(uName)) {
+        return true;
+      }
+      if (!hasExplicitIds) {
+        for (const token of [...shiftMemberNameSet, ...shiftAuditorNameSet]) {
+          if (token && (uName.startsWith(`${token} `) || (token.length >= 3 && uName.includes(token)))) {
+            return true;
+          }
+        }
+      }
+      return false;
+    })
+    .map((u) => ({
+      ...u,
+      isAudit: isAuditorRole(u.roles) || shiftAuditorIdSet.has(u.id),
+    }));
+}
+
 export const getTaskMapData = async (req: Request, res: Response) => {
   try {
     const shiftQuery = (req.query.shift as string || '').toUpperCase();
@@ -365,19 +516,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         }
 
         if (searchQuery) {
-          const filterFn = (task: any) => {
-            const titleMatch = (task.title || '').toLowerCase().includes(searchQuery);
-            const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
-            const assigneeMatch = (task.assignee?.name || '').toLowerCase().includes(searchQuery) ||
-              (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery)) ||
-              (task.progress?.maName || '').toLowerCase().includes(searchQuery) ||
-              (task.progress?.userName || '').toLowerCase().includes(searchQuery);
-            const statusMatch = (task.taskMap?.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
-            return titleMatch || clientMatch || assigneeMatch || statusMatch;
-          };
-          tasks = tasks.filter(filterFn);
-          availablePool = availablePool.filter(filterFn);
+          tasks = tasks.filter((task: any) => matchesTaskSearchQuery(task, searchQuery));
+          availablePool = availablePool.filter((task: any) => matchesTaskSearchQuery(task, searchQuery));
         }
+
+        const filteredSnapshotShiftUsers = await resolveShiftUsersForTokens(
+          snapshotAllUsers.length > 0 ? snapshotAllUsers : snapshotShiftUsers,
+          shiftTokens,
+          isAllShifts
+        );
 
         if (clientQuery && clientQuery !== 'ALL') {
           const clientFilterFn = (task: any) => {
@@ -407,11 +554,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           currentShift,
           pmUsers: snapshotPmUsers,
           allUsers: snapshotAllUsers,
-          shiftUsers: snapshotShiftUsers,
+          shiftUsers: filteredSnapshotShiftUsers,
           activeUpworkSessions: existingSnapshot.activeUpworkSessions || [],
           upworkClients: existingSnapshot.upworkClients || [],
           upworkProjectClients: existingSnapshot.upworkProjectClients || [],
           maActiveSessions: existingSnapshot.maActiveSessions || {},
+          dailySheetLogs: await getDailySheetLogsForDate(requestedDate).catch(() => existingSnapshot.dailySheetLogs || []),
         };
         await setCache(cacheKey, historyPayload, 3600, cacheGen);
         return historyPayload;
@@ -540,64 +688,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     ]);
 
     // Determine shift members (normal users + auditors) for the selected shift from AuditShiftConfig
-    const shiftAuditorIdSet = new Set<string>();
-    const shiftMemberIdSet = new Set<string>();
-    const shiftMemberNameSet = new Set<string>();
-    const shiftAuditorNameSet = new Set<string>();
-
-    if (isAllShifts) {
-      const allShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
-        where: { isActive: true },
-      });
-      for (const cfg of allShiftConfigs) {
-        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
-        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
-        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
-        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
-      }
-    } else {
-      const auditShiftKeys = Array.from(
-        new Set(
-          shiftTokens.flatMap((token) => {
-            const norm = token.trim().toUpperCase();
-            if (norm === 'DAY' || norm === 'AM' || norm === 'MORNING') return ['AM', 'DAY', 'MORNING'];
-            if (norm === 'NOON' || norm === 'PM_AFTERNOON' || norm === 'AFTERNOON') return ['PM_AFTERNOON', 'NOON', 'AFTERNOON'];
-            if (norm === 'NIGHT' || norm === 'PM_NIGHT') return ['PM_NIGHT', 'NIGHT'];
-            return [norm, fromTaskMapShiftKey(norm), toTaskMapShiftKey(norm)];
-          })
-        )
-      );
-      const activeShiftConfigs = await (prisma as any).auditShiftConfig.findMany({
-        where: { shiftKey: { in: auditShiftKeys }, isActive: true },
-      });
-      for (const cfg of activeShiftConfigs) {
-        (cfg.auditorIds || []).forEach((id: string) => shiftAuditorIdSet.add(id.trim()));
-        (cfg.memberIds || []).forEach((id: string) => shiftMemberIdSet.add(id.trim()));
-        (cfg.memberNames || []).forEach((n: string) => shiftMemberNameSet.add(n.trim().toLowerCase()));
-        (cfg.auditorNames || []).forEach((n: string) => shiftAuditorNameSet.add(n.trim().toLowerCase()));
-      }
-    }
-
-    const shiftUsers = allUsers
-      .filter((u) => {
-        if (isAllShifts && (shiftMemberIdSet.size === 0 && shiftAuditorIdSet.size === 0)) return true;
-        if (shiftMemberIdSet.has(u.id) || shiftAuditorIdSet.has(u.id)) return true;
-        const uName = (u.name || '').trim().toLowerCase();
-        if (!uName) return false;
-        if (shiftMemberNameSet.has(uName) || shiftAuditorNameSet.has(uName)) {
-          return true;
-        }
-        for (const token of [...shiftMemberNameSet, ...shiftAuditorNameSet]) {
-          if (token && (uName.startsWith(`${token} `) || (token.length >= 3 && uName.includes(token)))) {
-            return true;
-          }
-        }
-        return false;
-      })
-      .map((u) => ({
-        ...u,
-        isAudit: isAuditorRole(u.roles) || shiftAuditorIdSet.has(u.id),
-      }));
+    const shiftUsers = await resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts);
 
     const isPmUser = (u: any) => {
       if (u.systemRole === 'ADMIN') return true;
@@ -640,6 +731,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const s = (st.status || (st.completed ? 'CLOSED' : 'PENDING')).toUpperCase().replace(/[\s_-]+/g, '');
       return st.completed || isClosedStatus(s);
     };
+
+    // Fetch today's DailySheetLog index so sorting and live state base from historical sheet submissions for that day
+    const dailySheetIndex = await getDailySheetLogsIndexForDate(requestedDate);
 
     // Build enriched task items + surface open subtasks as independent board items
     const enrichedTasks: any[] = [];
@@ -699,8 +793,31 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         upworkStartedAt = upworkSession?.startedAt || (mapRecord.updatedAt ? new Date(mapRecord.updatedAt).toISOString() : new Date().toISOString());
       }
 
-      // Check sheet progress
-      let progress: any = reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+      // Check sheet progress: prefer today's DailySheetLog entry as the source of truth, fallback to pmReviews SHEET_PROGRESS
+      const sheetLog = dailySheetIndex.byTaskId.get(task.id);
+      let progress: any = sheetLog
+        ? {
+            type: 'SHEET_PROGRESS',
+            dailySheetLogId: sheetLog.id,
+            timeIn: sheetLog.timeIn,
+            timeOut: sheetLog.timeOut,
+            isMissingTime: sheetLog.isMissingTime,
+            isUpwork: sheetLog.isUpwork,
+            client: sheetLog.client,
+            timeTracker: sheetLog.timeTracker,
+            maName: sheetLog.maName,
+            status: sheetLog.status,
+            date: sheetLog.dateDisplay || sheetLog.dateKey,
+            dateKey: sheetLog.dateKey,
+            sheetRow: sheetLog.sheetRow ?? undefined,
+            subtaskId: sheetLog.subtaskId || null,
+            taskDeliverables: sheetLog.taskDeliverables,
+            taskUpdateAndDeliverables: sheetLog.taskUpdateAndDeliverables,
+            isLive: sheetLog.isLive,
+            startedAt: sheetLog.startedAt ? sheetLog.startedAt.toISOString() : null,
+            updatedAt: sheetLog.submittedAt ? sheetLog.submittedAt.toISOString() : new Date().toISOString(),
+          }
+        : reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
 
       const clientOrListName = `${task.list?.name || ''} ${progress?.client || ''}`.toLowerCase();
       const isLauren = clientOrListName.includes('lauren');
@@ -970,17 +1087,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     }
 
     // Filter by search query if present
-    const searchedTasks = enrichedTasks.filter((task: any) => {
-      if (!searchQuery) return true;
-      const titleMatch = task.title.toLowerCase().includes(searchQuery);
-      const clientMatch = (task.list?.name || '').toLowerCase().includes(searchQuery);
-      const assigneeMatch = (task.assignee?.name || '').toLowerCase().includes(searchQuery) ||
-        (task.assignees || []).some((a: any) => (a.name || '').toLowerCase().includes(searchQuery)) ||
-        (task.progress?.maName || '').toLowerCase().includes(searchQuery) ||
-        (task.progress?.userName || '').toLowerCase().includes(searchQuery);
-      const statusMatch = (task.taskMap.statuses || []).some((s: string) => s.toLowerCase().includes(searchQuery));
-      return titleMatch || clientMatch || assigneeMatch || statusMatch;
-    });
+    const searchedTasks = enrichedTasks.filter((task: any) => matchesTaskSearchQuery(task, searchQuery));
 
     // Filter by client query if present
     const filteredTasks = searchedTasks.filter((task: any) => {
@@ -1438,6 +1545,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       launchTasks,
       availablePool,
       allClients,
+      dailySheetLogs: dailySheetIndex.logs,
       options,
       shifts,
       statusCounts,
@@ -4988,90 +5096,27 @@ export const getClientLockStatusHandler = async (req: Request, res: Response) =>
 };
 
 /**
- * Returns the daily schedule spreadsheet configuration for the given or current user.
- * Resolves `dailySheetUrl` directly from the User record in PostgreSQL.
- */
-export const getUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
-  try {
-    const user = (req as any).user;
-    const targetUserId = (req.query.userId as string) || user?.id;
-    if (!targetUserId) {
-      return res.status(400).json({ error: 'User ID is required' });
-    }
-    const targetUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { id: true, name: true, email: true, dailySheetUrl: true, avatarUrl: true, roles: true },
-    });
-    if (!targetUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const rawUrl = targetUser.dailySheetUrl || '';
-    const match = rawUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    const spreadsheetId = match ? match[1] : null;
-
-    return res.json({
-      success: true,
-      userId: targetUser.id,
-      userName: targetUser.name,
-      userEmail: targetUser.email,
-      dailySheetUrl: targetUser.dailySheetUrl || null,
-      spreadsheetId,
-      hasSpreadsheetLink: Boolean(targetUser.dailySheetUrl && targetUser.dailySheetUrl.trim()),
-    });
-  } catch (err: any) {
-    logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
-    return res.status(500).json({ error: err.message });
-  }
-};
-
-/**
  * Handles explicit schedule row sync from frontend to spreadsheet / n8n
  */
 export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => {
   try {
-    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight, userId } = req.body;
+    const { taskId, subtaskId, mode, sheetRow, rows, isSplitAcrossMidnight } = req.body;
     const user = (req as any).user;
 
-    const targetUserId = userId || user?.id;
-    const actorUser = targetUserId
+    const actorUser = user?.id
       ? await prisma.user.findUnique({
-          where: { id: targetUserId },
+          where: { id: user.id },
           select: { id: true, name: true, email: true, dailySheetUrl: true },
         })
       : null;
     const actorDisplayName = actorUser?.name || user?.name || user?.email || 'User';
-
-    const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-
-    // Strict validation: Select client and task first before time in and out
-    if (targetRow) {
-      const hasTime = Boolean(
-        (targetRow.timeIn && String(targetRow.timeIn).trim()) ||
-        (targetRow.timeOut && String(targetRow.timeOut).trim())
-      );
-      const clientStr = (targetRow.client || '').toString().trim();
-      const taskStr = (targetRow.task || '').toString().trim();
-      const hasClient = Boolean(clientStr && clientStr.toLowerCase() !== 'general' && clientStr.toLowerCase() !== 'no client inputted');
-      const hasTask = Boolean(taskStr && taskStr.toLowerCase() !== 'task' && taskStr.toLowerCase() !== 'no task inputted');
-
-      if (hasTime && (!hasClient || !hasTask)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Select client and task first before time in and out',
-          fieldErrors: {
-            ...(!hasClient ? { client: 'Client must be selected first' } : {}),
-            ...(!hasTask ? { task: 'Task must be selected first' } : {}),
-          },
-        });
-      }
-    }
 
     const cleanTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
     if (cleanTaskId) {
       const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
       let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
 
+      const targetRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
       if (targetRow) {
         const nowTimeOut = targetRow.timeOut || new Intl.DateTimeFormat('en-US', {
           timeZone: 'Asia/Manila',
@@ -5111,6 +5156,33 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           });
         }
         await updateTaskMapRecord(cleanTaskId, { pmReviews });
+
+        // Persist Nexus livework / clock-out submission into DailySheetLog
+        const savedNexusLog = await upsertDailySheetLog({
+          date: targetRow.date || getManilaDateStr(),
+          maName: actorDisplayName,
+          userId: actorUser?.id || user?.id || null,
+          taskId: cleanTaskId,
+          subtaskId: subtaskId || null,
+          sheetRow: sheetRow ? Number(sheetRow) : null,
+          client: targetRow.client || 'General',
+          taskName: targetRow.task || 'Task',
+          timeIn: targetRow.timeIn || null,
+          timeOut: mode === 'STOP' ? nowTimeOut : (targetRow.timeOut || null),
+          isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
+          timeTracker: targetRow.timeTracker || null,
+          status: targetRow.taskStatus || mode || 'In progress',
+          taskDeliverables: targetRow.taskDeliverablesDescription || null,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
+          taskLink: targetRow.taskLink || `https://nexus.vipscaleph.com/task/${cleanTaskId}`,
+          source: 'NEXUS_BOARD',
+        }).catch((err) => {
+          logger.warn({ err }, 'Failed to upsert DailySheetLog from syncSpreadsheetRowHandler');
+          return null;
+        });
+        if (savedNexusLog) {
+          io.emit('daily_sheet_log:updated', { log: savedNexusLog });
+        }
       }
 
       if (mode === 'STOP') {
@@ -5120,29 +5192,28 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
         io.emit('task_map:ma_progress_changed', clearedPayload);
         io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
       }
-    }
 
-    // Always forward row to n8n webhook for realtime spreadsheet update based on user's dailySheetUrl from database
-    if (targetRow) {
-      triggerN8nStartTaskWebhook({
-        userId: actorUser?.id || user?.id,
-        userName: actorDisplayName,
-        userEmail: actorUser?.email,
-        dailySheetUrl: actorUser?.dailySheetUrl,
-        taskId: cleanTaskId || taskId || 'general-task',
-        subtaskId: subtaskId || null,
-        taskTitle: targetRow.task || 'Task',
-        clientName: targetRow.client || 'General',
-        taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : ''),
-        status: targetRow.taskStatus || mode,
-        timeIn: targetRow.timeIn,
-        timeOut: targetRow.timeOut,
-        taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
-        taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
-        description: targetRow.taskDeliverablesDescription || targetRow.task,
-        date: targetRow.date,
-        mode: mode || (targetRow.timeOut ? 'STOP' : 'START'),
-      });
+      // Forward to n8n webhook
+      if (targetRow) {
+        triggerN8nStartTaskWebhook({
+          userId: user?.id,
+          userName: actorDisplayName,
+          userEmail: actorUser?.email,
+          dailySheetUrl: actorUser?.dailySheetUrl,
+          taskId: cleanTaskId,
+          subtaskId: subtaskId || null,
+          taskTitle: targetRow.task || 'Task',
+          clientName: targetRow.client || 'General',
+          taskLink: targetRow.taskLink || `https://nexus.vipscaleph.com/task/${cleanTaskId}`,
+          status: targetRow.taskStatus || mode,
+          timeIn: targetRow.timeIn,
+          timeOut: targetRow.timeOut,
+          taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
+          description: targetRow.taskDeliverablesDescription || targetRow.task,
+          mode: mode || 'UPDATE',
+        });
+      }
     }
 
     return res.json({
@@ -5152,6 +5223,111 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     });
   } catch (err: any) {
     logger.error({ err }, 'Error in syncSpreadsheetRowHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getDailySheetLogsHandler = async (req: Request, res: Response) => {
+  try {
+    const date = (req.query.date as string) || getManilaDateStr();
+    const maName = (req.query.maName as string) || undefined;
+    const search = (req.query.search as string) || undefined;
+
+    const logs = await getDailySheetLogsForDate(date, { maName, search });
+    return res.json({
+      success: true,
+      date: date.trim().split('T')[0],
+      logs,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getDailySheetLogsHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const createDailySheetLogHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const {
+      date,
+      maName,
+      taskId,
+      subtaskId,
+      sheetRow,
+      client,
+      taskName,
+      timeIn,
+      timeOut,
+      isMissingTime,
+      isUpwork,
+      timeTracker,
+      status,
+      taskDeliverables,
+      taskUpdateAndDeliverables,
+      taskLink,
+    } = req.body;
+
+    const effectiveMaName = (maName || user?.name || user?.email || '').trim();
+    if (!effectiveMaName) {
+      return res.status(400).json({ error: 'maName is required' });
+    }
+
+    const log = await upsertDailySheetLog({
+      date: date || getManilaDateStr(),
+      maName: effectiveMaName,
+      userId: user?.id || null,
+      taskId: taskId || null,
+      subtaskId: subtaskId || null,
+      sheetRow: sheetRow ? Number(sheetRow) : null,
+      client: client || null,
+      taskName: taskName || null,
+      timeIn: timeIn || null,
+      timeOut: timeOut || null,
+      isMissingTime: Boolean(isMissingTime),
+      isUpwork: Boolean(isUpwork),
+      timeTracker: timeTracker || null,
+      status: status || null,
+      taskDeliverables: taskDeliverables || null,
+      taskUpdateAndDeliverables: taskUpdateAndDeliverables || null,
+      taskLink: taskLink || null,
+      source: 'NEXUS_SHEETS',
+    });
+
+    if (log) {
+      io.emit('daily_sheet_log:updated', { log });
+    }
+    await invalidateCache('task_map:all').catch(() => {});
+
+    return res.json({ success: true, log });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in createDailySheetLogHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
+  try {
+    const requestedUserId = (req.query.userId as string) || (req as any).user?.id;
+    if (!requestedUserId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: requestedUserId },
+      select: { id: true, name: true, email: true, dailySheetUrl: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const match = user.dailySheetUrl?.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return res.json({
+      success: true,
+      userId: user.id,
+      userName: user.name,
+      dailySheetUrl: user.dailySheetUrl || null,
+      spreadsheetId: match ? match[1] : null,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
     return res.status(500).json({ error: err.message });
   }
 };

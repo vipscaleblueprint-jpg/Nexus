@@ -690,6 +690,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('task:progress_updated', { detail: data }));
     });
 
+    s.on('daily_sheet_log:updated', (data) => {
+      window.dispatchEvent(new CustomEvent('daily_sheet_log:updated', { detail: data }));
+    });
+
     s.on('task:deleted', ({ id }) => {
       useAppStore.getState().removeTask(id);
       window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));

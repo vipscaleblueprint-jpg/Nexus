@@ -33,6 +33,8 @@ import {
   getClientLockStatusHandler,
   syncSpreadsheetRowHandler,
   getUserDailyScheduleConfigHandler,
+  getDailySheetLogsHandler,
+  createDailySheetLogHandler,
 } from '../controllers/taskMap.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 
@@ -82,3 +84,5 @@ taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);
 // Spreadsheet Schedule Row Sync & User Config
 taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
 taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);
+taskMapRouter.get('/sheets/logs', getDailySheetLogsHandler);
+taskMapRouter.post('/sheets/logs', createDailySheetLogHandler);

@@ -35,6 +35,7 @@ import { triggerLaunchReviewAlertIfNeeded } from '../services/launchMapService';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { toNotificationPreview } from '../utils/mentionNotification';
 import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask, getManilaDateStr } from '../services/taskMapService';
+import { upsertDailySheetLog, clearDailySheetLogRow } from '../services/dailySheetLogService';
 import { verifyDailyOtp, setClientUnlockedToday, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
 
 interface LinkedTarget {
@@ -1514,6 +1515,15 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             }
           }
 
+          if (incomingRowNum > 0) {
+            await clearDailySheetLogRow({
+              date: date ? String(date).trim() : null,
+              maName: maNameStr,
+              sheetRow: incomingRowNum,
+            }).catch((err) => console.warn('[Sheets] Failed to clear DailySheetLog row:', err));
+            io.emit('daily_sheet_log:updated', { date: date ? String(date).trim() : getManilaDateStr(), maName: maNameStr, cleared: true });
+          }
+
           return res.status(200).json({
             success: true,
             cleared: true,
@@ -1546,6 +1556,33 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         };
 
         const isOlderRowEdit = shouldSkipOlderRow(currentActiveRaw, incomingRowNum, sessionDate, sessionData.active);
+
+        // Always persist every sheet submission into DailySheetLog as historical data for that day
+        const savedUnmatchedLog = await upsertDailySheetLog({
+          date: sessionDate,
+          maName: maNameStr,
+          taskId: null,
+          subtaskId: null,
+          sheetRow: sheet_row ? Number(sheet_row) : null,
+          client: assumedClient,
+          taskName: assumedTask,
+          timeIn: cleanTimeIn,
+          timeOut: cleanTimeOut,
+          isMissingTime,
+          isUpwork,
+          timeTracker: trackerStr || (isUpwork ? 'Upwork' : 'No Need to Track'),
+          status: sessionStatus,
+          taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
+          taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
+          taskLink: task_link ? String(task_link).trim() : null,
+          source: 'GOOGLE_SHEET',
+        }).catch((err) => {
+          console.warn('[Sheets] Failed to upsert DailySheetLog (unmatched):', err);
+          return null;
+        });
+        if (savedUnmatchedLog) {
+          io.emit('daily_sheet_log:updated', { log: savedUnmatchedLog });
+        }
 
         if (!isOlderRowEdit) {
           // Hold user's last inputted session throughout the day until 12:00 AM rollover
@@ -1753,6 +1790,35 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     };
 
     reviewsList.push(progressObj);
+
+    // Persist this livework/sheet submission into DailySheetLog as historical data for that day
+    if (maNameStr) {
+      const savedLog = await upsertDailySheetLog({
+        date: date ? String(date).trim() : getManilaDateStr(),
+        maName: maNameStr,
+        taskId: target.taskId,
+        subtaskId: target.subtaskId || null,
+        sheetRow: sheet_row ? Number(sheet_row) : null,
+        client: clientStr || null,
+        taskName: task ? String(task).trim() : null,
+        timeIn: cleanTimeIn,
+        timeOut: cleanTimeOut,
+        isMissingTime,
+        isUpwork,
+        timeTracker: trackerStr || (isUpwork ? 'Upwork' : 'No Need to Track'),
+        status: statusStr || null,
+        taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
+        taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
+        taskLink: task_link ? String(task_link).trim() : null,
+        source: 'GOOGLE_SHEET',
+      }).catch((err) => {
+        console.warn('[Sheets] Failed to upsert DailySheetLog:', err);
+        return null;
+      });
+      if (savedLog) {
+        io.emit('daily_sheet_log:updated', { log: savedLog });
+      }
+    }
 
     // Clean up any other task that was previously linked to the same sheet_row for this MA (in case row was replaced)
     // and close any previous open sessions (timeIn without timeOut) for this MA so old tasks never linger as "Live Working"

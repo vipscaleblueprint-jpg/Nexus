@@ -751,3 +751,40 @@ model TaskMapRecord {
   @@index([shift])
   @@index([rolloverCount])
 }
+
+model DailySheetLog {
+  id                        String    @id @default(uuid())
+  dateKey                   String    // YYYY-MM-DD (Manila)
+  dateDisplay               String?
+  maName                    String
+  maKey                     String    // lowercased trimmed maName for fast lookup
+  userId                    String?
+  taskId                    String?
+  subtaskId                 String?
+  sheetRow                  Int?
+  spreadsheetId             String?
+  client                    String?
+  taskName                  String?
+  timeIn                    String?
+  timeOut                   String?
+  isMissingTime             Boolean   @default(false)
+  isUpwork                  Boolean   @default(false)
+  timeTracker               String?
+  status                    String?
+  taskDeliverables          String?
+  taskUpdateAndDeliverables String?
+  taskLink                  String?
+  source                    String    @default("GOOGLE_SHEET")
+  isLive                    Boolean   @default(false)
+  startedAt                 DateTime?
+  endedAt                   DateTime?
+  submittedAt               DateTime  @default(now())
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  @@index([dateKey])
+  @@index([dateKey, maKey])
+  @@index([dateKey, taskId])
+  @@index([maKey, sheetRow, dateKey])
+  @@index([isLive])
+}

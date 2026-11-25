@@ -48,6 +48,10 @@ const TaskMapDailyTrackerView = dynamic(
   () => import('./TaskMapDailyTrackerView').then((m) => m.TaskMapDailyTrackerView),
   { ssr: false }
 );
+const TaskMapSheetsView = dynamic(
+  () => import('./TaskMapSheetsView').then((m) => m.TaskMapSheetsView),
+  { ssr: false }
+);
 import { TaskModalLoadingOverlay } from '@/components/modals/TaskModalLoadingOverlay';
 
 const TaskDetailModal = dynamic(
@@ -165,7 +169,8 @@ export const TaskMapContainer: React.FC = () => {
     }
     return getTodayDateStr();
   });
-  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER'>('BOARD');
+  const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS'>('BOARD');
+  const [dailySheetLogs, setDailySheetLogs] = useState<any[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -523,6 +528,9 @@ export const TaskMapContainer: React.FC = () => {
           }
         });
         useAppStore.getState().setMaActiveSessions(enrichedSessions);
+        if (Array.isArray(res.dailySheetLogs)) {
+          setDailySheetLogs(res.dailySheetLogs);
+        }
         if (res.allClients) {
           setAllDbClients(res.allClients);
         }
@@ -898,7 +906,7 @@ export const TaskMapContainer: React.FC = () => {
   }, [loadData, currentDate, historyDates]);
 
   const handleViewChange = useCallback(
-    (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER') => {
+    (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS') => {
       setCurrentView(nextView);
       if (nextView === 'BOARD') {
         setSelectedTaskModal(null);
@@ -2027,6 +2035,15 @@ export const TaskMapContainer: React.FC = () => {
               clients={clients}
               onOpenDetail={handleOpenTaskDetail}
               onRefresh={() => loadData(true)}
+            />
+          ) : currentView === 'SHEETS' ? (
+            <TaskMapSheetsView
+              allTasks={tasks}
+              allUsers={allUsers}
+              initialDate={currentDate}
+              initialLogs={dailySheetLogs}
+              onOpenDetail={handleOpenTaskDetail}
+              onRefreshBoard={() => loadData(true)}
             />
           ) : (
             <TaskMapUpworkView

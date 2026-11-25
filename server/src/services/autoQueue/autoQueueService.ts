@@ -33,8 +33,10 @@ import {
   getBoardItemOwnerId,
   isBoardItemStarted,
   isMaWorkItem,
+  usersInGroup,
   type BoardItem,
   type QueueUser,
+  type ShiftGroup,
   type ShiftWindow,
 } from './rules';
 
@@ -85,7 +87,7 @@ async function loadPeople(): Promise<{ users: QueueUser[]; shifts: ShiftWindow[]
         id: true, name: true, email: true, roles: true, systemRole: true, isActive: true, starRating: true, teamId: true,
       },
     }),
-    prisma.auditShiftConfig.findMany({ where: { isActive: true } }),
+    prisma.auditShiftConfig.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
   ]);
   return { users: users as QueueUser[], shifts: shifts as ShiftWindow[] };
 }
@@ -283,36 +285,47 @@ export interface DailyResult {
   summary: DailyPlan['summary'];
 }
 
-export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode } = {}): Promise<DailyResult> {
+async function runGroupDistribution(
+  group: ShiftGroup,
+  label: '5am' | '5pm',
+  opts: { modeOverride?: AutoQueueMode } = {}
+): Promise<DailyResult> {
   const config = getAutoQueueConfig();
   const mode = opts.modeOverride || config.mode;
   const empty = { decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
   if (mode === 'off') return { mode, skipped: 'AUTO_QUEUE_MODE is off', ...empty };
 
-  return exclusive('5 AM plan', async () => {
-    const bot = await getOrCreateAutoQueueUser();
-    const [{ pool, items }, { users, shifts }] = await Promise.all([loadBoard(bot), loadPeople()]);
-    const plan = await planDailyDistribution({
-      pool,
-      boardItems: items,
-      users,
-      shifts,
-      defaultHours: config.defaultHours,
-      pick: aiPicker(),
-    });
-    const decisions = await applyDecisions({
-      decisions: plan.decisions,
-      itemsById: new Map(pool.map((t) => [t.id, t])),
-      expectedOwner: () => null,
-      bot,
-      dryRun: mode === 'dry_run',
-      label: '5am',
-    });
-    logger.info(
-      `[AutoQueue][5am] ${decisions.filter((d) => d.applied).length}/${plan.decisions.length} queued to ${plan.scheduledMaCount} MAs; ${plan.skipped.length} left in pool`
-    );
-    return { mode, decisions, skippedTasks: plan.skipped, scheduledMaCount: plan.scheduledMaCount, summary: plan.summary };
+  const bot = await getOrCreateAutoQueueUser();
+  const [{ pool, items }, { users, shifts }] = await Promise.all([loadBoard(bot), loadPeople()]);
+  const plan = await planDailyDistribution({
+    pool,
+    boardItems: items,
+    users: usersInGroup(users, shifts, group),
+    shifts,
+    defaultHours: config.defaultHours,
+    pick: aiPicker(),
   });
+  const decisions = await applyDecisions({
+    decisions: plan.decisions,
+    itemsById: new Map(pool.map((t) => [t.id, t])),
+    expectedOwner: () => null,
+    bot,
+    dryRun: mode === 'dry_run',
+    label,
+  });
+  logger.info(
+    `[AutoQueue][${label}] ${decisions.filter((d) => d.applied).length}/${plan.decisions.length} queued to ${plan.scheduledMaCount} ${group} MAs; ${plan.skipped.length} left in pool`
+  );
+  return { mode, decisions, skippedTasks: plan.skipped, scheduledMaCount: plan.scheduledMaCount, summary: plan.summary };
+}
+
+export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode } = {}): Promise<DailyResult> {
+  const config = getAutoQueueConfig();
+  const mode = opts.modeOverride || config.mode;
+  if (mode === 'off') {
+    return { mode, skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
+  }
+  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', opts));
 }
 
 // ---------------------------------------------------------------------------

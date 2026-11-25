@@ -1951,8 +1951,9 @@ const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
 export const updateTaskStatuses = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { statuses, taskDeliverablesDescription, taskUpdateAndDeliverables, timeOut } = req.body;
+    const { statuses, taskDeliverablesDescription, taskUpdateAndDeliverables, timeOut, skipN8nSync, skipSheetSync, sheetRow } = req.body;
     const user = (req as any).user;
+    const shouldSkipN8n = Boolean(skipN8nSync || skipSheetSync);
 
     if (!Array.isArray(statuses)) {
       return res.status(400).json({ error: 'Statuses must be an array of strings' });
@@ -2137,24 +2138,42 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           io.emit('task_map:ma_progress_changed', clearedPayload);
           io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.rawId });
         }
-        if (isHandoverSubStatus || isWorkflowTransferOut) {
-          triggerN8nStartTaskWebhook({
-            userId: subtask.assigneeId || subUser?.id || user?.id,
-            userName: subUser?.name || actorDisplayName,
-            userEmail: (subUser as any)?.email || actorUser?.email,
-            dailySheetUrl: (subUser as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
-            taskId: subtask.taskId,
-            subtaskId: subtask.id,
-            taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
-            clientName: (subtask.task as any)?.list?.name || 'General',
-            taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
-            status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
-            timeOut: nowManilaTime,
-            taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
-            taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
-            description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : subtask.title || '',
-            mode: 'STOP',
-          });
+        if (!shouldSkipN8n && (isHandoverSubStatus || isWorkflowTransferOut)) {
+          const dedupeKey = `${getManilaDateStr()}::${(subUser?.name || actorDisplayName).trim().toLowerCase()}::${target.rawId}`;
+          let skipWebhook = false;
+          if (isRedisReady()) {
+            const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
+            if (!acquired) skipWebhook = true;
+          } else {
+            const prevTs = recentSpreadsheetStopDedupe.get(dedupeKey);
+            const nowTs = Date.now();
+            if (prevTs && nowTs - prevTs < 30000) {
+              skipWebhook = true;
+            } else {
+              recentSpreadsheetStopDedupe.set(dedupeKey, nowTs);
+            }
+          }
+
+          if (!skipWebhook) {
+            triggerN8nStartTaskWebhook({
+              userId: subtask.assigneeId || subUser?.id || user?.id,
+              userName: subUser?.name || actorDisplayName,
+              userEmail: (subUser as any)?.email || actorUser?.email,
+              dailySheetUrl: (subUser as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
+              taskId: subtask.taskId,
+              subtaskId: subtask.id,
+              sheetRow: sheetRow ? Number(sheetRow) : null,
+              taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
+              clientName: (subtask.task as any)?.list?.name || 'General',
+              taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
+              status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+              timeOut: nowManilaTime,
+              taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+              taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
+              description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : subtask.title || '',
+              mode: 'STOP',
+            });
+          }
         }
         if (isClosedSubStatus) {
           await prisma.subtask.update({
@@ -2461,24 +2480,42 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         io.emit('task_map:ma_progress_changed', clearedPayload);
         io.emit('task_map:updated', { maSession: clearedPayload, taskId: id });
       }
-      if (isHandoverSubStatus || isWorkflowTransferOut) {
+      if (!shouldSkipN8n && (isHandoverSubStatus || isWorkflowTransferOut)) {
         const primaryAssignee = currentTask?.assignee || (currentTask?.assignees && currentTask.assignees[0]);
-        triggerN8nStartTaskWebhook({
-          userId: currentTask?.assigneeId || primaryAssignee?.id || user?.id,
-          userName: primaryAssignee?.name || actorDisplayName,
-          userEmail: primaryAssignee?.email || actorUser?.email,
-          dailySheetUrl: (primaryAssignee as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
-          taskId: id,
-          taskTitle: currentTask?.title || 'Task',
-          clientName: (currentTask as any)?.list?.name || 'General',
-          taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
-          status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
-          timeOut: nowManilaTime,
-          taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
-          taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
-          description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : currentTask?.title || '',
-          mode: 'STOP',
-        });
+        const dedupeKey = `${getManilaDateStr()}::${(primaryAssignee?.name || actorDisplayName).trim().toLowerCase()}::${id}`;
+        let skipWebhook = false;
+        if (isRedisReady()) {
+          const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
+          if (!acquired) skipWebhook = true;
+        } else {
+          const prevTs = recentSpreadsheetStopDedupe.get(dedupeKey);
+          const nowTs = Date.now();
+          if (prevTs && nowTs - prevTs < 30000) {
+            skipWebhook = true;
+          } else {
+            recentSpreadsheetStopDedupe.set(dedupeKey, nowTs);
+          }
+        }
+
+        if (!skipWebhook) {
+          triggerN8nStartTaskWebhook({
+            userId: currentTask?.assigneeId || primaryAssignee?.id || user?.id,
+            userName: primaryAssignee?.name || actorDisplayName,
+            userEmail: primaryAssignee?.email || actorUser?.email,
+            dailySheetUrl: (primaryAssignee as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
+            taskId: id,
+            sheetRow: sheetRow ? Number(sheetRow) : null,
+            taskTitle: currentTask?.title || 'Task',
+            clientName: (currentTask as any)?.list?.name || 'General',
+            taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
+            status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+            timeOut: nowManilaTime,
+            taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+            taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
+            description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : currentTask?.title || '',
+            mode: 'STOP',
+          });
+        }
       }
       if (isRedisReady()) {
         await redis.hdel('task_map:upwork_active', id).catch(() => {});
@@ -5627,7 +5664,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     if (targetRow) {
       let skipDuplicateWebhook = false;
       if (mode === 'STOP') {
-        const dedupeKey = `${String(targetRow.date || getManilaDateStr()).split('T')[0]}::${actorDisplayName.trim().toLowerCase()}::${String(targetRow.timeIn || '').trim()}::${cleanTaskId || 'none'}`;
+        const dedupeKey = `${String(targetRow.date || getManilaDateStr()).split('T')[0]}::${actorDisplayName.trim().toLowerCase()}::${cleanTaskId || 'none'}${subtaskId ? `:${subtaskId}` : ''}`;
         if (isRedisReady()) {
           const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
           if (!acquired) skipDuplicateWebhook = true;

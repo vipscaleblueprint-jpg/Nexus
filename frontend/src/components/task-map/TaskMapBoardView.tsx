@@ -2745,7 +2745,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
         taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
       }).catch(console.error);
 
-      onStatusChange(effectiveTaskId, [targetStatus]);
       const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
 
       if (isHandover) {

@@ -375,28 +375,18 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
         className={`group relative rounded-xl border p-3 shadow-md transition-all duration-200 ease-out ${
           isSnoozed
             ? 'border-zinc-800/80 bg-zinc-900/45 opacity-70 hover:opacity-95'
-            : isUpwork
-              ? 'bg-zinc-900 border-indigo-500/35 dark:border-white/35 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md'
-              : 'bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md'
+            : 'bg-zinc-900 not-has-[[data-card-control]:hover]:hover:bg-zinc-800/80 not-has-[[data-card-control]:hover]:hover:shadow-md'
         } ${isClickable ? 'cursor-pointer active:scale-[0.99]' : ''}`}
-        style={!isSnoozed && !isUpwork ? { borderColor: 'rgba(208, 74, 124, 0.35)' } : undefined}
+        style={!isSnoozed ? { borderColor: 'rgba(208, 74, 124, 0.35)' } : undefined}
       >
         {!isSnoozed && (
           <div
             aria-hidden="true"
-            className={
-              isUpwork
-                ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
-                : 'pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe'
-            }
-            style={
-              !isUpwork
-                ? {
-                    borderColor: '#D04A7C',
-                    boxShadow: '0 0 0 2px rgba(208, 74, 124, 0.5), 0 0 20px rgba(208, 74, 124, 0.35)',
-                  }
-                : undefined
-            }
+            className="pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe"
+            style={{
+              borderColor: '#D04A7C',
+              boxShadow: '0 0 0 2px rgba(208, 74, 124, 0.5), 0 0 20px rgba(208, 74, 124, 0.35)',
+            }}
           />
         )}
         {/* Person + Live Timer */}

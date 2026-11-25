@@ -232,6 +232,30 @@ async function closeOtherOpenBoardSessionsForMa(
   }
 }
 
+/**
+ * Clears every MA active session (Redis ma_active_sessions) that points at this task or subtask.
+ * Without this, a task dragged back to Queue keeps rendering as the MA's In Progress card,
+ * because the board builds the user's live slot from the held session.
+ */
+async function clearMaSessionsForTarget(taskId: string, subtaskId: string | null) {
+  try {
+    const sessions = await getMaActiveSessionsMap();
+    for (const [key, s] of Object.entries(sessions)) {
+      if (!s || s.cleared) continue;
+      const matches = subtaskId ? s.subtaskId === subtaskId : s.taskId === taskId && !s.subtaskId;
+      if (!matches) continue;
+      await deleteMaActiveSession(key).catch(() => {});
+      // maName = the Redis key, so the frontend store (keyed by lowercased maName) drops the same entry
+      const clearedPayload = { maName: key, cleared: true, taskId: subtaskId ? `subtask:${subtaskId}` : taskId };
+      io.emit('ma:session_updated', clearedPayload);
+      io.emit('task_map:ma_progress_changed', clearedPayload);
+      io.emit('task_map:updated', { maSession: clearedPayload, taskId: clearedPayload.taskId });
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed clearing MA sessions for queued task');
+  }
+}
+
 async function hasLiveSheetSessionForTarget(maName: string, taskId: string, subtaskId?: string | null): Promise<boolean> {
   const maKey = (maName || '').trim().toLowerCase();
   if (!maKey) return false;
@@ -3089,6 +3113,7 @@ async function executeTaskMapAssignment(
           subtaskId: currentSubtask.id,
           timeOut: subTimeOut,
         }).catch((err) => logger.warn({ err }, 'Failed to close live DailySheetLog for subtask'));
+        await clearMaSessionsForTarget(currentSubtask.taskId, currentSubtask.id);
       }
 
       const updatedRecord = await updateTaskMapRecord(currentSubtask.taskId, { pmReviews: reviewsList });
@@ -3701,6 +3726,7 @@ async function executeTaskMapAssignment(
       await closeLiveDailySheetLogsForTask({ taskId: id, timeOut: queueTimeOut }).catch((err) =>
         logger.warn({ err }, 'Failed to close live DailySheetLog for task')
       );
+      await clearMaSessionsForTarget(id, null);
     }
 
     const updateMapRecordPayload: any = { statuses: newStatuses, handedOver };

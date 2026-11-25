@@ -9,6 +9,7 @@ import {
   countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
   toCanonicalTaskStatus,
+  normalizeTaskMapSubStatuses,
   matchesMarketingNameSearch,
   subscribeTaskMapSaving,
   isTaskSavingToDb,
@@ -19,6 +20,7 @@ import {
   formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
@@ -134,11 +136,10 @@ const DraggableTaskCard: React.FC<{
     >
       {isSaving && (
         <div
-          className="absolute top-2 right-2 z-20 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-cyan-950/90 border border-[#22A3AE]/40 text-cyan-300 text-[9px] font-bold shadow-md pointer-events-none backdrop-blur-xs"
-          title="Saving changes to database..."
+          className="absolute top-2 right-2 z-20 inline-flex items-center justify-center p-1 rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700/80 shadow-md pointer-events-none backdrop-blur-xs"
+          title="Saving changes..."
         >
-          <Loader2 className="size-2.5 animate-spin text-[#22A3AE]" />
-          <span>Saving...</span>
+          <NexusLogoLoader inline size={15} />
         </div>
       )}
       {children}
@@ -750,12 +751,12 @@ export const TaskMapCrmView: React.FC<Props> = ({
     }
   };
 
-  // Helper options for sub-status dropdown in CRM (includes 'Ready to Send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
+  // Helper options for sub-status dropdown in CRM (includes 'To send', 'Sent but Waiting', 'Follow up', 'Revision', 'Closed')
   const getCrmOptions = (task: TaskMapItem): TaskMapOption[] => {
     const ls = task.list?.statuses;
     const isInClientDashboard = isTaskInClientDashboard(task, clients);
     const options: TaskMapOption[] = [
-      { id: 'opt-crm-readytosend', label: 'Ready to Send', color: resolveSubStatusColor('Ready to Send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
+      { id: 'opt-crm-readytosend', label: 'To send', color: resolveSubStatusColor('To send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
     ];
     if (isInClientDashboard) {
       options.push({ id: 'opt-crm-sent', label: 'Sent but Waiting', color: resolveSubStatusColor('Sent but Waiting', TASK_MAP_STATUS_COLORS.SENT, task.list?.id, ls), textColor: '#ffffff', order: 1 });
@@ -782,16 +783,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
     ) || '#22A3AE';
     const showBreathe = showFollowUpBreathe || isLiveWorking;
     const breatheColor = showFollowUpBreathe ? followUpHex : liveColor;
-    const rawSubStatuses = task.taskMap?.statuses || [];
-    const displaySubStatuses = isSentWaitingCard
-      ? rawSubStatuses.length === 0 ||
-        rawSubStatuses.some((st) => {
-          const up = st.toUpperCase().trim();
-          return up === 'SENT' || up === 'WAITING';
-        })
-        ? ['Sent but Waiting']
-        : rawSubStatuses
-      : rawSubStatuses;
+    const displaySubStatuses = normalizeTaskMapSubStatuses(
+      isSentWaitingCard ? 'WAITING' : task.status || 'CRM',
+      task.taskMap?.statuses,
+      { isAssigned: Boolean(getEffectiveTaskMapHandlerId(task)) }
+    );
 
     return (
       <DraggableTaskCard key={task.id} task={task} disabled={false}>
@@ -1084,7 +1080,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       toast.success('Task marked Sent but Waiting — status updated to WAITING');
                     } else {
                       // Toggled off Sent but Waiting -> revert back to CRM
-                      onStatusChange(task.id, ['Ready to Send']);
+                      onStatusChange(task.id, ['To send']);
                       if (onTaskUpdate) {
                         await onTaskUpdate(task.id, { status: 'CRM' });
                       } else {
@@ -1154,7 +1150,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       }
                       toast.info('Task set to Revision — returned to original MA on Task Map');
                     } else {
-                      onStatusChange(task.id, ['Ready to Send']);
+                      onStatusChange(task.id, ['To send']);
                       if (onTaskUpdate) {
                         await onTaskUpdate(task.id, { status: 'CRM' });
                       } else {
@@ -1168,7 +1164,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
                         task.progress.timeOut = formatManilaTime(new Date());
                       }
-                      onStatusChange(task.id, ['Ready to Send']);
+                      onStatusChange(task.id, ['To send']);
                       if (onTaskUpdate) {
                         await onTaskUpdate(task.id, { assigneeId: null, status: 'CRM' });
                       } else {

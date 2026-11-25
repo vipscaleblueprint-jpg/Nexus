@@ -713,8 +713,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-      if (statusKey === 'CRM') return ['Ready to Send'];
-      if (statusKey === 'WAITING') return ['Waiting'];
+      if (statusKey === 'CRM') return ['To send'];
+      if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
       if (
         statusKey === 'INREVIEW' ||
@@ -872,6 +872,28 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             ...mapRecord,
             statuses: mapRecord.statuses.filter((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'),
           };
+        }
+      }
+
+      // Normalize stale TaskMapRecord.statuses for WAITING / CRM tasks (e.g. 'Available Task' left over from TaskDetailModal status change)
+      const taskStatusNorm = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+      if (taskStatusNorm === 'WAITING' || taskStatusNorm === 'SENT') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        const staleForWaiting = new Set([
+          'AVAILABLETASK', 'TOSEND', 'READYTOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
+        ]);
+        if (cur.length === 0 || cur.every((s: string) => staleForWaiting.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+          mapRecord = { ...mapRecord, statuses: ['Sent but Waiting'] };
+        }
+      } else if (taskStatusNorm === 'CRM') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        const staleForCrm = new Set([
+          'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+        ]);
+        if (cur.length === 0 || cur.every((s: string) => staleForCrm.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+          mapRecord = { ...mapRecord, statuses: ['To send'] };
         }
       }
 
@@ -1438,6 +1460,33 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
+    // Also ensure any live DailySheetLog entry for today is represented in maActiveSessions
+    for (const log of (dailySheetIndex?.logs || [])) {
+      if (!log?.maName || !log.isLive || !log.timeIn || log.timeOut || log.isMissingTime) continue;
+      const maKey = log.maKey || log.maName.toLowerCase().trim();
+      const existing = maActiveSessions[maKey];
+      const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+      const incomingUpdatedMs = log.submittedAt ? new Date(log.submittedAt).getTime() : 0;
+      const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+        maActiveSessions[maKey] = {
+          maName: log.maName,
+          taskId: log.taskId || null,
+          subtaskId: log.subtaskId || null,
+          timeIn: log.timeIn,
+          timeOut: null,
+          client: log.client || 'General',
+          taskName: log.taskName || log.taskDeliverables || 'No task inputted',
+          date: log.dateKey || todayManila,
+          status: log.status || 'IN PROGRESS',
+          isUpwork: Boolean(log.isUpwork),
+          rowNumber: log.sheetRow || null,
+          updatedAt: log.submittedAt ? new Date(log.submittedAt).toISOString() : new Date().toISOString(),
+          active: true,
+        };
+      }
+    }
+
     // Enrich all maActiveSessions with lightweight task metadata (excluding description so it only loads on click)
     const enrichedTaskById = new Map<string, any>();
     const listByNameLower = new Map<string, { id: string; name: string }>();
@@ -1546,6 +1595,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       await captureTaskMapDailySnapshot(requestedDate, snapshotPayload, (req as any).user?.id || 'system');
     }
 
+    const activeSuperviseChecks = await (prisma as any).superviseCheck.findMany({
+      where: {
+        dateKey: requestedDate,
+        reappearAt: { gt: new Date() },
+      },
+      orderBy: { checkedAt: 'desc' },
+    }).catch(() => []);
+
     const responsePayload = {
       success: true,
       isHistory: isPastDate,
@@ -1555,6 +1612,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       availablePool,
       allClients,
       dailySheetLogs: dailySheetIndex.logs,
+      superviseChecks: activeSuperviseChecks,
       options,
       shifts,
       statusCounts,
@@ -1740,8 +1798,8 @@ const parsePmReviewsArray = (raw: any): any[] => {
 
 const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
   const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (statusKey === 'CRM') return ['Ready to Send'];
-  if (statusKey === 'WAITING') return ['Waiting'];
+  if (statusKey === 'CRM') return ['To send'];
+  if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
   if (statusKey === 'ONHOLD') return ['On-hold'];
   if (
     statusKey === 'INREVIEW' ||
@@ -5360,5 +5418,96 @@ export const getUserDailyScheduleConfigHandler = async (req: Request, res: Respo
     return res.status(500).json({ error: err.message });
   }
 };
+
+export const createSuperviseCheckHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const {
+      maName,
+      dateKey,
+      timeIn,
+      taskId,
+      taskTitle,
+      client,
+      note,
+    } = req.body || {};
+
+    if (!maName || !timeIn) {
+      return res.status(400).json({ error: 'maName and timeIn are required' });
+    }
+
+    const effectiveDateKey = String(dateKey || getManilaDateStr()).trim().split('T')[0];
+    const maKey = String(maName).trim().toLowerCase();
+    const cleanTimeIn = String(timeIn).trim();
+    const cleanTaskId = taskId ? String(taskId).trim() : null;
+    const sessionKey = `${effectiveDateKey}::${maKey}::${cleanTimeIn}::${cleanTaskId || 'none'}`;
+
+    const checkedAt = new Date();
+    const reappearAt = new Date(checkedAt.getTime() + 40 * 60 * 1000);
+
+    const check = await (prisma as any).superviseCheck.upsert({
+      where: { sessionKey },
+      update: {
+        maKey,
+        maName: String(maName).trim(),
+        dateKey: effectiveDateKey,
+        timeIn: cleanTimeIn,
+        taskId: cleanTaskId,
+        taskTitle: taskTitle ? String(taskTitle).trim() : null,
+        client: client ? String(client).trim() : null,
+        note: note ? String(note).trim() : null,
+        checkedById: user?.id || null,
+        checkedByName: user?.name || user?.email || 'Supervisor',
+        checkedAt,
+        reappearAt,
+      },
+      create: {
+        sessionKey,
+        maKey,
+        maName: String(maName).trim(),
+        dateKey: effectiveDateKey,
+        timeIn: cleanTimeIn,
+        taskId: cleanTaskId,
+        taskTitle: taskTitle ? String(taskTitle).trim() : null,
+        client: client ? String(client).trim() : null,
+        note: note ? String(note).trim() : null,
+        checkedById: user?.id || null,
+        checkedByName: user?.name || user?.email || 'Supervisor',
+        checkedAt,
+        reappearAt,
+      },
+    });
+
+    io.emit('supervise:updated', { action: 'check', check });
+    await invalidateCache('task_map:*').catch(() => {});
+
+    return res.json({ success: true, check });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in createSuperviseCheckHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const deleteSuperviseCheckHandler = async (req: Request, res: Response) => {
+  try {
+    const { sessionKey } = req.body || {};
+    if (!sessionKey) {
+      return res.status(400).json({ error: 'sessionKey is required' });
+    }
+
+    await (prisma as any).superviseCheck.deleteMany({
+      where: { sessionKey: String(sessionKey) },
+    });
+
+    io.emit('supervise:updated', { action: 'uncheck', sessionKey: String(sessionKey) });
+    await invalidateCache('task_map:*').catch(() => {});
+
+    return res.json({ success: true, sessionKey: String(sessionKey) });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in deleteSuperviseCheckHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 
 

@@ -20,7 +20,7 @@ import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess } from '@/lib/pe
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
 import { isNexusAuditChecklist, normalizeAuditName } from '@/lib/auditChecklist';
-import { taskMapApi, getTaskCrmWaitingInfo, CrmWaitingMeta } from '@/api/taskMap';
+import { taskMapApi, getTaskCrmWaitingInfo, CrmWaitingMeta, normalizeTaskMapSubStatuses } from '@/api/taskMap';
 
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { usersApi, tasksApi } from '@/api';
@@ -2835,7 +2835,24 @@ export function TaskDetailModalContent({
               : st
           )
         : currentTask.subtasks;
-    const updatedTask = { ...currentTask, status: newStatus, ...(cascadedSubtasks ? { subtasks: cascadedSubtasks } : {}) };
+    const nextSubStatuses = normalizeTaskMapSubStatuses(
+      newStatus,
+      (currentTask as any).taskMap?.statuses,
+      {
+        isAssigned: Boolean(
+          currentTask.assigneeId || (currentTask.assignees && currentTask.assignees.length > 0)
+        ),
+      }
+    );
+    const updatedTask = {
+      ...currentTask,
+      status: newStatus,
+      ...(cascadedSubtasks ? { subtasks: cascadedSubtasks } : {}),
+      taskMap: {
+        ...((currentTask as any).taskMap || {}),
+        statuses: nextSubStatuses,
+      },
+    };
     useAppStore.getState().updateTask(updatedTask);
     window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
 
@@ -6898,11 +6915,24 @@ export function SubtaskDetailView({
       });
     }
 
+    const nextSubtaskSubStatuses = normalizeTaskMapSubStatuses(
+      newStatus,
+      (currentSubtask as any).taskMap?.statuses,
+      {
+        isAssigned: Boolean(
+          currentSubtask.assigneeId || (currentSubtask.assignees && currentSubtask.assignees.length > 0)
+        ),
+      }
+    );
     const updatedSubtask = {
       ...currentSubtask,
       status: newStatus,
       completed: isCompleted,
-      checklists: updatedChecklists
+      checklists: updatedChecklists,
+      taskMap: {
+        ...((currentSubtask as any).taskMap || {}),
+        statuses: nextSubtaskSubStatuses,
+      },
     };
 
     // 2. Instantly append optimistic activity to local subtask feed

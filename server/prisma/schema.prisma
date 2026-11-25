@@ -788,3 +788,23 @@ model DailySheetLog {
   @@index([maKey, sheetRow, dateKey])
   @@index([isLive])
 }
+
+model SuperviseCheck {
+  id            String   @id @default(uuid())
+  sessionKey    String   @unique
+  maKey         String
+  maName        String
+  dateKey       String
+  timeIn        String
+  taskId        String?
+  taskTitle     String?
+  client        String?
+  note          String?
+  checkedById   String?
+  checkedByName String?
+  checkedAt     DateTime @default(now())
+  reappearAt    DateTime
+
+  @@index([dateKey])
+  @@index([reappearAt])
+}

@@ -72,6 +72,34 @@ import { queueAuditPick, repickAuditsAfterRename } from '../services/aiAuditPick
 import { checkClientLockStatus } from '../services/clientLockService';
 import { verifyDailyOtp, setClientUnlockedToday } from '../utils/dailyOtp';
 
+const STALE_WAITING_SUBSTATUSES = new Set([
+  'AVAILABLETASK', 'TOSEND', 'READYTOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+  'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
+]);
+
+const STALE_CRM_SUBSTATUSES = new Set([
+  'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+  'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+]);
+
+/**
+ * Syncs TaskMapRecord.statuses when a task's main status moves to WAITING/SENT or CRM
+ * so stale pool tags (e.g. "Available Task") are replaced with "Sent but Waiting" or "To send".
+ */
+async function syncTaskMapSubStatusesOnStatusChange(taskId: string, nextStatus: string, io?: any): Promise<void> {
+  const nextStatusNorm = (nextStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
+  if (nextStatusNorm !== 'WAITING' && nextStatusNorm !== 'SENT' && nextStatusNorm !== 'CRM') return;
+
+  const targetSubStatuses = nextStatusNorm === 'CRM' ? ['To send'] : ['Sent but Waiting'];
+  const staleSet = nextStatusNorm === 'CRM' ? STALE_CRM_SUBSTATUSES : STALE_WAITING_SUBSTATUSES;
+  const existingRecord = await getOrCreateTaskMapRecord(taskId).catch(() => null);
+  const curStatuses = Array.isArray(existingRecord?.statuses) ? existingRecord!.statuses : [];
+  if (curStatuses.length === 0 || curStatuses.every((s: string) => staleSet.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+    await updateTaskMapRecord(taskId, { statuses: targetSubStatuses }).catch(() => {});
+    io?.emit('task_map:updated', { taskId, statuses: targetSubStatuses });
+  }
+}
+
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
 const cuChecklistIdMap = new Map<string, string>(); // nexusChecklistId -> cuChecklistId
 const cuChecklistItemIdMap = new Map<string, { cuChecklistId: string; cuItemId: string }>(); // nexusItemId -> { cuChecklistId, cuItemId }
@@ -1139,6 +1167,7 @@ export async function updateTask(req: Request, res: Response) {
           isLeavingWaiting: leavingWaiting,
         }).catch(() => {});
       }
+      await syncTaskMapSubStatusesOnStatusChange(taskId, status, io);
     }
 
     // Manually construct the payload for frontend to merge efficiently
@@ -1757,6 +1786,7 @@ export async function moveTask(req: Request, res: Response) {
           isLeavingWaiting: leavingWaiting,
         }).catch(() => {});
       }
+      await syncTaskMapSubStatusesOnStatusChange(id, status, io);
     }
 
     // Broadcast IMMEDIATELY after update

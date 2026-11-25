@@ -14,6 +14,7 @@ import {
   isTaskHandedOver,
   isSessionProjectBased,
   getDefaultTaskMapSubStatuses,
+  normalizeTaskMapSubStatuses,
   isTaskMapItemOnHold,
   toCanonicalTaskStatus,
   applyOptimisticTaskMapAssignment,
@@ -173,6 +174,7 @@ export const TaskMapContainer: React.FC = () => {
   });
   const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS'>('BOARD');
   const [dailySheetLogs, setDailySheetLogs] = useState<any[]>([]);
+  const [superviseChecks, setSuperviseChecks] = useState<any[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -406,12 +408,7 @@ export const TaskMapContainer: React.FC = () => {
         // Sanitize sub-statuses: strip CRM tag (CRM is main board routing status, not a substatus label)
         // and apply innate default sub-statuses (only unassigned active tasks default to 'Available Task').
         const sanitizeStatuses = (statuses?: string[], taskStatus?: string, isAssigned = false): string[] => {
-          if (!statuses || statuses.length === 0) {
-            return getDefaultTaskMapSubStatuses(taskStatus, { isAssigned });
-          }
-          const clean = statuses.filter((s) => s.toUpperCase().trim() !== 'CRM');
-          if (clean.length > 0) return clean.slice(0, 1);
-          return getDefaultTaskMapSubStatuses(taskStatus, { isAssigned });
+          return normalizeTaskMapSubStatuses(taskStatus, statuses, { isAssigned });
         };
 
         // Merge with local pending optimistic updates so background refreshes never flicker or uncheck
@@ -523,6 +520,35 @@ export const TaskMapContainer: React.FC = () => {
             }
           }
         });
+        // Ensure any open live row in dailySheetLogs is also reflected in enrichedSessions
+        if (Array.isArray(res.dailySheetLogs)) {
+          res.dailySheetLogs.forEach((l: any) => {
+            if (!l?.maName || !l.isLive || !l.timeIn || l.timeOut || l.isMissingTime) return;
+            const key = l.maName.toLowerCase().trim();
+            const existing = enrichedSessions[key];
+            const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+            const incomingUpdatedMs = l.submittedAt ? new Date(l.submittedAt).getTime() : 0;
+            const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+            if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+              enrichedSessions[key] = {
+                maName: l.maName,
+                taskId: l.taskId || null,
+                subtaskId: l.subtaskId || null,
+                timeIn: l.timeIn,
+                timeOut: null,
+                client: l.client || 'No client inputted',
+                taskName: l.taskName || l.taskDeliverables || 'No task inputted',
+                date: l.dateKey || currentDate,
+                status: l.status || 'IN PROGRESS',
+                isUpwork: Boolean(l.isUpwork),
+                rowNumber: l.sheetRow || null,
+                updatedAt: l.submittedAt || new Date().toISOString(),
+                active: true,
+              };
+            }
+          });
+        }
+
         // Preserve any newer socket-delivered MA sessions that arrived while GET /api/task-map was in flight
         const currentStoreSessions = useAppStore.getState().maActiveSessions || {};
         Object.entries(currentStoreSessions).forEach(([key, curSess]: [string, any]) => {
@@ -544,6 +570,9 @@ export const TaskMapContainer: React.FC = () => {
         useAppStore.getState().setMaActiveSessions(enrichedSessions);
         if (Array.isArray(res.dailySheetLogs)) {
           setDailySheetLogs(res.dailySheetLogs);
+        }
+        if (Array.isArray((res as any).superviseChecks)) {
+          setSuperviseChecks((res as any).superviseChecks);
         }
         if (res.allClients) {
           setAllDbClients(res.allClients);
@@ -692,15 +721,27 @@ export const TaskMapContainer: React.FC = () => {
       const isClosed = task.isClosed || isClosedStatus(task.status);
       // Patch the task in memory to avoid triggering a full network reload
       setTasks((prev) =>
-        prev.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                ...task,
-                ...(isClosed ? { isClosed: true, assigneeId: null, assignee: null, assignees: [] } : {}),
-              }
-            : t
-        )
+        prev.map((t) => {
+          if (t.id !== taskId) return t;
+          const nextStatus = task.status ?? t.status;
+          const nextAssigneeId = task.assigneeId !== undefined ? task.assigneeId : t.assigneeId;
+          const nextAssignees = task.assignees !== undefined ? task.assignees : t.assignees;
+          const nextStatuses = normalizeTaskMapSubStatuses(
+            nextStatus,
+            task.taskMap?.statuses ?? t.taskMap?.statuses,
+            { isAssigned: Boolean(nextAssigneeId || (nextAssignees && nextAssignees.length > 0)) }
+          );
+          return {
+            ...t,
+            ...task,
+            taskMap: {
+              ...t.taskMap,
+              ...(task.taskMap || {}),
+              statuses: nextStatuses,
+            },
+            ...(isClosed ? { isClosed: true, assigneeId: null, assignee: null, assignees: [] } : {}),
+          };
+        })
       );
       setAvailablePool((prev) => {
         if (isClosed) {
@@ -849,6 +890,7 @@ export const TaskMapContainer: React.FC = () => {
           status: log.status || (log.timeOut ? 'CLOSED' : 'IN PROGRESS'),
           isUpwork: Boolean(log.isUpwork),
           rowNumber: log.sheetRow || null,
+          updatedAt: log.submittedAt || log.updatedAt || new Date().toISOString(),
           active: Boolean(log.timeIn && !log.timeOut && !log.isMissingTime),
         });
       }
@@ -904,7 +946,12 @@ export const TaskMapContainer: React.FC = () => {
     const handleMaSessionUpdated = (e: any) => {
       const data = e.detail || e;
       if (data?.maName) {
-        useAppStore.getState().updateMaActiveSession(data.maName, data?.cleared ? null : data);
+        useAppStore.getState().updateMaActiveSession(
+          data.maName,
+          data?.cleared
+            ? null
+            : { ...data, updatedAt: data.updatedAt || new Date().toISOString() }
+        );
       }
     };
 
@@ -949,7 +996,21 @@ export const TaskMapContainer: React.FC = () => {
     };
 
     window.addEventListener('task:updated', handleTaskUpdated);
+    const handleSuperviseUpdated = (e: any) => {
+      const data = e?.detail || e;
+      if (!data) return;
+      if (data.action === 'check' && data.check) {
+        setSuperviseChecks((prev) => {
+          const filtered = prev.filter((c) => c.sessionKey !== data.check.sessionKey);
+          return [data.check, ...filtered];
+        });
+      } else if (data.action === 'uncheck' && data.sessionKey) {
+        setSuperviseChecks((prev) => prev.filter((c) => c.sessionKey !== data.sessionKey));
+      }
+    };
+
     window.addEventListener('task_map:updated', handleTaskMapUpdated);
+    window.addEventListener('supervise:updated', handleSuperviseUpdated);
     window.addEventListener('task_map:shifts_updated', handleShiftsUpdated);
     window.addEventListener('audit_shifts:updated', handleShiftsUpdated);
     window.addEventListener('task:progress_updated', handleProgressUpdated);
@@ -964,6 +1025,7 @@ export const TaskMapContainer: React.FC = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
       window.removeEventListener('task:updated', handleTaskUpdated);
       window.removeEventListener('task_map:updated', handleTaskMapUpdated);
+      window.removeEventListener('supervise:updated', handleSuperviseUpdated);
       window.removeEventListener('task_map:shifts_updated', handleShiftsUpdated);
       window.removeEventListener('audit_shifts:updated', handleShiftsUpdated);
       window.removeEventListener('task:progress_updated', handleProgressUpdated);
@@ -1365,6 +1427,21 @@ export const TaskMapContainer: React.FC = () => {
           : {}),
         taskMap: {
           ...syncedTaskMap,
+          ...(normalizedFields.status !== undefined && !isClosing
+            ? {
+                statuses: normalizeTaskMapSubStatuses(
+                  normalizedFields.status,
+                  syncedTaskMap?.statuses,
+                  {
+                    isAssigned: Boolean(
+                      normalizedFields.assigneeId !== undefined
+                        ? normalizedFields.assigneeId
+                        : t.assigneeId || (t.assignees && t.assignees.length > 0)
+                    ),
+                  }
+                ),
+              }
+            : {}),
           ...(isClosing
             ? { statuses: ['Closed'], handedOver: false }
             : nextHandedOverState !== undefined
@@ -2050,6 +2127,20 @@ export const TaskMapContainer: React.FC = () => {
               search={search}
               trackFilter={trackFilter}
               maSortMode={maSortMode}
+              superviseChecks={superviseChecks}
+              onSuperviseCheck={async (payload) => {
+                const res = await taskMapApi.checkSuperviseSession(payload);
+                if (res?.check) {
+                  setSuperviseChecks((prev) => [
+                    res.check,
+                    ...prev.filter((c) => c.sessionKey !== res.check.sessionKey),
+                  ]);
+                }
+              }}
+              onSuperviseUncheck={async (sessionKey) => {
+                setSuperviseChecks((prev) => prev.filter((c) => c.sessionKey !== sessionKey));
+                await taskMapApi.uncheckSuperviseSession(sessionKey);
+              }}
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView

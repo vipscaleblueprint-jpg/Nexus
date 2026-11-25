@@ -31,6 +31,7 @@ import {
   matchesTaskLinkOrId,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
@@ -163,6 +164,17 @@ interface Props {
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
   maSortMode?: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC';
+  superviseChecks?: any[];
+  onSuperviseCheck?: (payload: {
+    maName: string;
+    dateKey?: string;
+    timeIn: string;
+    taskId?: string | null;
+    taskTitle?: string | null;
+    client?: string | null;
+    note?: string | null;
+  }) => Promise<void> | void;
+  onSuperviseUncheck?: (sessionKey: string) => Promise<void> | void;
 }
 
 // Priority ranking for user columns:
@@ -416,11 +428,10 @@ const DraggableTaskCard: React.FC<{
     >
       {isSaving && !isDragging && (
         <div
-          className="absolute top-1.5 right-1.5 z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-950/95 border border-blue-500/50 text-blue-200 text-[10px] font-semibold shadow-md pointer-events-none animate-in fade-in duration-100"
-          title="Saving changes to database..."
+          className="absolute top-1.5 right-1.5 z-20 inline-flex items-center justify-center p-1 rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700/80 shadow-md pointer-events-none animate-in fade-in duration-100"
+          title="Saving changes..."
         >
-          <Loader2 className="size-2.5 animate-spin text-blue-400 shrink-0" />
-          <span>Saving...</span>
+          <NexusLogoLoader inline size={15} />
         </div>
       )}
       {children}
@@ -1135,6 +1146,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
   search = '',
   trackFilter = 'ALL',
   maSortMode = 'DEFAULT',
+  superviseChecks = [],
+  onSuperviseCheck,
+  onSuperviseUncheck,
 }) => {
   const currentUser = useAppStore((s) => s.currentUser);
   const workspaceUsers = useAppStore((s) => s.workspaceUsers) || [];
@@ -3328,7 +3342,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           );
         })()}
 
-        {/* 1.5 Instruction Live Column (Only live progress >= 20 mins) */}
+        {/* 1.5 Supervise Column (Only live progress >= 20 mins) */}
         <InstructionLiveColumn
           sortedUserColumns={sortedUserColumns}
           isCollapsed={resolveColumnCollapsedState(
@@ -3344,6 +3358,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
           isTaskLiveWorking={isTaskLiveWorking}
           upworkClients={upworkClients}
           upworkProjectClients={upworkProjectClients}
+          currentDate={currentDate}
+          superviseChecks={superviseChecks}
+          onSuperviseCheck={onSuperviseCheck}
+          onSuperviseUncheck={onSuperviseUncheck}
+          onTaskUpdate={onTaskUpdate}
+          onDataRefresh={onDataRefresh}
+          onOpenDeliverables={(targetTask, targetStatus, targetUser, rTaskId) => {
+            setDeliverablesModalTarget({
+              task: targetTask,
+              targetStatus,
+              user: targetUser,
+              realTaskId: rTaskId,
+            });
+          }}
         />
 
         {/* 2. User Shift Columns (Matches Image 1 & 4) */}

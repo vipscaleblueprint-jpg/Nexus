@@ -1426,7 +1426,46 @@ export const taskMapApi = {
     const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
     return apiClient(`/api/task-map/sheets/user-config${q}`);
   },
+
+  checkSuperviseSession: async (payload: {
+    maName: string;
+    dateKey?: string;
+    timeIn: string;
+    taskId?: string | null;
+    taskTitle?: string | null;
+    client?: string | null;
+    note?: string | null;
+  }): Promise<{ success: boolean; check: SuperviseCheckItem }> => {
+    return apiClient('/api/task-map/supervise/check', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  uncheckSuperviseSession: async (sessionKey: string): Promise<{ success: boolean; sessionKey: string }> => {
+    return apiClient('/api/task-map/supervise/uncheck', {
+      method: 'POST',
+      body: JSON.stringify({ sessionKey }),
+    });
+  },
 };
+
+export interface SuperviseCheckItem {
+  id: string;
+  sessionKey: string;
+  maKey: string;
+  maName: string;
+  dateKey: string;
+  timeIn: string;
+  taskId?: string | null;
+  taskTitle?: string | null;
+  client?: string | null;
+  note?: string | null;
+  checkedById?: string | null;
+  checkedByName?: string | null;
+  checkedAt: string;
+  reappearAt: string;
+}
 
 // ===========================================================================
 // MA Daily Schedule Spreadsheet Column Map & Time Tracking Types
@@ -2516,6 +2555,7 @@ const CANONICAL_STATUS_MAP: Record<string, string> = {
   INPROGRESS: 'IN PROGRESS',
   REVISION: 'REVISION',
   WAITING: 'WAITING',
+  SENT: 'WAITING',
   INREVIEW: 'IN REVIEW',
   TOREVIEW: 'IN REVIEW',
   REVIEW: 'IN REVIEW',
@@ -2549,7 +2589,7 @@ export function getDefaultTaskMapSubStatuses(
   options?: { isAssigned?: boolean }
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
-  if (canonical === 'CRM') return ['Ready to Send'];
+  if (canonical === 'CRM') return ['To send'];
   if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
   if (
@@ -2567,6 +2607,77 @@ export function getDefaultTaskMapSubStatuses(
     return [];
   }
   return ['Available Task'];
+}
+
+const STALE_WAITING_SUBSTATUS_KEYS = new Set([
+  'AVAILABLETASK',
+  'TOSEND',
+  'READYTOSEND',
+  'WAITING',
+  'SENT',
+  'SENTBUTWAITING',
+  'INPROGRESS',
+  'PENDING',
+  'HANDOVER',
+  'ONHOLD',
+  'TOREVIEW',
+  'REVISION',
+  'REVISIONS',
+]);
+
+const STALE_CRM_SUBSTATUS_KEYS = new Set([
+  'AVAILABLETASK',
+  'TOSEND',
+  'WAITING',
+  'SENT',
+  'SENTBUTWAITING',
+  'INPROGRESS',
+  'PENDING',
+  'HANDOVER',
+  'ONHOLD',
+  'TOREVIEW',
+]);
+
+/**
+ * Uniformly resolves/normalizes Task Map sub-statuses for a task's main status,
+ * ensuring stale pool/workflow tags (e.g. "Available Task") are converted into
+ * "Sent but Waiting" for WAITING tasks and "To send" for CRM Pool tasks.
+ */
+export function normalizeTaskMapSubStatuses(
+  taskStatus?: string | null,
+  rawStatuses?: string[] | null,
+  options?: { isAssigned?: boolean }
+): string[] {
+  const clean = (Array.isArray(rawStatuses) ? rawStatuses : []).filter(
+    (s) => Boolean(s) && s.toUpperCase().trim() !== 'CRM'
+  );
+  const canonical = toCanonicalTaskStatus(taskStatus);
+
+  if (canonical === 'WAITING') {
+    if (
+      clean.length === 0 ||
+      clean.every((s) => STALE_WAITING_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
+    ) {
+      return ['Sent but Waiting'];
+    }
+    return clean.slice(0, 1);
+  }
+
+  if (canonical === 'CRM') {
+    if (
+      clean.length === 0 ||
+      clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
+    ) {
+      return ['To send'];
+    }
+    return clean.slice(0, 1);
+  }
+
+  if (clean.length > 0) {
+    return clean.slice(0, 1);
+  }
+
+  return getDefaultTaskMapSubStatuses(taskStatus, options);
 }
 
 /**

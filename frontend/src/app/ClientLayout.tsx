@@ -695,6 +695,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('daily_sheet_log:updated', { detail: data }));
     });
 
+    s.on('supervise:updated', (data) => {
+      window.dispatchEvent(new CustomEvent('supervise:updated', { detail: data }));
+    });
+
     s.on('task:deleted', ({ id }) => {
       useAppStore.getState().removeTask(id);
       window.dispatchEvent(new CustomEvent('task:deleted', { detail: { id } }));

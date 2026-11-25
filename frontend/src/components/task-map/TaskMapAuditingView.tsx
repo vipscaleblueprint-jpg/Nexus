@@ -23,6 +23,7 @@ import {
   formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { useLiveClock } from '@/lib/liveClock';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
 import { TaskDescriptionButton } from './TaskDescriptionButton';
@@ -131,11 +132,10 @@ const DraggableTaskCard: React.FC<{
     >
       {isSaving && (
         <div
-          className="absolute top-2 right-2 z-20 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-950/90 border border-amber-500/40 text-amber-300 text-[9px] font-bold shadow-md pointer-events-none backdrop-blur-xs"
-          title="Saving changes to database..."
+          className="absolute top-2 right-2 z-20 inline-flex items-center justify-center p-1 rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700/80 shadow-md pointer-events-none backdrop-blur-xs"
+          title="Saving changes..."
         >
-          <Loader2 className="size-2.5 animate-spin text-amber-400" />
-          <span>Saving...</span>
+          <NexusLogoLoader inline size={15} />
         </div>
       )}
       {children}

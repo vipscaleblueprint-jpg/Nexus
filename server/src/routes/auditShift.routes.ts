@@ -7,6 +7,7 @@ import {
   deleteAuditShift,
   resetAuditShifts,
   triggerShiftSweep,
+  getAuditEligibility,
 } from '../controllers/auditShift.controller';
 
 const router = Router();
@@ -18,6 +19,7 @@ router.put('/:id', authenticateToken, updateAuditShift);
 router.delete('/:id', authenticateToken, deleteAuditShift);
 router.post('/reset', authenticateToken, resetAuditShifts);
 router.post('/sweep', authenticateToken, triggerShiftSweep);
+router.post('/eligibility', authenticateToken, getAuditEligibility);
 
 export { router as auditShiftRouter };
 

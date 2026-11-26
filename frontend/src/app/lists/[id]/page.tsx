@@ -906,7 +906,6 @@ export default function BoardPage() {
     'Revision',
     'Waiting',
     'In Review',
-    'Checking',
     'On-Hold',
     'Closed',
   ];

@@ -25,7 +25,7 @@ import { tasksApi } from '@/api/tasks';
 import { toast } from '@/lib/toast';
 import { ClickUpMobileCreateModal } from '@/components/mobile/ClickUpMobileCreateModal';
 
-const STATUS_OPTIONS = ['PENDING', 'IN PROGRESS', 'CHECKING', 'DONE', 'CLOSED'];
+const STATUS_OPTIONS = ['PENDING', 'IN PROGRESS', 'IN REVIEW', 'DONE', 'CLOSED'];
 
 export function MobileBottomNav() {
   const pathname = usePathname();

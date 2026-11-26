@@ -41,3 +41,23 @@ const databaseUrl = withPoolDefaults(process.env.DATABASE_URL);
 export const prisma = new PrismaClient(
   databaseUrl ? { datasources: { db: { url: databaseUrl } } } : undefined
 );
+
+/**
+ * CHECKING is retired: tasks in that stage are In Review. Any write that still sends it (sheets,
+ * n8n, ClickUp sync, old clients) is stored as IN REVIEW instead.
+ */
+const RETIRED_STATUS = /^\s*(in\s*)?checking\s*$/i;
+const fixStatus = (data: any) => {
+  if (!data || typeof data !== 'object') return;
+  if (Array.isArray(data)) return data.forEach(fixStatus);
+  if (typeof data.status === 'string' && RETIRED_STATUS.test(data.status)) data.status = 'IN REVIEW';
+  else if (data.status && typeof data.status.set === 'string' && RETIRED_STATUS.test(data.status.set)) data.status.set = 'IN REVIEW';
+};
+prisma.$use(async (params, next) => {
+  if ((params.model === 'Task' || params.model === 'Subtask') && params.args) {
+    fixStatus(params.args.data);
+    fixStatus(params.args.create);
+    fixStatus(params.args.update);
+  }
+  return next(params);
+});

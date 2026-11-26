@@ -34,7 +34,7 @@ async function clickupFetch(
   let res: Response;
   for (let attempt = 0; ; attempt++) {
     try {
-      res = await fetch(`${CLICKUP_API_BASE}${path}`, {
+      res = await fetch(path.startsWith('http') ? path : `${CLICKUP_API_BASE}${path}`, {
         ...options,
         signal: options.signal ?? AbortSignal.timeout(15_000),
         headers: {
@@ -587,6 +587,24 @@ export async function updateClickUpTask(
   return clickupFetch(`/task/${taskId}`, {
     method: 'PUT',
     body: JSON.stringify(finalPayload),
+  });
+}
+
+let workspaceIdCache: string | null = null;
+
+/**
+ * Moves a ClickUp task to another list (its "home list"). The v2 API can't do this; v3 can.
+ * The workspace is the first one the API key belongs to.
+ */
+export async function moveClickUpTaskToList(taskId: string, listId: string): Promise<void> {
+  if (!workspaceIdCache) {
+    const data = await getWorkspaces();
+    workspaceIdCache = data?.teams?.[0]?.id ? String(data.teams[0].id) : null;
+    if (!workspaceIdCache) throw new Error('No ClickUp workspace found');
+  }
+  const id = extractClickUpTaskId(taskId);
+  await clickupFetch(`https://api.clickup.com/api/v3/workspaces/${workspaceIdCache}/tasks/${id}/home_list/${listId}`, {
+    method: 'PUT',
   });
 }
 

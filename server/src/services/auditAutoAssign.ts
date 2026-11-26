@@ -219,6 +219,44 @@ export function isUserInShift(
   });
 }
 
+export interface AuditUserRef {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+}
+
+/**
+ * People who worked on a task (MA daily tracker collaborators) may not audit it. Matches by
+ * id, and by name or email because tracker rows often carry only a name.
+ */
+export async function getTaskCollaboratorBlock(taskId: string): Promise<{
+  blockedUserIds: Set<string>;
+  isUserBlocked: (u: AuditUserRef) => boolean;
+}> {
+  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId);
+  const blockedUserIds = new Set<string>(maUpdaterIds);
+  const blockedNames = new Set<string>(maUpdaterNames.map((n) => n.trim().toLowerCase()));
+
+  const isUserBlocked = (u: AuditUserRef) => {
+    if (blockedUserIds.has(u.id)) return true;
+    const uName = (u.name || '').trim().toLowerCase();
+    const uEmail = (u.email || '').trim().toLowerCase();
+    if (!uName && !uEmail) return false;
+
+    for (const b of blockedNames) {
+      if (!b) continue;
+      if (uName === b) return true;
+      if (uName && (uName.includes(b) || b.includes(uName))) return true;
+      if (uEmail && (uEmail === b || uEmail.includes(b) || b.includes(uEmail))) return true;
+      const bTokens = b.split(/[\s\-_\/]+/).filter((t) => t.length > 2);
+      const uTokens = uName.split(/[\s\-_\/]+/).filter((t) => t.length > 2);
+      if (bTokens.some((bt) => uTokens.includes(bt))) return true;
+    }
+    return false;
+  };
+  return { blockedUserIds, isUserBlocked };
+}
+
 export interface AutoAssignOptions {
   force?: boolean;
   shift?: ShiftType | string;
@@ -313,28 +351,8 @@ export async function autoAssignAudits(
   });
   const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift, shiftConfigs));
 
-  // Align with audit restrictions: exclude MA daily tracker participants for this iteration
-  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
-  const blockedUserIds = new Set<string>([...maUpdaterIds]);
-  const blockedNames = new Set<string>([...maUpdaterNames.map((n) => n.trim().toLowerCase())]);
-
-  const isUserBlocked = (u: { id: string; name?: string | null; email?: string | null }) => {
-    if (blockedUserIds.has(u.id)) return true;
-    const uName = (u.name || '').trim().toLowerCase();
-    const uEmail = (u.email || '').trim().toLowerCase();
-    if (!uName && !uEmail) return false;
-
-    for (const b of blockedNames) {
-      if (!b) continue;
-      if (uName === b) return true;
-      if (uName.includes(b) || b.includes(uName)) return true;
-      if (uEmail && (uEmail === b || uEmail.includes(b) || b.includes(uEmail))) return true;
-      const bTokens = b.split(/[\s\-_\/]+/).filter((t) => t.length > 2);
-      const uTokens = uName.split(/[\s\-_\/]+/).filter((t) => t.length > 2);
-      if (bTokens.some((bt) => uTokens.includes(bt))) return true;
-    }
-    return false;
-  };
+  // Align with audit restrictions: exclude MA daily tracker participants (collaborators)
+  const { blockedUserIds, isUserBlocked } = await getTaskCollaboratorBlock(task.id);
 
   let checklistId = auditChecklists[0]?.id;
   const assigned: { itemId: string; text: string; userId: string }[] = [];

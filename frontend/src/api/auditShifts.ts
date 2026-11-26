@@ -90,5 +90,18 @@ export const auditShiftsApi = {
       body: JSON.stringify({ shift }),
     });
   },
+
+  /** Auditors on the audit shift schedule now, and collaborators (who may not audit) per task. */
+  getEligibility: async (taskIds: string[]): Promise<{
+    success: boolean;
+    activeShift: string;
+    onShiftUserIds: string[];
+    blocked: Record<string, string[]>;
+  }> => {
+    return apiClient('/api/admin/audit-shifts/eligibility', {
+      method: 'POST',
+      body: JSON.stringify({ taskIds }),
+    });
+  },
 };
 

@@ -26,6 +26,7 @@ import {
   SubStatusTransitionGuide,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { auditShiftsApi } from '@/api/auditShifts';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { useLiveClock } from '@/lib/liveClock';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -783,6 +784,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           }
         }
 
+        if (await isCollaboratorOnTask(task.id, auditor.id)) {
+          toast.error(`${auditor.name} is a collaborator on this task and can't audit it. Assign another auditor.`);
+          return;
+        }
+
         updatedStatuses = [auditType];
         if (targetColumnId.startsWith('in-progress-')) {
           if (!updatedStatuses.includes('In progress')) {
@@ -792,7 +798,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         toast.success(`Task assigned to ${auditor.name} (${auditType})`);
         onStatusChange(taskId, updatedStatuses);
 
-        const targetStatus = (auditType === 'UI UX Audit' || auditType === 'Design Audit') ? 'IN REVIEW' : 'CHECKING';
+        const targetStatus = 'IN REVIEW';
 
         if (onTaskUpdate) {
           await onTaskUpdate(taskId, { assigneeId: auditor.id, status: targetStatus });
@@ -803,6 +809,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           onDataRefresh();
         }
       }
+    }
+  };
+
+  /** True when the auditor worked on the task (MA daily tracker collaborator), so may not audit it. */
+  const isCollaboratorOnTask = async (taskId: string, auditorId: string): Promise<boolean> => {
+    try {
+      const res = await auditShiftsApi.getEligibility([taskId]);
+      return (res.blocked?.[taskId] || []).includes(auditorId);
+    } catch (err) {
+      console.error('Collaborator check failed:', err);
+      return false;
     }
   };
 
@@ -864,11 +881,16 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       }
     }
 
+    if (await isCollaboratorOnTask(task.id, auditor.id)) {
+      toast.error(`${auditor.name} is a collaborator on this task and can't audit it. Assign another auditor.`);
+      return;
+    }
+
     const updatedStatuses = [auditType, 'In progress'];
     toast.success(`Task set In Progress for ${auditor.name} (${auditType})`);
     onStatusChange(taskId, updatedStatuses);
 
-    const targetStatus = (auditType === 'UI UX Audit' || auditType === 'Design Audit') ? 'IN REVIEW' : 'CHECKING';
+    const targetStatus = 'IN REVIEW';
     if (onTaskUpdate) {
       await onTaskUpdate(taskId, { assigneeId: auditor.id, status: targetStatus });
     } else {
@@ -908,31 +930,52 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       toast.info('No tasks waiting in To Review.');
       return;
     }
-    if (auditorUsers.length === 0) {
-      toast.error('No auditors on the selected shift.');
+    setIsDistributing(true);
+    let eligibility: Awaited<ReturnType<typeof auditShiftsApi.getEligibility>>;
+    try {
+      eligibility = await auditShiftsApi.getEligibility(pending.map((t) => t.id));
+    } catch (err) {
+      console.error('Audit eligibility failed:', err);
+      toast.error('Could not load the audit shift schedule. Try again.');
+      setIsDistributing(false);
+      return;
+    }
+    // Only auditors scheduled on the current audit shift, whatever shift the map is showing.
+    const onShift = new Set(eligibility.onShiftUserIds || []);
+    const scheduledAuditors = Array.from(
+      new Map(
+        [...(allUsers || []), ...(shiftUsers || []), ...auditorUsers]
+          .filter((u: any) => u?.id && onShift.has(u.id) && isAuditorUser(u))
+          .map((u: any) => [u.id, u])
+      ).values()
+    );
+    if (scheduledAuditors.length === 0) {
+      setIsDistributing(false);
+      toast.error(`No auditors are scheduled on the current audit shift (${eligibility.activeShift}).`);
       return;
     }
 
     // Queued load per auditor: open Task Map tasks they currently hold.
-    const load = new Map<string, number>(auditorUsers.map((a) => [a.id, 0]));
+    const load = new Map<string, number>(scheduledAuditors.map((a: any) => [a.id, 0]));
     for (const t of allTasks || tasks) {
       const ownerId = getEffectiveTaskMapHandlerId(t);
       if (ownerId && load.has(ownerId) && !isClosedStatus(t.status)) load.set(ownerId, (load.get(ownerId) || 0) + 1);
     }
 
-    setIsDistributing(true);
     let assigned = 0;
     try {
       for (const task of pending) {
-        const options = auditorUsers
-          .map((auditor) => ({ auditor, auditType: pickAuditTypeFor(task, auditor), load: load.get(auditor.id) || 0 }))
+        const collaborators = eligibility.blocked?.[task.id] || [];
+        const options = scheduledAuditors
+          .filter((auditor: any) => !collaborators.includes(auditor.id))
+          .map((auditor: any) => ({ auditor, auditType: pickAuditTypeFor(task, auditor), load: load.get(auditor.id) || 0 }))
           .filter((o): o is { auditor: any; auditType: string; load: number } => Boolean(o.auditType) && o.load < MAX_AUTO_AUDIT_QUEUE)
           .sort((a, b) => a.load - b.load || (a.auditor.name || '').localeCompare(b.auditor.name || ''));
         const best = options[0];
         if (!best) continue;
 
         onStatusChange(task.id, [best.auditType]);
-        const targetStatus = best.auditType === 'UI UX Audit' || best.auditType === 'Design Audit' ? 'IN REVIEW' : 'CHECKING';
+        const targetStatus = 'IN REVIEW';
         if (onTaskUpdate) {
           await onTaskUpdate(task.id, { assigneeId: best.auditor.id, status: targetStatus });
         } else {

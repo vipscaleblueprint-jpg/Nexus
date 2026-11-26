@@ -10,6 +10,7 @@
  * so nothing is pushed back to ClickUp.
  */
 
+import { fromClickUp } from './clickupMirror';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { Priority } from '@prisma/client';
@@ -192,12 +193,12 @@ export function getClickUpSyncState() {
 /** Starts a sync in the background. Returns false if one is already running. */
 export function startClickUpSync(options: ClickUpSyncOptions = {}): boolean {
   if (running) return false;
-  running = runClickUpSync({
+  running = fromClickUp(() => runClickUpSync({
     ...options,
     onProgress: (summary) => {
       currentSummary = summary;
     },
-  })
+  }))
     .then((summary) => {
       currentSummary = summary;
       console.log('[ClickUp Sync] finished', { ...summary, listResults: undefined });

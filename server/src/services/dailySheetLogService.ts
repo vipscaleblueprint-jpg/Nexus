@@ -175,6 +175,28 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
     });
   }
 
+  // If the Google Spreadsheet (with an explicit sheetRow) updates this task/MA,
+  // retire any unrowed (sheetRow: null) live NEXUS_BOARD sessions for the same task
+  // so erased/replaced Nexus rows in the sheet never override the spreadsheet's Time In.
+  if ((input.source === 'GOOGLE_SHEET' || !input.source) && sheetRow && saved.taskId) {
+    await prisma.dailySheetLog.updateMany({
+      where: {
+        dateKey,
+        isLive: true,
+        id: { not: saved.id },
+        taskId: saved.taskId,
+        subtaskId: saved.subtaskId || null,
+        sheetRow: null,
+        ...(saved.userId ? { OR: [{ maKey }, { userId: saved.userId }] } : { maKey }),
+      },
+      data: {
+        isLive: false,
+        timeOut: cleanTimeOut || cleanTimeIn || '11:59 PM',
+        endedAt: startedAt || new Date(),
+      },
+    });
+  }
+
   // If this entry is live, close any older open live entries for this MA on the same day.
   // Match by account as well as name: the Task Map logs under the account name ("Cherilyn")
   // while the sheet logs under its title name ("Che"), and both are the same person.
@@ -189,7 +211,7 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
         ...(saved.taskId ? { taskId: { not: saved.taskId } } : {}),
         AND: [
           saved.userId ? { OR: [{ maKey }, { userId: saved.userId }] } : { maKey },
-          ...(sheetRow ? [{ sheetRow: { lt: sheetRow } }] : []),
+          ...(sheetRow ? [{ OR: [{ sheetRow: { lt: sheetRow } }, { sheetRow: null }] }] : []),
         ],
       },
       data: {

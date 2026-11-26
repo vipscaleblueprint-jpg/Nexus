@@ -131,6 +131,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
   const [complexity, setComplexity] = useState('');
   const [goal, setGoal] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [launchDate, setLaunchDate] = useState('');
 
   // Validation & submission state
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -250,6 +251,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
     setComplexity('');
     setGoal('');
     setPrompt('');
+    setLaunchDate('');
     setClientName('');
     setFieldErrors({});
     setResultState({ status: 'idle' });
@@ -313,6 +315,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
       ...(goal.trim() ? { goal: goal.trim() } : {}),
       ...(priority ? { priority } : {}),
       ...(complexity ? { complexity } : {}),
+      ...(launchDate ? { launch_date: launchDate } : {}),
     };
 
     setSubmitting(true);
@@ -938,6 +941,20 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                   {fieldErrors.goal && (
                     <p className="text-xs text-pink-400">{fieldErrors.goal}</p>
                   )}
+                </div>
+
+                {/* Launch date */}
+                <div className="space-y-1.5">
+                  <label htmlFor="galaxy-launch-date" className="text-xs font-semibold text-zinc-200 block">
+                    Launch date <span className="text-zinc-500 font-normal">(Optional — sets the due date)</span>
+                  </label>
+                  <input
+                    id="galaxy-launch-date"
+                    type="date"
+                    value={launchDate}
+                    onChange={(e) => setLaunchDate(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 [color-scheme:dark]"
+                  />
                 </div>
 
                 {/* Prompt */}

@@ -45,6 +45,7 @@ import { SubStatusChangeGuideModal } from '../modals/SubStatusChangeGuideModal';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
+  TaskEstimateLabel,
   TaskTimeProgressSlot,
   computeElapsed,
   isStaleLiveSession,
@@ -585,8 +586,9 @@ const DragPreviewCard: React.FC<{
 
       {/* Right: Sub-Status snapshot */}
       <div className="w-[125px] shrink-0 flex flex-col justify-between py-0.5">
-        <div className="flex justify-end items-center">
+        <div className="flex flex-col items-end gap-0.5">
           <TaskTimeProgressSlot task={item} />
+          <TaskEstimateLabel task={item} />
         </div>
         <div className="w-full">
           <div className="flex items-center justify-between mb-1">
@@ -3878,8 +3880,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
                             {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
                             <div className="w-[130px] sm:w-[145px] shrink-0 flex flex-col justify-between py-0.5">
-                              <div className="flex justify-end items-center">
+                              <div className="flex flex-col items-end gap-0.5">
                                 <TaskTimeProgressSlot task={task} isLive={false} />
+                                <TaskEstimateLabel task={task} />
                               </div>
 
                               <div
@@ -4631,8 +4634,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
                           {/* RIGHT: Section where Sub-Status is (with Time Progress in top right corner) */}
                           <div className="w-[130px] sm:w-[145px] shrink-0 flex flex-col justify-between py-0.5">
-                            <div className="flex justify-end items-center">
+                            <div className="flex flex-col items-end gap-0.5">
                               <TaskTimeProgressSlot task={{ ...task, progress: effectiveProgress }} isLive={isLiveWorking} />
+                              <TaskEstimateLabel task={task} />
                             </div>
 
                             <div

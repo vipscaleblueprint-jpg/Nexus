@@ -72,6 +72,7 @@ import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmF
 import { queueAuditPick, repickAuditsAfterRename } from '../services/aiAuditPicker';
 import { checkClientLockStatus } from '../services/clientLockService';
 import { verifyDailyOtp, setClientUnlockedToday } from '../utils/dailyOtp';
+import { scheduleLaunchPlan } from '../services/launchPlanner';
 
 const STALE_WAITING_SUBSTATUSES = new Set([
   'AVAILABLETASK', 'TOSEND', 'READYTOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
@@ -366,18 +367,11 @@ export async function getTaskMoverAndUpdaters(taskId: string, subtaskId?: string
         break;
       }
 
-      // ONLY logs originating from the MA daily tracker (or marked IsCollaborated) count towards audit restrictions!
-      // Logs explicitly marked as Audit role with IsCollaborated = false do NOT block the auditor.
-      if (details.isAuditRole === true && details.isCollaborated === false) {
-        continue;
-      }
-
-      const isDailyTracker = Boolean(
-        details.isCollaborated === true ||
-        details.isMaUpdate ||
-        details.source === 'sheets' ||
-        (details.source === 'external' && (details.movedByName || details.maUpdaterNames || details.maUpdaterIds))
-      );
+      // ONLY rows explicitly tagged IsRole = "Collaborator" in the MA daily tracker count as
+      // real work on the task. Auditor rows, blank IsRole rows and legacy rows (logged before the
+      // IsRole column existed) are treated as auditors commenting/questioning and do NOT block
+      // them from checking the design audit or the PM from reassigning.
+      const isDailyTracker = details.isCollaborated === true;
 
       if (isDailyTracker) {
         if (details.movedById) maUpdaterIds.add(details.movedById);
@@ -3053,6 +3047,7 @@ export async function createSubtask(req: Request, res: Response) {
       await syncTaskMapOnDirectAssign(taskId, subtask.id, effectiveAssigneeId);
     }
     io.emit('subtask_created', { taskId, subtask });
+    scheduleLaunchPlan(taskId);
 
     const task = await prisma.task.findUnique({ 
       where: { id: taskId }, 

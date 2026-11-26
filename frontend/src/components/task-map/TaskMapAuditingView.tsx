@@ -12,6 +12,7 @@ import {
   isUiUxAudit,
   isFunnelAudit,
   getEffectiveTaskMapHandlerId,
+  isTaskMapItemOnHold,
   isTaskHandedOver,
   countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
@@ -43,12 +44,14 @@ import {
   Infinity as InfinityIcon,
   RotateCcw,
   Loader2,
+  Scale,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isAuditorUser, isProjectManagerOrAdmin, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { SubStatusChangeGuideModal } from '@/components/modals/SubStatusChangeGuideModal';
 import { toast } from '@/lib/toast';
+import { isClosedStatus } from '@/lib/taskTokens';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
   CardStatusDropdown,
@@ -60,6 +63,7 @@ import {
   hexToRgba,
   resolveSubStatusColor,
   resolveTaskStatusColor,
+  TaskEstimateLabel,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -875,6 +879,81 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Auto Distribute: hands To Review tasks to on-shift auditors. Each task goes to an auditor
+  // whose role matches an audit it still needs (prerequisites and the UI/UX vs Funnel rule
+  // enforced, same as a drag), picking whoever has the fewest queued tasks on the Task Map.
+  // ---------------------------------------------------------------------------
+  const MAX_AUTO_AUDIT_QUEUE = 5;
+  const [isDistributing, setIsDistributing] = useState(false);
+
+  /** The audit `auditor` would do on `task`, or null if their roles match nothing it needs now. */
+  const pickAuditTypeFor = (task: TaskMapItem, auditor: any): string | null => {
+    const roles = [...(auditor.roles || []), auditor.role || '', auditor.title || ''].map((r: string) =>
+      (r || '').toLowerCase()
+    );
+    const unchecked = getTaskAuditStatus(task).uncheckedAudits || [];
+    const candidates: string[] = [];
+    if (roles.some((r) => r.includes('ui') || r.includes('ux')) && unchecked.some((a) => isUiUxAudit(a))) candidates.push('UI UX Audit');
+    if (roles.some((r) => r.includes('design') || r.includes('graphic')) && unchecked.some((a) => a.toLowerCase().includes('design'))) candidates.push('Design Audit');
+    if (roles.some((r) => r.includes('instruction') || r.includes('copy')) && unchecked.some((a) => a.toLowerCase().includes('instruction'))) candidates.push('Instruction Audit');
+    if (roles.some((r) => r.includes('funnel')) && unchecked.some((a) => isFunnelAudit(a))) candidates.push('Funnel Audit');
+    return candidates.find((type) => canPerformAudit(type, task, undefined, auditor.id).allowed) || null;
+  };
+
+  const handleAutoDistribute = async () => {
+    if (isDistributing) return;
+    const pending = sortTasksUrgentFirst(toReviewTasks.filter((t) => !isTaskMapItemOnHold(t)));
+    if (pending.length === 0) {
+      toast.info('No tasks waiting in To Review.');
+      return;
+    }
+    if (auditorUsers.length === 0) {
+      toast.error('No auditors on the selected shift.');
+      return;
+    }
+
+    // Queued load per auditor: open Task Map tasks they currently hold.
+    const load = new Map<string, number>(auditorUsers.map((a) => [a.id, 0]));
+    for (const t of allTasks || tasks) {
+      const ownerId = getEffectiveTaskMapHandlerId(t);
+      if (ownerId && load.has(ownerId) && !isClosedStatus(t.status)) load.set(ownerId, (load.get(ownerId) || 0) + 1);
+    }
+
+    setIsDistributing(true);
+    let assigned = 0;
+    try {
+      for (const task of pending) {
+        const options = auditorUsers
+          .map((auditor) => ({ auditor, auditType: pickAuditTypeFor(task, auditor), load: load.get(auditor.id) || 0 }))
+          .filter((o): o is { auditor: any; auditType: string; load: number } => Boolean(o.auditType) && o.load < MAX_AUTO_AUDIT_QUEUE)
+          .sort((a, b) => a.load - b.load || (a.auditor.name || '').localeCompare(b.auditor.name || ''));
+        const best = options[0];
+        if (!best) continue;
+
+        onStatusChange(task.id, [best.auditType]);
+        const targetStatus = best.auditType === 'UI UX Audit' || best.auditType === 'Design Audit' ? 'IN REVIEW' : 'CHECKING';
+        if (onTaskUpdate) {
+          await onTaskUpdate(task.id, { assigneeId: best.auditor.id, status: targetStatus });
+        } else {
+          await tasksApi.updateTask(task.id, { assigneeId: best.auditor.id, status: targetStatus } as any).catch(console.error);
+        }
+        load.set(best.auditor.id, best.load + 1);
+        assigned++;
+      }
+    } finally {
+      setIsDistributing(false);
+      if (!onTaskUpdate) onDataRefresh();
+    }
+
+    const left = pending.length - assigned;
+    if (assigned === 0) {
+      toast.info(`No matching auditor with room (under ${MAX_AUTO_AUDIT_QUEUE} queued tasks) for the ${pending.length} task(s) in To Review.`);
+    } else {
+      toast.success(`Distributed ${assigned} task(s) to auditors${left > 0 ? ` · ${left} left in To Review (no matching auditor with room)` : ''}.`);
+    }
+  };
+
   // Helper options for sub-status dropdown in Auditing
   const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => {
     const ls = task.list?.statuses;
@@ -1041,8 +1120,9 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
             {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
             <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
-              <div className="flex justify-end items-center">
+              <div className="flex flex-col items-end gap-0.5">
                 <TaskTimeProgressSlot task={task} isLive={isLiveWorking} />
+                <TaskEstimateLabel task={task} />
               </div>
 
               <div
@@ -1465,6 +1545,19 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                         title={`Reset ${col.title}'s column (return review tasks to Queue)`}
                       >
                         <RotateCcw className="size-3.5" />
+                      </button>
+                    )}
+
+                    {col.id === 'col-to-review' && isPmUser && (
+                      <button
+                        type="button"
+                        onClick={handleAutoDistribute}
+                        disabled={isDistributing}
+                        className="inline-flex items-center gap-1 h-6 px-1.5 text-[10px] font-semibold text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-wait"
+                        title="Auto distribute: give each To Review task to an on-shift auditor with the matching audit role and the fewest queued tasks"
+                      >
+                        {isDistributing ? <Loader2 className="size-3.5 animate-spin" /> : <Scale className="size-3.5" />}
+                        Distribute
                       </button>
                     )}
 

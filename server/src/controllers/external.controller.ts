@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { scheduleLaunchPlan } from '../services/launchPlanner';
 import bcrypt from 'bcryptjs';
 import { timingSafeEqual, randomBytes } from 'crypto';
 import { io } from '../server';
@@ -1691,6 +1692,7 @@ export async function createSubtask(req: Request, res: Response) {
       console.error('Failed to inject subtask into Priorities Journal:', error);
     });
 
+    scheduleLaunchPlan(taskId);
     return res.status(201).json({ message: 'Subtask created successfully', subtask });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

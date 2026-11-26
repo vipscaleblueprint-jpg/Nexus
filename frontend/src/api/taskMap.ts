@@ -192,6 +192,8 @@ export interface TaskMapItem {
   position: number | null;
   assigneeId: string | null;
   assigneeRoleRestrictions: string[];
+  /** AI / PM estimate in hours; null means the 30-minute default applies. */
+  estimatedHours?: number | null;
   teamAssignAccessRole: string | null;
   list: {
     id: string;

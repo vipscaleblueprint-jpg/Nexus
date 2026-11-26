@@ -1,21 +1,9 @@
 import { Response } from 'express';
 import { prisma } from '../config/prisma';
 import type { AuthRequest } from '../types';
+import { parseLaunchDate } from '../utils/launchDate';
 
-function getToolsBaseUrl(): string {
-  const isDev = process.env.NODE_ENV === 'development';
-  return (
-    process.env.TOOLS_VIP_URL ||
-    (isDev ? 'http://localhost:3001' : 'https://tools.vipscaleph.com')
-  ).replace(/\/+$/, '');
-}
-
-function getToolsHeaders(): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'x-api-key': process.env.VIPSCALE_API_KEY || '',
-  };
-}
+import { getToolsBaseUrl, getToolsHeaders } from '../utils/vipscaleTools';
 
 /**
  * Verifies the Nexus session user is active and allowed to create Galaxy tasks
@@ -110,13 +98,19 @@ async function forwardGalaxyCreate(
     return res.status(400).json({ error: 'Parent task link is required for a subtask.' });
   }
 
+  // Optional launch date (YYYY-MM-DD): VIPScale forwards it to the Galaxy webhook, which sets the due date.
+  if (parseLaunchDate(body.launch_date) === null) {
+    return res.status(400).json({ error: 'Launch date must be a valid date.' });
+  }
+  const upstreamPayload = body;
+
   try {
     const upstream = await fetch(`${getToolsBaseUrl()}/api/galaxy-task`, {
       method: 'POST',
       headers: getToolsHeaders(),
       body: JSON.stringify({
         mode,
-        payload: body,
+        payload: upstreamPayload,
         listed_by: actor.listedBy,
       }),
       signal: AbortSignal.timeout(90000),

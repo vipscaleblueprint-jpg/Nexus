@@ -5058,27 +5058,6 @@ export function TaskDetailModalContent({
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
                               <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
-                              {Boolean(comment.subtaskId || comment.subtask) && (() => {
-                                const subtaskTitle = comment.subtask?.title || task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id))?.title;
-                                const matchingSubtask = task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id));
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (matchingSubtask) {
-                                        setActiveSubtask(matchingSubtask);
-                                      }
-                                    }}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/25 transition-colors cursor-pointer group"
-                                    title={matchingSubtask ? `Open subtask: ${subtaskTitle || 'Subtask'}` : 'Subtask comment'}
-                                  >
-                                    <CornerDownRight className="w-3 h-3 text-indigo-400 group-hover:translate-x-0.5 transition-transform" />
-                                    <span className="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold">Subtask:</span>
-                                    <span className="truncate max-w-[180px] font-medium text-indigo-300">{subtaskTitle || 'Subtask'}</span>
-                                  </button>
-                                );
-                              })()}
                             </div>
                             <div className="flex items-center gap-1">
                               <button

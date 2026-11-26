@@ -345,6 +345,18 @@ export async function getTaskMoverAndUpdaters(taskId: string, subtaskId?: string
     let inProgressMovedBy: { id: string; name: string; avatarUrl?: string | null } | null = null;
     const maUpdaterIds = new Set<string>();
     const maUpdaterNames = new Set<string>();
+    // Logs are newest-first, so the first IsRole we see per person is their latest role on
+    // this task. Rows default to "Collaborator" in the sheet; if an auditor later switches
+    // their row to "Auditor", their earlier auto-Collaborator logs must stop counting.
+    const roleDecided = new Map<string, boolean>(); // person key -> isCollaborator (latest)
+    const personKeys = (log: any, details: any): string[] => {
+      const keys: string[] = [];
+      const id = details.movedById || log.userId;
+      if (id) keys.push(`id:${id}`);
+      const name = details.movedByName || log.user?.name;
+      if (name) keys.push(`name:${String(name).trim().toLowerCase()}`);
+      return keys;
+    };
 
     for (const log of logs) {
       if (log.action === 'COMMENT' || log.action === 'REPLY') continue;
@@ -371,7 +383,18 @@ export async function getTaskMoverAndUpdaters(taskId: string, subtaskId?: string
       // real work on the task. Auditor rows, blank IsRole rows and legacy rows (logged before the
       // IsRole column existed) are treated as auditors commenting/questioning and do NOT block
       // them from checking the design audit or the PM from reassigning.
-      const isDailyTracker = details.isCollaborated === true;
+      const hasRole = details.isCollaborated === true || details.isAuditRole === true;
+      let latestIsCollaborator: boolean | undefined;
+      if (hasRole) {
+        const keys = personKeys(log, details);
+        latestIsCollaborator = keys.map((k) => roleDecided.get(k)).find((v) => v !== undefined);
+        if (latestIsCollaborator === undefined) {
+          latestIsCollaborator = details.isCollaborated === true;
+          keys.forEach((k) => roleDecided.set(k, latestIsCollaborator!));
+        }
+      }
+
+      const isDailyTracker = details.isCollaborated === true && latestIsCollaborator === true;
 
       if (isDailyTracker) {
         if (details.movedById) maUpdaterIds.add(details.movedById);

@@ -61,14 +61,38 @@ async function recordSheetCollaborationIfNeeded(params: {
   isAuditRole: boolean;
   isCollaborated: boolean;
 }) {
-  if (!params.isCollaborated || !params.taskId || (!params.userId && !params.userName)) return;
+  if ((!params.isCollaborated && !params.isAuditRole) || !params.taskId || (!params.userId && !params.userName)) return;
   try {
     const currentMovers = await getTaskMoverAndUpdaters(params.taskId, params.subtaskId || undefined);
     const alreadyListed = Boolean(
       (params.userId && currentMovers.maUpdaterIds.includes(params.userId)) ||
       (params.userName && currentMovers.maUpdaterNames.some((n) => n.trim().toLowerCase() === params.userName!.trim().toLowerCase()))
     );
-    if (!alreadyListed) {
+    if (params.isAuditRole) {
+      // Row switched to "Auditor" (rows default to "Collaborator"): record the latest role so
+      // getTaskMoverAndUpdaters drops this person's earlier auto-Collaborator logs.
+      if (!alreadyListed) return;
+      const actorId = params.userId || (await getOrCreateVipScaleUser()).id;
+      await prisma.auditLog.create({
+        data: {
+          action: 'MA_UPDATE',
+          entity: 'TASK',
+          entityId: params.taskId,
+          userId: actorId,
+          details: {
+            subtaskId: params.subtaskId || null,
+            source: 'sheets',
+            movedByName: params.userName || 'Unknown',
+            movedById: params.userId || null,
+            isRole: params.isRole,
+            isAuditRole: true,
+            isCollaborated: false,
+            maUpdaterIds: [],
+            maUpdaterNames: [],
+          },
+        },
+      });
+    } else if (!alreadyListed) {
       const actorId = params.userId || (await getOrCreateVipScaleUser()).id;
       await prisma.auditLog.create({
         data: {

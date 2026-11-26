@@ -5207,22 +5207,10 @@ export function TaskDetailModalContent({
                                     return;
                                   }
                                 }
-                                if (hasSubtasks) {
-                                  return;
-                                }
                                 setReplyingToId(replyingToId === comment.id ? null : comment.id);
                               }}
-                              disabled={hasSubtasks && !comment.subtaskId && !comment.subtask}
-                              className={`flex items-center gap-1.5 px-2 h-6 rounded transition-colors text-[11px] font-medium ml-1 ${
-                                hasSubtasks && !comment.subtaskId && !comment.subtask
-                                  ? 'opacity-40 cursor-not-allowed text-zinc-500'
-                                  : 'hover:bg-zinc-700/80 text-zinc-400 hover:text-zinc-200 cursor-pointer'
-                              }`}
-                              title={
-                                comment.subtaskId || comment.subtask
-                                  ? 'Open subtask and reply'
-                                  : (hasSubtasks ? 'Commenting is disabled on parent task' : 'Reply')
-                              }
+                              className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors text-[11px] font-medium ml-1"
+                              title={comment.subtaskId || comment.subtask ? 'Open subtask and reply' : 'Reply'}
                             >
                               <MessageSquare className="w-3 h-3" />
                               <span>Reply</span>
@@ -6952,6 +6940,16 @@ export function SubtaskDetailView({
             />
           );
         }
+      }
+      const dataBadge = rest['data-badge'] || (rest as any).dataBadge || (node?.properties as any)?.['data-badge'] || (node?.properties as any)?.dataBadge;
+      if (dataBadge) {
+        return (
+          <span
+            {...rest}
+            data-badge={dataBadge}
+            className={`inline-block font-semibold rounded px-1.5 py-0.5 text-[12px] leading-tight align-baseline ${(rest as any).className || ''}`}
+          />
+        );
       }
       return <span {...rest} />;
     },

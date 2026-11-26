@@ -1,5 +1,6 @@
 import React from 'react';
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react';
+import { createPortal } from 'react-dom';
+import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
@@ -9,7 +10,7 @@ import Highlight from '@tiptap/extension-highlight';
 import Placeholder from '@tiptap/extension-placeholder';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
-import { Extension, type Editor } from '@tiptap/core';
+import { Extension, posToDOMRect, type Editor } from '@tiptap/core';
 import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { normalizeHref, parseNexusTaskLink } from '@/lib/links';
@@ -199,45 +200,37 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
   const insertImagesRef = React.useRef<(files: File[], pos?: number) => void>(() => {});
   const rehostImagesRef = React.useRef<(srcs: string[]) => void>(() => {});
   const [bubbleColorOpen, setBubbleColorOpen] = React.useState(false);
-  const [bubblePlacement, setBubblePlacement] = React.useState<'top' | 'bottom'>('top');
-  const [bubbleAlign, setBubbleAlign] = React.useState<'left' | 'right'>('left');
+  const [bubbleColorPos, setBubbleColorPos] = React.useState<{ top?: number; bottom?: number; left: number } | null>(null);
   const bubbleColorButtonRef = React.useRef<HTMLButtonElement>(null);
 
+  const [selectionMenuPos, setSelectionMenuPos] = React.useState<{ top: number; left: number; above: boolean } | null>(null);
+  const selectionMenuRef = React.useRef<HTMLDivElement>(null);
+
   const [toolbarColorOpen, setToolbarColorOpen] = React.useState(false);
-  const [toolbarPlacement, setToolbarPlacement] = React.useState<'top' | 'bottom'>('top');
-  const [toolbarAlign, setToolbarAlign] = React.useState<'left' | 'right'>('left');
+  const [toolbarColorPos, setToolbarColorPos] = React.useState<{ top?: number; bottom?: number; left: number } | null>(null);
   const toolbarColorButtonRef = React.useRef<HTMLButtonElement>(null);
 
-  const updateBubbleColorPosition = React.useCallback(() => {
-    if (!bubbleColorButtonRef.current) return;
-    const rect = bubbleColorButtonRef.current.getBoundingClientRect();
+  const computePanelPos = React.useCallback((el: HTMLElement | null) => {
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
     const spaceAbove = rect.top;
     const spaceBelow = window.innerHeight - rect.bottom;
-    setBubblePlacement(spaceAbove < 340 && spaceBelow > spaceAbove ? 'bottom' : 'top');
-    setBubbleAlign(rect.left + 310 > window.innerWidth ? 'right' : 'left');
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 308));
+    if (spaceAbove >= 340 || spaceAbove > spaceBelow) {
+      return { bottom: window.innerHeight - rect.top + 6, left };
+    }
+    return { top: rect.bottom + 6, left };
   }, []);
+
+  const updateBubbleColorPosition = React.useCallback(() => {
+    const pos = computePanelPos(bubbleColorButtonRef.current);
+    if (pos) setBubbleColorPos(pos);
+  }, [computePanelPos]);
 
   const updateToolbarColorPosition = React.useCallback(() => {
-    if (!toolbarColorButtonRef.current) return;
-    const rect = toolbarColorButtonRef.current.getBoundingClientRect();
-    const spaceAbove = rect.top;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    setToolbarPlacement(spaceAbove < 340 && spaceBelow > spaceAbove ? 'bottom' : 'top');
-    setToolbarAlign(rect.left + 310 > window.innerWidth ? 'right' : 'left');
-  }, []);
-
-  React.useEffect(() => {
-    if (!toolbarColorOpen && !bubbleColorOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('[data-color-panel]') && !target.closest('[data-color-trigger]')) {
-        setToolbarColorOpen(false);
-        setBubbleColorOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', handleClickOutside);
-    return () => window.removeEventListener('mousedown', handleClickOutside);
-  }, [toolbarColorOpen, bubbleColorOpen]);
+    const pos = computePanelPos(toolbarColorButtonRef.current);
+    if (pos) setToolbarColorPos(pos);
+  }, [computePanelPos]);
   const editor = useEditor({
     immediatelyRender: false,
     autofocus: autoFocus ? 'end' : false,
@@ -282,6 +275,28 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       const text = editor.getText();
       const selectionStart = editor.state.selection.from - 1;
       onChange(editor.getHTML(), text, selectionStart, textBeforeCursor);
+    },
+    onSelectionUpdate: ({ editor }) => {
+      if (editor.state.selection.empty) {
+        setBubbleColorOpen(false);
+        setSelectionMenuPos(null);
+      } else if (!disabled && editor.isEditable) {
+        const { from, to } = editor.state.selection;
+        const rect = posToDOMRect(editor.view, from, to);
+        const menuWidth = compact ? 360 : 410;
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
+        const above = rect.top > 56;
+        const top = above ? rect.top - 8 : rect.bottom + 8;
+        setSelectionMenuPos({ top, left, above });
+      }
+    },
+    onBlur: ({ event }) => {
+      const related = event?.relatedTarget as HTMLElement | null;
+      if (related?.closest?.('[data-floating-toolbar]') || related?.closest?.('[data-color-panel]')) {
+        return;
+      }
+      setSelectionMenuPos(null);
+      setBubbleColorOpen(false);
     },
     editorProps: {
       attributes: {
@@ -385,6 +400,49 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       }
     }
   });
+
+  React.useEffect(() => {
+    if (!toolbarColorOpen && !bubbleColorOpen && !selectionMenuPos) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        !target.closest('[data-color-panel]') &&
+        !target.closest('[data-color-trigger]')
+      ) {
+        setToolbarColorOpen(false);
+        setBubbleColorOpen(false);
+      }
+      if (
+        selectionMenuPos &&
+        !target.closest('[data-floating-toolbar]') &&
+        !target.closest('[data-color-panel]') &&
+        !wrapperRef.current?.contains(target)
+      ) {
+        setSelectionMenuPos(null);
+      }
+    };
+    const handleReposition = () => {
+      if (bubbleColorOpen) updateBubbleColorPosition();
+      if (toolbarColorOpen) updateToolbarColorPosition();
+      if (selectionMenuPos && editor && !editor.isDestroyed && !editor.state.selection.empty) {
+        const { from, to } = editor.state.selection;
+        const rect = posToDOMRect(editor.view, from, to);
+        const menuWidth = compact ? 360 : 410;
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
+        const above = rect.top > 56;
+        const top = above ? rect.top - 8 : rect.bottom + 8;
+        setSelectionMenuPos({ top, left, above });
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
+    return () => {
+      window.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
+    };
+  }, [toolbarColorOpen, bubbleColorOpen, selectionMenuPos, editor, compact, updateBubbleColorPosition, updateToolbarColorPosition]);
 
   const setPending = (delta: number) => {
     const before = pendingUploads.current;
@@ -849,177 +907,155 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
           className="pointer-events-none absolute left-6 right-3 z-10 h-0.5 rounded-full bg-indigo-500 shadow-[0_0_6px_rgba(99,102,241,0.8)]"
         />
       )}
-      {editor && (
-        <div className="absolute top-0 left-0 w-0 h-0 overflow-visible pointer-events-none">
-          <div className="pointer-events-auto">
-            <BubbleMenu
-              pluginKey={`bubbleMenu-${id}`}
-              editor={editor}
-              tippyOptions={{
-                duration: 100,
-                maxWidth: 420,
-                zIndex: 999999,
-                placement: 'top',
-                ...(compact ? { appendTo: () => document.body } : {}),
+      {typeof document !== 'undefined' && editor && !disabled && !editor.state.selection.empty && selectionMenuPos && createPortal(
+        <div
+          ref={selectionMenuRef}
+          data-floating-toolbar={id}
+          style={{
+            position: 'fixed',
+            top: selectionMenuPos.top,
+            left: selectionMenuPos.left,
+            transform: selectionMenuPos.above ? 'translateY(-100%)' : undefined,
+            zIndex: 999999,
+            pointerEvents: 'auto',
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          className={`flex items-center flex-wrap ${compact ? 'max-w-[calc(100vw-24px)] gap-0' : 'max-w-[min(420px,calc(100vw-32px))] gap-0.5'} bg-popover/95 backdrop-blur-md border border-zinc-700/80 p-0.5 rounded-xl shadow-2xl text-zinc-300`}
+        >
+          {/* Text Color / Highlight / Badge Dropdown */}
+          <div
+            className="relative group/color"
+            data-color-trigger="bubble"
+          >
+            <button
+              ref={bubbleColorButtonRef}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                updateBubbleColorPosition();
+                setToolbarColorOpen(false);
+                setBubbleColorOpen((prev) => !prev);
               }}
-              shouldShow={({ state }) => !state.selection.empty}
-              className={`flex items-center flex-wrap ${compact ? 'max-w-[calc(100vw-24px)] gap-0' : 'max-w-[min(390px,calc(100vw-32px))] gap-0.5'} bg-popover/95 backdrop-blur-md border border-zinc-700/80 p-0.5 rounded-xl shadow-2xl mb-2 text-zinc-300 z-[999999]`}
+              className={`h-6.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-800 transition-colors flex items-center gap-1 text-xs font-medium cursor-pointer ${
+                bubbleColorOpen || editor.isActive('badge') || editor.isActive('highlight') || editor.isActive('textStyle')
+                  ? 'text-zinc-100 bg-zinc-800'
+                  : 'text-zinc-400'
+              }`}
+              title="Text color, highlight & badge"
             >
-              {/* Text Color / Highlight / Badge Dropdown */}
-              <div
-                className="relative group/color"
-                data-color-trigger="bubble"
-                onMouseEnter={() => {
-                  updateBubbleColorPosition();
-                  setBubbleColorOpen(true);
-                }}
-                onMouseLeave={() => setBubbleColorOpen(false)}
-              >
-                <button
-                  ref={bubbleColorButtonRef}
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    updateBubbleColorPosition();
-                    setBubbleColorOpen((prev) => !prev);
-                  }}
-                  className={`h-6.5 px-1.5 py-0.5 rounded-md hover:bg-zinc-800 transition-colors flex items-center gap-1 text-xs font-medium cursor-pointer ${
-                    bubbleColorOpen || editor.isActive('badge') || editor.isActive('highlight') || editor.isActive('textStyle')
-                      ? 'text-zinc-100 bg-zinc-800'
-                      : 'text-zinc-400'
-                  }`}
-                  title="Text color, highlight & badge"
-                >
-                  <span className="w-4 h-4 flex items-center justify-center font-serif text-[13px] border border-zinc-600 rounded">A</span>
-                </button>
-                {bubbleColorOpen && (
-                  <div
-                    data-color-panel="bubble"
-                    className={`absolute ${bubblePlacement === 'bottom' ? 'top-full pt-1.5' : 'bottom-full pb-1.5'} ${
-                      bubbleAlign === 'right' ? 'right-0' : 'left-0'
-                    } flex flex-col z-[999999]`}
-                    onMouseDown={(e) => e.preventDefault()}
-                  >
-                    <TextColorPanel
-                      editor={editor}
-                      textColors={colors}
-                      highlightColors={colors}
-                      onClose={() => setBubbleColorOpen(false)}
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
-
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleBold().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bold') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Bold (Ctrl+B)"
-              >
-                <Bold className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleItalic().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('italic') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Italic (Ctrl+I)"
-              >
-                <Italic className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleUnderline().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('underline') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Underline (Ctrl+U)"
-              >
-                <UnderlineIcon className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleStrike().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('strike') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Strikethrough"
-              >
-                <Strikethrough className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  const previousUrl = editor.getAttributes('link').href;
-                  const url = window.prompt('URL', previousUrl);
-                  if (url === null) return;
-                  if (url === '') {
-                    editor.chain().focus().extendMarkRange('link').unsetLink().run();
-                    return;
-                  }
-                  editor.chain().focus().extendMarkRange('link').setLink({ href: normalizeHref(url) }).run();
-                }}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('link') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Add link"
-              >
-                <Link2 className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
-
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleBulletList().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bulletList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Bullet list"
-              >
-                <List className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleOrderedList().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('orderedList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
-                title="Numbered list"
-              >
-                <ListOrdered className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().toggleTaskList().run()}
-                className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-400'}`}
-                title="Checklist"
-              >
-                <CheckSquare className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
-
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().outdent().run()}
-                className="h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 hover:text-zinc-100 transition-colors text-zinc-400 cursor-pointer"
-                title={`Decrease indent (${SHORTCUT_OUTDENT})`}
-              >
-                <IndentDecrease className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => editor.chain().focus().indent().run()}
-                className="h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 hover:text-zinc-100 transition-colors text-zinc-400 cursor-pointer"
-                title={`Increase indent (${SHORTCUT_INDENT})`}
-              >
-                <IndentIncrease className="w-3.5 h-3.5" />
-              </button>
-            </BubbleMenu>
+              <span className="w-4 h-4 flex items-center justify-center font-serif text-[13px] border border-zinc-600 rounded">A</span>
+            </button>
           </div>
-        </div>
+
+          <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bold') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Bold (Ctrl+B)"
+          >
+            <Bold className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('italic') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Italic (Ctrl+I)"
+          >
+            <Italic className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleUnderline().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('underline') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Underline (Ctrl+U)"
+          >
+            <UnderlineIcon className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleStrike().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('strike') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Strikethrough"
+          >
+            <Strikethrough className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const previousUrl = editor.getAttributes('link').href;
+              const url = window.prompt('URL', previousUrl);
+              if (url === null) return;
+              if (url === '') {
+                editor.chain().focus().extendMarkRange('link').unsetLink().run();
+                return;
+              }
+              editor.chain().focus().extendMarkRange('link').setLink({ href: normalizeHref(url) }).run();
+            }}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('link') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Add link"
+          >
+            <Link2 className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('bulletList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Bullet list"
+          >
+            <List className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleOrderedList().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('orderedList') ? 'text-zinc-100 bg-zinc-800' : 'text-zinc-400'}`}
+            title="Numbered list"
+          >
+            <ListOrdered className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().toggleTaskList().run()}
+            className={`h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer ${editor.isActive('taskList') ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-400'}`}
+            title="Checklist"
+          >
+            <CheckSquare className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-px h-3.5 bg-zinc-800 mx-0.5" />
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().outdent().run()}
+            className="h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 hover:text-zinc-100 transition-colors text-zinc-400 cursor-pointer"
+            title={`Decrease indent (${SHORTCUT_OUTDENT})`}
+          >
+            <IndentDecrease className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().indent().run()}
+            className="h-6.5 w-6.5 p-1 rounded-md flex items-center justify-center hover:bg-zinc-800 hover:text-zinc-100 transition-colors text-zinc-400 cursor-pointer"
+            title={`Increase indent (${SHORTCUT_INDENT})`}
+          >
+            <IndentIncrease className="w-3.5 h-3.5" />
+          </button>
+        </div>,
+        document.body
       )}
       <style>{`
         .ProseMirror li > p[data-indent],
@@ -1060,6 +1096,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             {footer}
             <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'} shrink-0`} />
             <ComposerToolButton
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().toggleBold().run()}
               disabled={disabled}
               title="Bold (Ctrl+B)"
@@ -1068,6 +1105,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
               <Bold className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
             </ComposerToolButton>
             <ComposerToolButton
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().toggleItalic().run()}
               disabled={disabled}
               title="Italic (Ctrl+I)"
@@ -1076,6 +1114,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
               <Italic className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
             </ComposerToolButton>
             <ComposerToolButton
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().toggleUnderline().run()}
               disabled={disabled}
               title="Underline (Ctrl+U)"
@@ -1087,8 +1126,10 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             <div className="relative" data-color-trigger="toolbar">
               <ComposerToolButton
                 ref={toolbarColorButtonRef}
-                onClick={() => {
+                onMouseDown={(e) => {
+                  e.preventDefault();
                   updateToolbarColorPosition();
+                  setBubbleColorOpen(false);
                   setToolbarColorOpen((prev) => !prev);
                 }}
                 disabled={disabled}
@@ -1101,25 +1142,10 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
               >
                 <Palette className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
               </ComposerToolButton>
-              {toolbarColorOpen && (
-                <div
-                  data-color-panel="toolbar"
-                  className={`absolute ${toolbarPlacement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'} ${
-                    toolbarAlign === 'right' ? 'right-0' : 'left-0'
-                  } z-[999999]`}
-                  onMouseDown={(e) => e.preventDefault()}
-                >
-                  <TextColorPanel
-                    editor={editor}
-                    textColors={colors}
-                    highlightColors={colors}
-                    onClose={() => setToolbarColorOpen(false)}
-                  />
-                </div>
-              )}
             </div>
             <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'} shrink-0`} />
             <ComposerToolButton
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().outdent().run()}
               disabled={disabled}
               title={`Decrease indent (${SHORTCUT_OUTDENT})`}
@@ -1128,6 +1154,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
               <IndentDecrease className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
             </ComposerToolButton>
             <ComposerToolButton
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().indent().run()}
               disabled={disabled}
               title={`Increase indent (${SHORTCUT_INDENT})`}
@@ -1137,6 +1164,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             </ComposerToolButton>
             <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'} shrink-0`} />
             <ComposerToolButton
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => editor.chain().focus().toggleTaskList().run()}
               disabled={disabled}
               title="Checklist"
@@ -1166,6 +1194,50 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
             {footerEnd}
           </div>
         </div>
+      )}
+      {typeof document !== 'undefined' && bubbleColorOpen && bubbleColorPos && createPortal(
+        <div
+          data-color-panel="bubble"
+          style={{
+            position: 'fixed',
+            top: bubbleColorPos.top,
+            bottom: bubbleColorPos.bottom,
+            left: bubbleColorPos.left,
+            zIndex: 1000000,
+            pointerEvents: 'auto',
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <TextColorPanel
+            editor={editor}
+            textColors={colors}
+            highlightColors={colors}
+            onClose={() => setBubbleColorOpen(false)}
+          />
+        </div>,
+        document.body
+      )}
+      {typeof document !== 'undefined' && toolbarColorOpen && toolbarColorPos && createPortal(
+        <div
+          data-color-panel="toolbar"
+          style={{
+            position: 'fixed',
+            top: toolbarColorPos.top,
+            bottom: toolbarColorPos.bottom,
+            left: toolbarColorPos.left,
+            zIndex: 1000000,
+            pointerEvents: 'auto',
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <TextColorPanel
+            editor={editor}
+            textColors={colors}
+            highlightColors={colors}
+            onClose={() => setToolbarColorOpen(false)}
+          />
+        </div>,
+        document.body
       )}
     </div>
   );

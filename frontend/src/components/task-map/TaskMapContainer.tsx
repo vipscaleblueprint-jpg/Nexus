@@ -766,15 +766,20 @@ export const TaskMapContainer: React.FC = () => {
       });
     };
 
+    const stripInProgressStatus = (statuses?: string[]): string[] =>
+      (Array.isArray(statuses) ? statuses : []).filter(
+        (s) => (s || '').trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+      );
+
     const handleTaskMapUpdated = (e: any) => {
       const data = e.detail || e;
+      if (data?.maSession?.maName) {
+        useAppStore.getState().updateMaActiveSession(
+          data.maSession.maName,
+          data.maSession?.cleared ? null : data.maSession
+        );
+      }
       if (!data?.taskId) {
-        if (data?.maSession?.maName) {
-          useAppStore.getState().updateMaActiveSession(
-            data.maSession.maName,
-            data.maSession?.cleared ? null : data.maSession
-          );
-        }
         scheduleReload();
         return;
       }
@@ -825,6 +830,19 @@ export const TaskMapContainer: React.FC = () => {
 
       const patchItem = (t: TaskMapItem): TaskMapItem => {
         if (t.id !== taskId) return t;
+        const resolvedProgress =
+          data.progress !== undefined
+            ? data.progress
+            : data.maSession?.cleared && t.progress && !t.progress.timeOut
+              ? { ...t.progress, timeOut: formatManilaTime(new Date()) }
+              : t.progress;
+        const isTimedOut = Boolean(resolvedProgress?.timeOut && !resolvedProgress?.isMissingTime);
+        const resolvedStatuses =
+          nextStatuses !== undefined
+            ? nextStatuses
+            : isTimedOut
+              ? stripInProgressStatus(t.taskMap.statuses)
+              : t.taskMap.statuses;
         return applyLiveWorkingTaskStatus({
           ...t,
           status: nextTaskObj?.status ?? t.status,
@@ -837,12 +855,12 @@ export const TaskMapContainer: React.FC = () => {
           isLaunchDate: launchMeta !== undefined ? Boolean(launchMeta?.isLaunchDate) : t.isLaunchDate,
           upworkStartedAt: upworkStartedAt !== undefined ? upworkStartedAt : t.upworkStartedAt,
           upworkSession: upworkSession !== undefined ? upworkSession : t.upworkSession,
-          progress: data.progress !== undefined ? data.progress : t.progress,
+          progress: resolvedProgress,
           taskMap: {
             ...t.taskMap,
             ...(taskMap || {}),
             ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
-            statuses: nextStatuses !== undefined ? nextStatuses : t.taskMap.statuses,
+            statuses: resolvedStatuses,
           },
         });
       };
@@ -924,8 +942,17 @@ export const TaskMapContainer: React.FC = () => {
           isUpwork: Boolean(log.isUpwork),
           timeTracker: log.timeTracker || null,
         };
-        const patchLog = (t: TaskMapItem) =>
-          t.id === targetItemId ? applyLiveWorkingTaskStatus({ ...t, progress: nextProgress }) : t;
+        const patchLog = (t: TaskMapItem) => {
+          if (t.id !== targetItemId) return t;
+          const isTimedOut = Boolean(nextProgress.timeOut && !nextProgress.isMissingTime);
+          return applyLiveWorkingTaskStatus({
+            ...t,
+            progress: nextProgress,
+            taskMap: isTimedOut
+              ? { ...t.taskMap, statuses: stripInProgressStatus(t.taskMap?.statuses) }
+              : t.taskMap,
+          });
+        };
         setTasks((prev) => prev.map(patchLog));
         setAvailablePool((prev) => prev.map(patchLog));
       }
@@ -969,6 +996,34 @@ export const TaskMapContainer: React.FC = () => {
             ? null
             : { ...data, updatedAt: data.updatedAt || new Date().toISOString() }
         );
+      }
+      if (data?.cleared || (data?.timeOut && !data?.active)) {
+        const targetId = data?.subtaskId ? `subtask:${data.subtaskId}` : data?.taskId;
+        const resolvedTimeOut = data?.timeOut || formatManilaTime(new Date());
+        const maKey = (data?.maName || '').trim().toLowerCase();
+        const patchTimedOut = (t: TaskMapItem): TaskMapItem => {
+          const matchesId = Boolean(targetId && t.id === targetId);
+          const matchesMa = Boolean(
+            !targetId &&
+            maKey &&
+            t.progress?.maName &&
+            t.progress.maName.trim().toLowerCase() === maKey &&
+            t.progress.timeIn &&
+            !t.progress.timeOut
+          );
+          if (!matchesId && !matchesMa) return t;
+          if (t.progress?.timeOut) return t;
+          return {
+            ...t,
+            progress: t.progress ? { ...t.progress, timeOut: resolvedTimeOut } : t.progress,
+            taskMap: {
+              ...t.taskMap,
+              statuses: stripInProgressStatus(t.taskMap?.statuses),
+            },
+          };
+        };
+        setTasks((prev) => prev.map(patchTimedOut));
+        setAvailablePool((prev) => prev.map(patchTimedOut));
       }
     };
 
@@ -1559,6 +1614,50 @@ export const TaskMapContainer: React.FC = () => {
       markTaskSavingToDb(taskId, false);
     }
   };
+
+  const handleOptimisticClockOut = useCallback(
+    (
+      taskId: string,
+      updates: {
+        timeOut: string;
+        targetStatus: string;
+        targetMainStatus?: string;
+        taskDeliverablesDescription?: string;
+        taskUpdateAndDeliverables?: string;
+        handedOver?: boolean;
+        clearAssignee?: boolean;
+      }
+    ) => {
+      const patchClockOut = (t: TaskMapItem): TaskMapItem => {
+        if (t.id !== taskId) return t;
+        return {
+          ...t,
+          ...(updates.targetMainStatus ? { status: updates.targetMainStatus } : {}),
+          ...(updates.clearAssignee ? { assigneeId: null, assignee: null, assignees: [] } : {}),
+          progress: t.progress
+            ? {
+                ...t.progress,
+                timeOut: updates.timeOut,
+                ...(updates.taskDeliverablesDescription !== undefined
+                  ? { taskDeliverablesDescription: updates.taskDeliverablesDescription }
+                  : {}),
+                ...(updates.taskUpdateAndDeliverables !== undefined
+                  ? { taskUpdateAndDeliverables: updates.taskUpdateAndDeliverables }
+                  : {}),
+              }
+            : t.progress,
+          taskMap: {
+            ...t.taskMap,
+            statuses: [updates.targetStatus],
+            ...(updates.handedOver !== undefined ? { handedOver: updates.handedOver } : {}),
+          },
+        };
+      };
+      setTasks((prev) => prev.map(patchClockOut));
+      setAvailablePool((prev) => prev.map(patchClockOut));
+    },
+    []
+  );
 
   // Handler for optimistic drag-and-drop task assignment on Task Map Board View
   const handleAssignTask = async (
@@ -2211,6 +2310,7 @@ export const TaskMapContainer: React.FC = () => {
               clients={clients}
               onTaskUpdate={handleTaskUpdate}
               onAssignTask={handleAssignTask}
+              onOptimisticClockOut={handleOptimisticClockOut}
               onTransferTask={handleTransferTask}
               search={search}
               trackFilter={trackFilter}

@@ -1924,7 +1924,9 @@ export async function createTaskComment(req: Request, res: Response) {
       }
     }
 
-    if (!effectiveSubtaskId) {
+    // Momentary exception: allow replies to existing parent-task comments (parentCommentId present),
+    // while still blocking new top-level comments on parent tasks that have subtasks.
+    if (!effectiveSubtaskId && !parentCommentId) {
       const subtaskCount = await prisma.subtask.count({
         where: { taskId: effectiveTaskId },
       });

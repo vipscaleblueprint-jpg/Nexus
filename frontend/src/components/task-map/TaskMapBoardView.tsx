@@ -163,6 +163,18 @@ interface Props {
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
   onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string, taskOverride?: TaskMapItem, preserveHandover?: boolean) => Promise<void> | void;
+  onOptimisticClockOut?: (
+    taskId: string,
+    updates: {
+      timeOut: string;
+      targetStatus: string;
+      targetMainStatus?: string;
+      taskDeliverablesDescription?: string;
+      taskUpdateAndDeliverables?: string;
+      handedOver?: boolean;
+      clearAssignee?: boolean;
+    }
+  ) => void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   currentDate?: string;
   isHistory?: boolean;
@@ -1256,6 +1268,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   clients = [],
   onTaskUpdate,
   onAssignTask,
+  onOptimisticClockOut,
   onTransferTask,
   currentDate,
   isHistory = false,
@@ -2779,6 +2792,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         if (uName) {
           useAppStore.getState().updateMaActiveSession(uName, null);
         }
+        setDeliverablesModalTarget(null);
 
         const linkedId =
           task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
@@ -2857,16 +2871,37 @@ export const TaskMapBoardView: React.FC<Props> = ({
         return;
       }
 
-      // 2. Real task or subtask — clear live session & set timeOut immediately
+      // 2. Real task or subtask — clear live session & update React state immediately (0ms)
       const targetAssigneeUser = modalUser?.name ? modalUser : task.assignee;
       if (targetAssigneeUser?.name) {
         useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
       }
-      if (task.progress && hasActiveTimeIn) {
-        task.progress.timeOut = nowTimeOut;
-        task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
-        task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
-      }
+      const optimisticMainStatus = isToReview
+        ? 'IN REVIEW'
+        : isWaiting
+          ? 'WAITING'
+          : isOnHold
+            ? 'ON-HOLD'
+            : isRevision
+              ? 'REVISION'
+              : isPaused
+                ? (['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes((task.status || '').trim().toUpperCase())
+                    ? task.status
+                    : 'PENDING')
+                : undefined;
+      onOptimisticClockOut?.(effectiveTaskId, {
+        timeOut: hasActiveTimeIn ? nowTimeOut : (task.progress?.timeOut || nowTimeOut),
+        targetStatus,
+        ...(optimisticMainStatus ? { targetMainStatus: optimisticMainStatus } : {}),
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        ...(isHandover || isAvailableTask ? { handedOver: true } : isPaused ? { handedOver: false } : {}),
+        clearAssignee: Boolean(
+          isAvailableTask ||
+            (isPmUser && (isHandover || isToReview || isAskClient || isWaiting || isOnHold))
+        ),
+      });
+      setDeliverablesModalTarget(null);
 
       const origRealTimeIn = task.progress?.timeIn;
       const origRealDate = task.progress?.date;

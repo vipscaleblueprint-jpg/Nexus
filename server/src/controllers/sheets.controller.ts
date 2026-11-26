@@ -2383,7 +2383,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     await invalidateCache(`task:${target.taskId}`, 'task_map:*', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
-    if (maNameStr && !isClosedIncoming && !isHandedOverTask) {
+    if (maNameStr && !isClosedIncoming && !isHandedOverTask && !cleanTimeOut && !nextHandedOver) {
       const maSession = {
         maName: maNameStr,
         taskId: target.taskId,
@@ -2408,15 +2408,16 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       await setMaActiveSession(maKey, maSession).catch(() => { });
       io.emit('ma:session_updated', maSession);
       io.emit('task_map:ma_progress_changed', maSession);
-    } else if (maNameStr && isHandedOverTask) {
+    } else if (maNameStr && (isHandedOverTask || Boolean(cleanTimeOut) || Boolean(nextHandedOver))) {
       const maKey = maNameStr.toLowerCase().trim();
       const currentActive = await getMaActiveSession(maKey).catch(() => null);
-      if (currentActive?.taskId === target.taskId) {
+      const effectiveTargetId = target.subtaskId ? `subtask:${target.subtaskId}` : target.taskId;
+      if (!currentActive || currentActive.taskId === target.taskId || currentActive.taskId === effectiveTargetId) {
         await deleteMaActiveSession(maKey).catch(() => {});
-        const clearedPayload = { maName: maNameStr, cleared: true, taskId: target.taskId };
+        const clearedPayload = { maName: maNameStr, cleared: true, taskId: effectiveTargetId, timeOut: cleanTimeOut || null };
         io.emit('ma:session_updated', clearedPayload);
         io.emit('task_map:ma_progress_changed', clearedPayload);
-        io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.taskId });
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: effectiveTargetId });
       }
     }
 

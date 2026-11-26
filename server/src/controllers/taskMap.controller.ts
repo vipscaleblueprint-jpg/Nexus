@@ -2032,7 +2032,8 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
     const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
     const isRevisionTransferOut = normSubStatuses.some((norm) => norm === 'REVISION' || norm === 'REVISIONS');
-    const isHandoverSubStatus = normSubStatuses.includes('HANDOVER') || isAvailableTaskStatus;
+    const isExplicitHandover = normSubStatuses.includes('HANDOVER');
+    const isHandoverSubStatus = isExplicitHandover || isAvailableTaskStatus;
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
       ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'CRMNEEDEDTOSEND', 'CRMTOSEND', 'CRMNEEDEDTOFOLLOWUP', 'CRMFOLLOWUP', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'FOLLOWUP'].includes(norm)
     );
@@ -2217,7 +2218,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
               taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
               clientName: (subtask.task as any)?.list?.name || 'General',
               taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
-              status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+              status: isExplicitHandover ? 'Hand-over' : isAvailableTaskStatus ? 'Available Task' : 'In Review',
               timeOut: nowManilaTime,
               taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
               taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
@@ -2239,9 +2240,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         }
       }
 
-      const nextHandedOver = isHandoverSubStatus
+      const nextHandedOver = isExplicitHandover
         ? true
-        : isWorkflowTransferOut
+        : (isAvailableTaskStatus || isWorkflowTransferOut)
           ? false
           : (subStateIdx !== -1 ? Boolean(pmReviews[subStateIdx].handedOver) : false);
 
@@ -2559,7 +2560,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             taskTitle: currentTask?.title || 'Task',
             clientName: (currentTask as any)?.list?.name || 'General',
             taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
-            status: isHandoverSubStatus ? 'Hand-over' : 'In Review',
+            status: isExplicitHandover ? 'Hand-over' : isAvailableTaskStatus ? 'Available Task' : 'In Review',
             timeOut: nowManilaTime,
             taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
             taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
@@ -2638,7 +2639,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       statuses,
       waitingReviewSince,
       pmReviews,
-      ...(isHandoverSubStatus ? { handedOver: true } : isWorkflowTransferOut ? { handedOver: false } : {}),
+      ...(isExplicitHandover ? { handedOver: true } : (isAvailableTaskStatus || isWorkflowTransferOut) ? { handedOver: false } : {}),
     });
 
     const isParentOnHoldSubStatus = statuses.some((s: string) => isOnHoldStatus(s));
@@ -2711,7 +2712,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       taskId: id,
       statuses,
       taskMap: updated,
-      ...(isHandoverSubStatus ? { handedOver: true } : isWorkflowTransferOut ? { handedOver: false } : {}),
+      ...(isExplicitHandover ? { handedOver: true } : (isAvailableTaskStatus || isWorkflowTransferOut) ? { handedOver: false } : {}),
       ...(shouldClearAssignee ? { assigneeId: null, assignee: null } : {}),
       upworkStartedAt,
       upworkSession,
@@ -3731,14 +3732,11 @@ async function executeTaskMapAssignment(
       }
     } else {
       // Unassigned back to available pool
-      handedOver = true;
-      if (!newStatuses.some((s) => s.toUpperCase() === 'AVAILABLE TASK')) {
-        newStatuses.push('Available Task');
-      }
-      newStatuses = newStatuses.filter((s) => {
-        const up = s.toUpperCase().replace(/[\s_-]+/g, '');
-        return !up.startsWith('UPWORK');
-      });
+      const hadHandoverTag = newStatuses.some(
+        (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER'
+      );
+      handedOver = hadHandoverTag;
+      newStatuses = hadHandoverTag ? ['Hand-over'] : ['Available Task'];
 
       // Clear PM assignment when returning to pool (preserve subtask assignments!)
       reviewsList = reviewsList.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));

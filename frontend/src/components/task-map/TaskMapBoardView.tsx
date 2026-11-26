@@ -3023,12 +3023,41 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
         toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
       } else if (isAvailableTask) {
+        onStatusChange(effectiveTaskId, ['Available Task']);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Available Task'], statusPayloadExtra).catch(console.error);
+        const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(
+          (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+        );
+        const curStatNorm = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+        const shouldResetToPending = !isCadence && (curStatNorm === 'INPROGRESS' || curStatNorm === 'INREVIEW');
+        const nextPoolStatus = shouldResetToPending ? 'PENDING' : (task.status || 'PENDING');
         if (isPmUser && onAssignTask) {
-          await onAssignTask(effectiveTaskId, null, 'QUEUE');
+          await onAssignTask(effectiveTaskId, null, 'QUEUE', undefined, undefined, {
+            ...task,
+            status: nextPoolStatus,
+            taskMap: {
+              ...(task.taskMap || {
+                taskId: effectiveTaskId,
+                statuses: ['Available Task'],
+                shift: 'DAY',
+                stepOrder: 0,
+                dontRollover: false,
+              }),
+              statuses: ['Available Task'],
+              handedOver: false,
+            },
+          });
+          if (shouldResetToPending && onTaskUpdate) {
+            await Promise.resolve(onTaskUpdate(effectiveTaskId, { status: 'PENDING', assigneeId: null })).catch(console.error);
+          }
         } else {
           onDataRefresh();
         }
+        toast.info(
+          hasActiveTimeIn
+            ? `Returned to Available Tasks — clocked out at ${nowTimeOut}`
+            : 'Returned to Available Tasks'
+        );
         toast.info(`Task returned to Available Tasks — timed out at ${nowTimeOut}`);
       } else if (isAskClient) {
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Ask Client'], statusPayloadExtra).catch(console.error);

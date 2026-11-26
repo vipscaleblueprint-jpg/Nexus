@@ -2038,13 +2038,28 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
 
       if (!isOlderRowEdit && !isHandedOverTask) {
+        const compactStatusStr = (statusStr || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+        const existingPausedOrAvailable = existingRecordStatuses.find((s) => {
+          const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+          return ['PAUSED', 'AVAILABLETASK', 'TOREVIEW', 'INREVIEW', 'ONHOLD', 'ASKCLIENT', 'WAITING'].includes(sn);
+        });
+        const timeoutSubStatuses =
+          compactStatusStr === 'PAUSED'
+            ? ['Paused']
+            : compactStatusStr === 'AVAILABLETASK'
+              ? ['Available Task']
+              : compactStatusStr === 'TOREVIEW' || compactStatusStr === 'INREVIEW'
+                ? ['To Review']
+                : existingPausedOrAvailable
+                  ? [existingPausedOrAvailable]
+                  : ['Hand-over'];
         const maSession = {
           maName: maNameStr,
           taskId: target.taskId,
           listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
           taskStatus: targetTaskMeta?.status || null,
           priority: targetTaskMeta?.priority || null,
-          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? ['Hand-over'] : (Array.isArray(record.statuses) ? record.statuses : undefined)),
+          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? timeoutSubStatuses : (Array.isArray(record.statuses) ? record.statuses : undefined)),
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
@@ -2315,13 +2330,26 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         nextHandedOver = false;
       }
     } else if (cleanTimeOut) {
-      // Time-Out: auto Hand-over unless MA changed it to To Review / completed / CRM
+      // Time-Out: auto Hand-over ONLY if the task wasn't intentionally timed out to Paused / Available Task / To Review / completed / CRM / On-hold
+      const compactIncomingStatus = (statusStr || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       const isAlreadyReviewedOrFinished =
-        ['DONE', 'CLOSED', 'CRM', 'WAITING'].includes(currentTaskStatusNorm) ||
-        (statusStr && ['TO REVIEW', 'TO_REVIEW', 'DONE', 'CLOSED'].includes(statusStr.toUpperCase())) ||
+        ['DONE', 'CLOSED', 'CRM', 'WAITING', 'INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING', 'REVISION', 'ONHOLD'].includes(currentTaskStatusNorm) ||
+        ['PAUSED', 'AVAILABLETASK', 'TOREVIEW', 'INREVIEW', 'DONE', 'CLOSED', 'ASKCLIENT', 'WAITING', 'ONHOLD', 'REVISION', 'REVISIONS', 'READYTOSEND', 'TOSEND'].includes(compactIncomingStatus) ||
         existingRecordStatuses.some((s) => {
           const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return ['READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+          return [
+            'PAUSED',
+            'AVAILABLETASK',
+            'TOREVIEW',
+            'INREVIEW',
+            'READYTOSEND',
+            'TOSEND',
+            'ASKCLIENT',
+            'WAITING',
+            'ONHOLD',
+            'REVISION',
+            'REVISIONS',
+          ].includes(sn);
         });
 
       if (!isAlreadyReviewedOrFinished) {

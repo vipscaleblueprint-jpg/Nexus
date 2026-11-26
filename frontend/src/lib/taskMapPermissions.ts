@@ -96,10 +96,13 @@ export function canDropTaskMapCard(
   }
 
   if (targetColumnId === 'available-pool') {
-    if (!isPmUser) {
+    const isOwnColumnHandover = Boolean(
+      currentUserId && sourceUserId && sourceUserId === currentUserId
+    );
+    if (!isPmUser && !isOwnColumnHandover) {
       return {
         allowed: false,
-        reason: 'Only Project Managers can move tasks to the Available column',
+        reason: 'Only Project Managers can move tasks from other columns to the Available column',
       };
     }
     return { allowed: true, mode: 'QUEUE', targetUserId: null };

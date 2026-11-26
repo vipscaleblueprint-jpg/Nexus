@@ -331,6 +331,9 @@ export const LaunchMapContainer: React.FC = () => {
 
     void syncTaskFromUrl();
     const handlePopState = () => {
+      if (isModalHistoryBackPending()) {
+        return;
+      }
       closedTaskIdRef.current = null;
       void syncTaskFromUrl();
     };
@@ -649,12 +652,10 @@ export const LaunchMapContainer: React.FC = () => {
             setRestoringUrlTask(false);
             setSelectedTaskModal(null);
             setSelectedSubtaskTargetId(undefined);
-            if (!isModalHistoryBackPending()) {
-              const url = new URL(window.location.href);
-              url.searchParams.delete('task');
-              url.searchParams.delete('subtask');
-              window.history.replaceState(window.history.state || {}, '', `${url.pathname}${url.search}`);
-            }
+            const url = new URL(window.location.href);
+            url.searchParams.delete('task');
+            url.searchParams.delete('subtask');
+            window.history.replaceState(window.history.state || {}, '', `${url.pathname}${url.search}`);
           }}
           task={selectedTaskModal}
           targetSubtaskId={selectedSubtaskTargetId}

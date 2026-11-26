@@ -462,6 +462,8 @@ export function getPmAssignedUserId(task?: TaskMapItem | null): string | null {
 export function isTaskHandedOver(task?: TaskMapItem | null): boolean {
   if (!task) return false;
   if (task.taskMap?.handedOver) return true;
+  // If actively PM-assigned to a user (queued/working with a 'Hand-over' tag), it stays in their column
+  if (getPmAssignedUserId(task)) return false;
   const statuses = task.taskMap?.statuses || [];
   return statuses.some((s) => {
     const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
@@ -663,7 +665,8 @@ export function applyOptimisticTaskMapAssignment(
   task: TaskMapItem,
   targetUser: { id: string; name?: string; email?: string; avatarUrl?: string | null; roles?: string[]; teamId?: string | null; team?: any } | null,
   mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
-  assigneeRoleRestrictions?: string[]
+  assigneeRoleRestrictions?: string[],
+  preserveHandover?: boolean
 ): TaskMapItem {
   const existingReviews = parseTaskPmReviewsList(task);
   const filteredReviews = existingReviews.filter((r: any) => {
@@ -718,14 +721,29 @@ export function applyOptimisticTaskMapAssignment(
     },
   ];
 
-  const cleanedStatuses = existingStatuses.filter((st) => {
+  const hasPausedStatus = existingStatuses.some(
+    (st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+  );
+  const hadHandover =
+    Boolean(task.taskMap?.handedOver) ||
+    existingStatuses.some((st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+  const previousOwnerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || null;
+  const isCrossUserTransfer = Boolean(previousOwnerId && previousOwnerId !== targetUser.id);
+  const shouldSetHandover =
+    mode === 'QUEUE' &&
+    !hasPausedStatus &&
+    (hadHandover || isCrossUserTransfer || Boolean(preserveHandover));
+
+  let cleanedStatuses = existingStatuses.filter((st) => {
     const norm = st.trim().toUpperCase().replace(/[\s_-]+/g, '');
     if (norm === 'HANDOVER' || norm === 'AVAILABLETASK' || norm === 'REVISION' || norm === 'REVISIONS') return false;
     if (mode === 'QUEUE' && norm === 'INPROGRESS') return false;
     return true;
   });
 
-  if (mode === 'IN_PROGRESS' && !cleanedStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+  if (shouldSetHandover) {
+    cleanedStatuses = ['Hand-over'];
+  } else if (mode === 'IN_PROGRESS' && !cleanedStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
     cleanedStatuses.push('In progress');
   }
 
@@ -1060,7 +1078,7 @@ export const taskMapApi = {
     taskId: string,
     assigneeId: string | null,
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
-    options?: { assigneeRoleRestrictions?: string[]; role?: string; otp?: string }
+    options?: { assigneeRoleRestrictions?: string[]; role?: string; otp?: string; preserveHandover?: boolean }
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }> => {
     markTaskSavingToDb(taskId, true);
     try {
@@ -1448,7 +1466,36 @@ export const taskMapApi = {
       body: JSON.stringify({ sessionKey }),
     });
   },
+
+  checkUserSheetActivity: async (userId: string): Promise<UserSheetActivityStatus> => {
+    return apiClient<UserSheetActivityStatus>(`/api/task-map/users/${encodeURIComponent(userId)}/sheet-activity?_t=${Date.now()}`);
+  },
 };
+
+export interface SheetActivityLogRow {
+  rowNumber: number | null;
+  date: string | null;
+  timeIn: string | null;
+  timeOut: string | null;
+  client: string | null;
+  task: string | null;
+  status: string | null;
+}
+
+export interface UserSheetActivityStatus {
+  success: boolean;
+  userId: string;
+  userName: string;
+  isInactive: boolean;
+  thresholdHours: number;
+  elapsedMinutes: number | null;
+  elapsedLabel: string | null;
+  lastActivityAt: string | null;
+  lastRow: SheetActivityLogRow | null;
+  recentRows: SheetActivityLogRow[];
+  source: 'GOOGLE_SHEET' | 'DAILY_SHEET_LOG' | 'NONE';
+  reason: string;
+}
 
 export interface SuperviseCheckItem {
   id: string;
@@ -2090,7 +2137,12 @@ export function hasSpreadsheetTaskInput(
 
 export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean {
   if (!user) return false;
-  const userRoles = (user.roles || []) as string[];
+  const userRoles = [
+    ...((user.roles || []) as string[]),
+    typeof user.role === 'string' ? user.role : '',
+    typeof user.title === 'string' ? user.title : '',
+    typeof user.department === 'string' ? user.department : '',
+  ].filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
   if (userRoles.length === 0) return false;
 
   const devRoles = extractDeveloperRoles(workspaceTeams, []);
@@ -2100,9 +2152,18 @@ export function isDeveloperUser(user: any, workspaceTeams: any[] = []): boolean 
     .map((r) => normalize(r.fullRole));
 
   return userRoles.some((ur) => {
-    if (typeof ur !== 'string') return false;
     const normUr = normalize(ur);
     if (!normUr) return false;
+    if (
+      normUr === 'dev' ||
+      normUr === 'devpm' ||
+      normUr.startsWith('dev') ||
+      normUr.includes('developer') ||
+      normUr.includes('engineer') ||
+      normUr.includes('programmer')
+    ) {
+      return true;
+    }
     return devRoleNorms.some((dr) => dr === normUr || normUr.includes(dr) || dr.includes(normUr));
   });
 }
@@ -2517,6 +2578,392 @@ export function getTaskMapSubStatusStyle(
   return {
     color: '#3f3f46',
     textColor: '#ffffff',
+  };
+}
+
+export type TaskMapBoardScope = 'TASK_MAP' | 'AUDITOR_MAP' | 'CRM_MAP';
+
+export interface SubStatusTransitionGuide {
+  key: string;
+  label: string;
+  boardScope: TaskMapBoardScope;
+  isReverting: boolean;
+  title: string;
+  summary: string;
+  destination: string;
+  mainStatusChange: string | null;
+  sideEffects: string[];
+  requiresDeliverablesClockOut: boolean;
+  requiresConfirmModal: boolean;
+  accentColor: string;
+}
+
+/**
+ * Single source of truth describing what every sub-status transition does across
+ * Task Map, Auditor Map, and CRM Map (destination board/column, main status update,
+ * clock-out / spreadsheet sync behavior, and modal requirement).
+ */
+export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGuide, 'boardScope' | 'isReverting'>> = {
+  AVAILABLETASK: {
+    key: 'AVAILABLETASK',
+    label: 'Available Task',
+    title: 'Move to Available Tasks Pool',
+    summary: 'Unassigns the current member and returns this card to the Available Tasks pool for PM assignment.',
+    destination: 'Task Map -> Available Tasks',
+    mainStatusChange: null,
+    sideEffects: [
+      'Clears Task Map column assignment (PM only).',
+      'Retains the task’s existing main workflow status.',
+      'Clocks out active sheet session if currently live working.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK,
+  },
+  HANDOVER: {
+    key: 'HANDOVER',
+    label: 'Hand-over',
+    title: 'Hand-over & Clock Out',
+    summary: 'Clocks out active work with deliverables/notes and hands the task over for reassignment.',
+    destination: 'Task Map -> Available Tasks (or Target MA Queue on drag)',
+    mainStatusChange: null,
+    sideEffects: [
+      'Requires Task Deliverables Description & Task Update before clock-out.',
+      'Stamps Time Out in DailySheetLog & Google Daily Schedule.',
+      'Keeps Hand-over tag when dragged into another MA’s Queue.',
+    ],
+    requiresDeliverablesClockOut: true,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.HAND_OVER,
+  },
+  PAUSED: {
+    key: 'PAUSED',
+    label: 'Paused',
+    title: 'Pause & Store in Queue',
+    summary: 'Times out the current work session and moves the task into the member’s Queue as Paused.',
+    destination: 'Current User Column -> Queue',
+    mainStatusChange: 'PENDING (if currently IN PROGRESS)',
+    sideEffects: [
+      'Opens Time-Out & Update modal to record progress or pause reason.',
+      'Stamps Time Out in DailySheetLog & Google Daily Schedule if clocked in.',
+      'Keeps the task assigned to the user inside their Queue.',
+    ],
+    requiresDeliverablesClockOut: true,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.PAUSED,
+  },
+  ASKCLIENT: {
+    key: 'ASKCLIENT',
+    label: 'Ask Client',
+    title: 'Escalate to CRM (Ask Client)',
+    summary: 'Transfers this task out of the current column into the CRM Map pool so CRM can reach out to the client.',
+    destination: 'CRM Map -> CRM Pool',
+    mainStatusChange: null,
+    sideEffects: [
+      'Removes task from MA / Auditor column.',
+      'Preserves original assigned MA for quick return on Revision.',
+      'Clocks out active sheet session if currently live working.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.ASK_CLIENT,
+  },
+  TOREVIEW: {
+    key: 'TOREVIEW',
+    label: 'To Review',
+    title: 'Submit for Audit Review',
+    summary: 'Clocks out work with client-ready deliverables and transfers the task to the Auditor Map.',
+    destination: 'Auditor Map -> Review Queue',
+    mainStatusChange: 'IN REVIEW',
+    sideEffects: [
+      'Requires Task Deliverables Description & Task Update on Task Map.',
+      'Stamps Time Out in DailySheetLog & Google Daily Schedule.',
+      'Moves task to IN REVIEW and removes it from the MA column.',
+    ],
+    requiresDeliverablesClockOut: true,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.TO_REVIEW,
+  },
+  WAITING: {
+    key: 'WAITING',
+    label: 'Waiting',
+    title: 'Move to Sent / Waiting',
+    summary: 'Marks the task as waiting on client response and transfers it to the CRM Map.',
+    destination: 'CRM Map -> Sent / Waiting',
+    mainStatusChange: 'WAITING',
+    sideEffects: [
+      'Changes main status to WAITING and starts CRM follow-up tracking.',
+      'Removes task from current MA column.',
+      'Clocks out active sheet session if currently live working.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.WAITING,
+  },
+  ONHOLD: {
+    key: 'ONHOLD',
+    label: 'On-hold',
+    title: 'Put Task On-hold',
+    summary: 'Places the task on hold at the bottom of Available Tasks (and cascades to open subtasks).',
+    destination: 'Task Map -> Available Tasks (Bottom, excluded from counts)',
+    mainStatusChange: 'ON-HOLD',
+    sideEffects: [
+      'Changes main status to ON-HOLD and unassigns Task Map column.',
+      'Cascades On-hold to open subtasks on parent tasks.',
+      'Clocks out active sheet session if currently live working.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.ON_HOLD,
+  },
+  REVISION: {
+    key: 'REVISION',
+    label: 'Revision',
+    title: 'Send Back for Revision',
+    summary: 'Marks the task as Revision and returns it to the original assigned MA on Task Map.',
+    destination: 'Task Map -> Original MA Column',
+    mainStatusChange: 'REVISION',
+    sideEffects: [
+      'Changes main status to REVISION.',
+      'Automatically restores assignment to the original MA.',
+      'Resets/flags review flow so the MA can fix and re-submit.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.REVISION,
+  },
+  READYTOSEND: {
+    key: 'READYTOSEND',
+    label: 'Ready to Send',
+    title: 'Approve & Move to CRM (To Send)',
+    summary: 'Verifies all required audits & subtasks are complete, then transfers the task to CRM Map.',
+    destination: 'CRM Map -> CRM Needed to Send',
+    mainStatusChange: 'CRM',
+    sideEffects: [
+      'Checks audit checklist and open subtasks gate before moving.',
+      'Transfers task from Auditor Map into CRM Map.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.READY_TO_SEND,
+  },
+  TOSEND: {
+    key: 'TOSEND',
+    label: 'To send',
+    title: 'Mark Ready to Send (CRM)',
+    summary: 'Places the task in the CRM To Send queue ready for client outreach.',
+    destination: 'CRM Map -> CRM Needed to Send',
+    mainStatusChange: 'CRM',
+    sideEffects: [
+      'Verifies completion gate before entering CRM.',
+      'Shows task in the CRM To Send queue.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.TO_SEND,
+  },
+  SENTBUTWAITING: {
+    key: 'SENTBUTWAITING',
+    label: 'Sent but Waiting',
+    title: 'Mark Sent & Start Follow-up Timer',
+    summary: 'Marks outreach as sent to the client and starts the Day 0–7+ CRM follow-up countdown.',
+    destination: 'CRM Map -> Sent but Waiting',
+    mainStatusChange: 'WAITING',
+    sideEffects: [
+      'Requires Client Dashboard membership & completed audits/subtasks.',
+      'Starts Day 0–7+ follow-up aging and alerts on Day 4+.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.SENT,
+  },
+  FOLLOWUP: {
+    key: 'FOLLOWUP',
+    label: 'Follow up',
+    title: 'Flag for Client Follow-up',
+    summary: 'Marks the task under Follow up so CRM tracks the next client touchpoint.',
+    destination: 'CRM Map -> Follow Up',
+    mainStatusChange: null,
+    sideEffects: [
+      'Highlights task as needing a client follow-up.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.FOLLOW_UP,
+  },
+  CLOSED: {
+    key: 'CLOSED',
+    label: 'Closed',
+    title: 'Close & Archive Task',
+    summary: 'Marks the task as Closed after confirming all audits and subtasks are finished.',
+    destination: 'Closed Archive (removed from active boards)',
+    mainStatusChange: 'CLOSED',
+    sideEffects: [
+      'Checks audit checklist and open subtasks completion gate.',
+      'Clears active Task Map / CRM queues and ends open sessions.',
+    ],
+    requiresDeliverablesClockOut: false,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.CLOSED,
+  },
+};
+
+/**
+ * Resolves the user-facing transition guide for any sub-status change across
+ * Task Map, Auditor Map, and CRM Map.
+ */
+export function getSubStatusTransitionGuide(
+  label: string,
+  boardScope: TaskMapBoardScope,
+  context?: { isSelecting?: boolean; isLiveSession?: boolean }
+): SubStatusTransitionGuide {
+  const norm = normalizeSubStatusKey(label);
+  const isSelecting = context?.isSelecting ?? true;
+  const isLiveSession = Boolean(context?.isLiveSession);
+
+  if (!isSelecting) {
+    const revertTarget =
+      boardScope === 'AUDITOR_MAP'
+        ? 'Auditor Map -> IN REVIEW'
+        : boardScope === 'CRM_MAP'
+          ? norm === 'CLOSED'
+            ? 'CRM Map -> WAITING'
+            : 'CRM Map -> CRM Pool'
+          : 'Current Column';
+    return {
+      key: norm || 'CLEAR',
+      label,
+      boardScope,
+      isReverting: true,
+      title: `Revert "${label}" Sub-Status`,
+      summary: `Clears "${label}" and returns the task to its previous workflow state.`,
+      destination: revertTarget,
+      mainStatusChange:
+        boardScope === 'AUDITOR_MAP' && (norm === 'READYTOSEND' || norm === 'REVISION' || norm === 'REVISIONS')
+          ? 'IN REVIEW'
+          : boardScope === 'CRM_MAP' && norm === 'CLOSED'
+            ? 'WAITING'
+            : boardScope === 'CRM_MAP' && (norm === 'SENTBUTWAITING' || norm === 'SENT' || norm === 'REVISION' || norm === 'REVISIONS')
+              ? 'CRM'
+              : null,
+      sideEffects: [
+        `Removes the "${label}" sub-status badge.`,
+        isLiveSession
+          ? 'Task is currently live — Time-Out & Update modal will clock out the active session.'
+          : 'Restores the task’s prior queue/workflow placement.',
+      ],
+      requiresDeliverablesClockOut: isLiveSession,
+      requiresConfirmModal: true,
+      accentColor: getTaskMapSubStatusStyle(label).color,
+    };
+  }
+
+  // Board-specific overrides for Auditor Map & CRM Map where Hand-over / To Review differ from Task Map
+  if (boardScope === 'AUDITOR_MAP' && (norm === 'HANDOVER' || norm === 'TOREVIEW')) {
+    return {
+      key: norm,
+      label,
+      boardScope,
+      isReverting: false,
+      title: 'Return to Auditor Review Queue',
+      summary: 'Unassigns the current auditor and places the task back in the general IN REVIEW queue.',
+      destination: 'Auditor Map -> Review Queue',
+      mainStatusChange: 'IN REVIEW',
+      sideEffects: [
+        'Clears the assigned auditor so another auditor can claim it.',
+        'Keeps main status at IN REVIEW.',
+        'Stamps Time Out if an active audit timer is running.',
+      ],
+      requiresDeliverablesClockOut: false,
+      requiresConfirmModal: true,
+      accentColor: getTaskMapSubStatusStyle(label).color,
+    };
+  }
+
+  if (boardScope === 'CRM_MAP' && norm === 'HANDOVER') {
+    return {
+      key: norm,
+      label,
+      boardScope,
+      isReverting: false,
+      title: 'Return to CRM Pool',
+      summary: 'Unassigns the current CRM member and places the task back in the shared CRM Pool as To send.',
+      destination: 'CRM Map -> CRM Pool (To send)',
+      mainStatusChange: 'CRM',
+      sideEffects: [
+        'Clears current CRM assignee so another CRM member can pick it up.',
+        'Sets sub-status to To send.',
+      ],
+      requiresDeliverablesClockOut: false,
+      requiresConfirmModal: true,
+      accentColor: TASK_MAP_STATUS_COLORS.HAND_OVER,
+    };
+  }
+
+  if (boardScope === 'CRM_MAP' && norm === 'TOREVIEW') {
+    return {
+      key: norm,
+      label,
+      boardScope,
+      isReverting: false,
+      title: 'Return to Auditor Map',
+      summary: 'Sends the task back from CRM Map to the Auditor Map review queue for re-auditing.',
+      destination: 'Auditor Map -> Review Queue',
+      mainStatusChange: 'IN REVIEW',
+      sideEffects: [
+        'Clears CRM assignee and sets main status to IN REVIEW.',
+        'Moves task back to Auditor Map.',
+      ],
+      requiresDeliverablesClockOut: false,
+      requiresConfirmModal: true,
+      accentColor: TASK_MAP_STATUS_COLORS.TO_REVIEW,
+    };
+  }
+
+  const preset =
+    TASK_MAP_SUBSTATUS_GUIDE[norm] ||
+    (norm === 'REVISIONS' ? TASK_MAP_SUBSTATUS_GUIDE.REVISION : undefined) ||
+    (norm === 'SENT' ? TASK_MAP_SUBSTATUS_GUIDE.SENTBUTWAITING : undefined);
+
+  if (preset) {
+    return {
+      ...preset,
+      boardScope,
+      isReverting: false,
+      requiresDeliverablesClockOut: preset.requiresDeliverablesClockOut || isLiveSession,
+    };
+  }
+
+  return {
+    key: norm || label.toUpperCase(),
+    label,
+    boardScope,
+    isReverting: false,
+    title: `Apply "${label}" Sub-Status`,
+    summary:
+      boardScope === 'AUDITOR_MAP'
+        ? `Tags this card with "${label}" on the Auditor Map.`
+        : boardScope === 'CRM_MAP'
+          ? `Tags this card with "${label}" on the CRM Map.`
+          : `Updates the task sub-status to "${label}".`,
+    destination:
+      boardScope === 'AUDITOR_MAP'
+        ? 'Auditor Map (Current Column)'
+        : boardScope === 'CRM_MAP'
+          ? 'CRM Map (Current Column)'
+          : isLiveSession
+            ? 'Current User Column -> Queue (after Time Out)'
+            : 'Current Column',
+    mainStatusChange: null,
+    sideEffects: isLiveSession
+      ? [
+          'Task is currently live working — requires Time Out & Update modal.',
+          'Moves card into Queue once timed out.',
+        ]
+      : [`Sets sub-status pill to "${label}".`],
+    requiresDeliverablesClockOut: isLiveSession,
+    requiresConfirmModal: true,
+    accentColor: getTaskMapSubStatusStyle(label).color,
   };
 }
 

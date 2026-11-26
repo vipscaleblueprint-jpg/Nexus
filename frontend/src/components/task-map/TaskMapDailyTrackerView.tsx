@@ -77,9 +77,17 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
 }) => {
   const [viewScope, setViewScope] = useState<'PRIVATE' | 'TEAM'>('PRIVATE');
   const canViewAllMaSheets = useMemo(() => hasCrmAccess(currentUser), [currentUser]);
-  const [dailySheetUrl, setDailySheetUrl] = useState<string | null>(
-    currentUser?.dailySheetUrl || null
-  );
+  const [dailySheetUrl, setDailySheetUrl] = useState<string | null>(() => {
+    if (currentUser?.dailySheetUrl) return currentUser.dailySheetUrl;
+    if (typeof window !== 'undefined' && currentUser?.id) {
+      try {
+        return localStorage.getItem(`nexus_daily_sheet_url:${currentUser.id}`) || null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
   const [loadingConfig, setLoadingConfig] = useState<boolean>(false);
   const [iframeLoading, setIframeLoading] = useState<boolean>(true);
   const [iframeKey, setIframeKey] = useState<number>(0);
@@ -89,16 +97,22 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
     [currentUser?.name, currentUser?.email]
   );
 
-  // Fetch the logged-in user's personal dailySheetUrl from the DB
+  // Fetch the logged-in user's personal dailySheetUrl from the DB and cache it
   useEffect(() => {
     if (!currentUser?.id) return;
+    const cacheKey = `nexus_daily_sheet_url:${currentUser.id}`;
     let active = true;
-    setLoadingConfig(true);
+    setLoadingConfig((prev) => (dailySheetUrl ? prev : true));
     taskMapApi
       .getDailyScheduleConfig(currentUser.id)
       .then((res) => {
         if (active && res?.success) {
-          setDailySheetUrl(res.dailySheetUrl || null);
+          const nextUrl = res.dailySheetUrl || null;
+          setDailySheetUrl((prev) => (prev === nextUrl ? prev : nextUrl));
+          try {
+            if (nextUrl) localStorage.setItem(cacheKey, nextUrl);
+            else localStorage.removeItem(cacheKey);
+          } catch {}
         }
       })
       .catch(() => {})
@@ -179,7 +193,7 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
       </div>
 
       {/* MAIN CONTENT */}
-      {viewScope === 'TEAM' && canViewAllMaSheets ? (
+      {viewScope === 'TEAM' && canViewAllMaSheets && (
         <TaskMapSheetsView
           allTasks={allTasks}
           allUsers={allUsers}
@@ -188,50 +202,54 @@ export const TaskMapDailyTrackerView: React.FC<Props> = ({
           onOpenDetail={onOpenDetail}
           onRefreshBoard={onRefresh}
         />
-      ) : loadingConfig && !embedUrl ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400 text-xs">
-          <Loader2 className="size-6 animate-spin text-emerald-400" />
-          <span>Loading your Daily Schedule spreadsheet...</span>
-        </div>
-      ) : !embedUrl ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
-          <div className="size-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-500">
-            <FileSpreadsheet className="size-6" />
-          </div>
-          <div className="space-y-1 max-w-md">
-            <h3 className="text-sm font-semibold text-zinc-200">No Daily Sheet Configured</h3>
-            <p className="text-xs text-zinc-400">
-              Your account does not have a personal Google Daily Schedule URL linked yet. Add your sheet link in Settings to use the embedded spreadsheet here.
-            </p>
-          </div>
-          <Link
-            href="/settings"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors"
-          >
-            <AlertCircle className="size-3.5" />
-            <span>Configure in Settings</span>
-          </Link>
-        </div>
-      ) : (
-        <div className="relative flex-1 w-full h-full bg-zinc-950">
-          {iframeLoading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/80 backdrop-blur-xs pointer-events-none">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 shadow-lg">
-                <Loader2 className="size-4 animate-spin text-emerald-400" />
-                <span>Loading your spreadsheet...</span>
-              </div>
-            </div>
-          )}
-          <iframe
-            key={`${embedUrl}-${iframeKey}`}
-            src={embedUrl}
-            title={`${myDisplayName || 'My'} Daily Schedule`}
-            className="w-full h-full border-0 bg-white"
-            allow="clipboard-read; clipboard-write"
-            onLoad={() => setIframeLoading(false)}
-          />
-        </div>
       )}
+
+      <div className={viewScope === 'TEAM' && canViewAllMaSheets ? 'hidden' : 'flex-1 flex flex-col min-h-0 h-full'}>
+        {loadingConfig && !embedUrl ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400 text-xs">
+            <Loader2 className="size-6 animate-spin text-emerald-400" />
+            <span>Loading your Daily Schedule spreadsheet...</span>
+          </div>
+        ) : !embedUrl ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
+            <div className="size-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-500">
+              <FileSpreadsheet className="size-6" />
+            </div>
+            <div className="space-y-1 max-w-md">
+              <h3 className="text-sm font-semibold text-zinc-200">No Daily Sheet Configured</h3>
+              <p className="text-xs text-zinc-400">
+                Your account does not have a personal Google Daily Schedule URL linked yet. Add your sheet link in Settings to use the embedded spreadsheet here.
+              </p>
+            </div>
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors"
+            >
+              <AlertCircle className="size-3.5" />
+              <span>Configure in Settings</span>
+            </Link>
+          </div>
+        ) : (
+          <div className="relative flex-1 min-h-0 w-full h-full bg-zinc-950">
+            {iframeLoading && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/80 backdrop-blur-xs pointer-events-none">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 shadow-lg">
+                  <Loader2 className="size-4 animate-spin text-emerald-400" />
+                  <span>Loading your spreadsheet...</span>
+                </div>
+              </div>
+            )}
+            <iframe
+              key={`${embedUrl}-${iframeKey}`}
+              src={embedUrl}
+              title={`${myDisplayName || 'My'} Daily Schedule`}
+              className="absolute inset-0 w-full h-full border-0 bg-white"
+              allow="clipboard-read; clipboard-write"
+              onLoad={() => setIframeLoading(false)}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 };

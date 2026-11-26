@@ -1108,6 +1108,7 @@ export function TaskDetailModalContent({
 
   const currentUserForCrm = useAppStore((s) => s.currentUser);
   const canUseCrm = hasCrmAccess(currentUserForCrm);
+  const hasSubtasks = Boolean(task?.subtasks && task.subtasks.length > 0);
   const effectiveCrmWaitingInfo = useMemo(() => {
     if (!task) return null;
     const base = getTaskCrmWaitingInfo(task as any);
@@ -1159,6 +1160,7 @@ export function TaskDetailModalContent({
     return extractImagesFromComments(richComments);
   }, [richComments]);
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [subtaskReplyTargetId, setSubtaskReplyTargetId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [showEmojiPickerFor, setShowEmojiPickerFor] = useState<string | null>(null);
@@ -1614,10 +1616,12 @@ export function TaskDetailModalContent({
   // page refresh). Keyed by task/parent-task ID. Entries expire after 60 s so
   // a long-open modal still eventually picks up new comments.
   // ---------------------------------------------------------------------------
+  const commentsBootstrappedRef = useRef<string | null>(null);
   const activitiesAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     return () => {
       activitiesAbortRef.current?.abort();
+      commentsBootstrappedRef.current = null;
     };
   }, []);
 
@@ -1956,12 +1960,10 @@ export function TaskDetailModalContent({
     }
   }, [task?.id]);
 
-  // â”€â”€ Bootstrap comments & activities ONCE per task open â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Bootstrap comments & activities ONCE per task open ──────────────────
   // After the initial load, the socket handles all new comments in real-time.
-  // This ref resets whenever the task ID changes so reopening a different task
-  // always triggers a fresh load.
-  const commentsBootstrappedRef = useRef<string | null>(null);
-
+  // This ref resets whenever the task ID changes (or on unmount) so reopening
+  // a task or StrictMode remount always triggers a fresh load.
   useEffect(() => {
     if (!isOpen || !task?.id) return;
     // Only bootstrap if this task hasn't been loaded yet in this session
@@ -2186,62 +2188,71 @@ export function TaskDetailModalContent({
       // If viewing a subtask, only show comments for this subtask
       const isSubtask = !!(currentTask as any).parentTaskId;
       if (isSubtask && payload.subtaskId && payload.subtaskId !== currentTask.id) return;
-      if (!isSubtask && payload.subtaskId) return;
+      // In parent task view (!isSubtask), subtask comments are shown as an overview
 
       if (payload.activity) {
         setActivities(prev => mergeIncomingActivity(prev, payload.activity));
       }
 
+      const commentData = { ...payload.comment };
+      if (!commentData.subtask && (payload.subtaskId || commentData.subtaskId) && currentTask.subtasks) {
+        const sId = payload.subtaskId || commentData.subtaskId;
+        const matchingSub = currentTask.subtasks.find((s: any) => s.id === sId);
+        if (matchingSub) {
+          commentData.subtask = { id: matchingSub.id, title: matchingSub.title };
+        }
+      }
+
       setRichComments(prev => {
         // If it's a reply to a comment
-        if (payload.comment.parentCommentId) {
+        if (commentData.parentCommentId) {
           const cacheKey = isSubtask ? `subtask:${currentTask.id}` : targetId;
           const cached = activityCache.get(cacheKey);
           if (cached?.comments) {
             cached.comments = cached.comments.map((c: any) => {
-              if (c.id !== payload.comment.parentCommentId) return c;
+              if (c.id !== commentData.parentCommentId) return c;
               const replies = c.replies || [];
-              if (replies.some((r: any) => r.id === payload.comment.id)) return c;
-              const nextReplies = [...replies, payload.comment];
+              if (replies.some((r: any) => r.id === commentData.id)) return c;
+              const nextReplies = [...replies, commentData];
               return { ...c, replies: nextReplies, replyCount: nextReplies.length };
             });
           }
           return prev.map(c => {
-            if (c.id === payload.comment.parentCommentId) {
+            if (c.id === commentData.parentCommentId) {
               const replies = c.replies || [];
-              if (replies.some((r: any) => r.id === payload.comment.id)) return c;
+              if (replies.some((r: any) => r.id === commentData.id)) return c;
               const tempIdx = replies.findIndex((r: any) =>
-                typeof r.id === 'string' && r.id.startsWith('temp-') && r.content === payload.comment.content
+                typeof r.id === 'string' && r.id.startsWith('temp-') && r.content === commentData.content
               );
               if (tempIdx !== -1) {
                 const nextReplies = [...replies];
-                nextReplies[tempIdx] = payload.comment;
+                nextReplies[tempIdx] = commentData;
                 return { ...c, replies: nextReplies, replyCount: nextReplies.length };
               }
-              const nextReplies = [...replies, payload.comment];
+              const nextReplies = [...replies, commentData];
               return { ...c, replies: nextReplies, replyCount: nextReplies.length };
             }
             return c;
           });
         }
 
-        // Deduplicate â€” the sender already added it optimistically
-        if (prev.some(c => c.id === payload.comment.id)) return prev;
+        // Deduplicate — the sender already added it optimistically
+        if (prev.some(c => c.id === commentData.id)) return prev;
         // Replace temp placeholder if this is the acting client
         const tempIdx = prev.findIndex(c =>
           typeof c.id === 'string' && c.id.startsWith('temp-') &&
-          c.content === payload.comment.content
+          c.content === commentData.content
         );
         if (tempIdx !== -1) {
           const updated = [...prev];
-          updated[tempIdx] = payload.comment;
+          updated[tempIdx] = commentData;
           return updated;
         }
-        const nextComments = [...prev, payload.comment];
+        const nextComments = [...prev, commentData];
         const cacheKey = isSubtask ? `subtask:${currentTask.id}` : targetId;
         const cached = activityCache.get(cacheKey);
-        if (cached?.comments && !cached.comments.some((c: any) => c.id === payload.comment.id)) {
-          cached.comments = [...cached.comments, payload.comment];
+        if (cached?.comments && !cached.comments.some((c: any) => c.id === commentData.id)) {
+          cached.comments = [...cached.comments, commentData];
         }
         return nextComments;
       });
@@ -2534,7 +2545,12 @@ export function TaskDetailModalContent({
 
     const handleCommentReaction = (payload: { taskId: string; subtaskId?: string | null; commentId: string; reactions: any[] }) => {
       const currentTask = taskRef.current;
-      if (!currentTask || payload.taskId !== currentTask.id || payload.subtaskId) return;
+      if (!currentTask) return;
+      const targetId = (currentTask as any).parentTaskId || currentTask.id;
+      if (payload.taskId !== targetId) return;
+      const isSubtask = !!(currentTask as any).parentTaskId;
+      if (isSubtask && payload.subtaskId && payload.subtaskId !== currentTask.id) return;
+
       setRichComments(prev =>
         prev.map(c => {
           if (c.id === payload.commentId) return { ...c, reactions: payload.reactions };
@@ -3374,6 +3390,10 @@ export function TaskDetailModalContent({
   };
 
   const handleAddComment = async () => {
+    if (hasSubtasks && !((task as any)?.parentTaskId)) {
+      toast.error('Comments are disabled on parent tasks with subtasks.');
+      return;
+    }
     const trimmed = isBlankCommentHtml(comment) ? '' : trimCommentHtml(comment);
     if (!trimmed && stagedFiles.length === 0) return;
     if (!task) return;
@@ -3633,7 +3653,10 @@ export function TaskDetailModalContent({
           <SubtaskDetailView
             subtask={activeSubtask}
             parentTask={task}
-            onClose={() => setActiveSubtask(null)}
+            onClose={() => {
+              setSubtaskReplyTargetId(null);
+              setActiveSubtask(null);
+            }}
             onCloseModal={onClose}
             currentUser={currentUser}
             socket={socket}
@@ -3647,6 +3670,8 @@ export function TaskDetailModalContent({
             targetCommentId={targetCommentId}
             targetCommentText={targetCommentText}
             scrollToComments={scrollToComments}
+            initialReplyCommentId={subtaskReplyTargetId}
+            onConsumeInitialReply={() => setSubtaskReplyTargetId(null)}
             activityWidth={activityWidth}
             onActivityWidthChange={setActivityWidth}
           />
@@ -3660,7 +3685,9 @@ export function TaskDetailModalContent({
         <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 border-b border-border shrink-0 bg-card w-full max-w-full overflow-hidden">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
-              onClick={() => {
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
                 onClose();
               }}
               className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors mr-1 sm:mr-2 cursor-pointer shrink-0"
@@ -3805,10 +3832,13 @@ export function TaskDetailModalContent({
               </Popover.Portal>
             </Popover.Root>
             <button
-              onClick={() => {
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
                 onClose();
               }}
               className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              title="Close"
             >
               <X className="w-5 h-5" />
             </button>
@@ -4873,7 +4903,14 @@ export function TaskDetailModalContent({
                   transition={{ duration: 0.18, ease: 'easeOut' }}
                   className="px-4 sm:px-6 py-4 sm:py-5 border-b border-zinc-800/60 shrink-0 flex items-center justify-between bg-card"
                 >
-                  <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-sm text-zinc-200">Activity</h3>
+                    {hasSubtasks && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        Subtasks Overview
+                      </span>
+                    )}
+                  </div>
                   <div className="flex gap-2.5 items-center">
                     <span className="text-zinc-500 text-xs">Created {new Date(task.createdAt || Date.now()).toLocaleDateString()}</span>
                     <button
@@ -5018,9 +5055,30 @@ export function TaskDetailModalContent({
                             </div>
                           )}
                           <div className="flex-1 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-zinc-200 font-medium text-[13px]">{comment.user?.name || 'Someone'}</span>
                               <span className="text-[11px] text-zinc-500">{new Date(comment.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {cTimeStr}</span>
+                              {Boolean(comment.subtaskId || comment.subtask) && (() => {
+                                const subtaskTitle = comment.subtask?.title || task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id))?.title;
+                                const matchingSubtask = task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id));
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (matchingSubtask) {
+                                        setActiveSubtask(matchingSubtask);
+                                      }
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/25 transition-colors cursor-pointer group"
+                                    title={matchingSubtask ? `Open subtask: ${subtaskTitle || 'Subtask'}` : 'Subtask comment'}
+                                  >
+                                    <CornerDownRight className="w-3 h-3 text-indigo-400 group-hover:translate-x-0.5 transition-transform" />
+                                    <span className="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold">Subtask:</span>
+                                    <span className="truncate max-w-[180px] font-medium text-indigo-300">{subtaskTitle || 'Subtask'}</span>
+                                  </button>
+                                );
+                              })()}
                             </div>
                             <div className="flex items-center gap-1">
                               <button
@@ -5160,12 +5218,58 @@ export function TaskDetailModalContent({
                           </div>
                           {!isReply && (
                             <button
-                              onClick={() => setReplyingToId(replyingToId === comment.id ? null : comment.id)}
-                              className="flex items-center gap-1.5 px-2 h-6 rounded hover:bg-zinc-700/80 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors text-[11px] font-medium ml-1"
+                              type="button"
+                              onClick={() => {
+                                if (comment.subtaskId || comment.subtask) {
+                                  const matchingSubtask = task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id));
+                                  if (matchingSubtask) {
+                                    setSubtaskReplyTargetId(comment.id);
+                                    setActiveSubtask(matchingSubtask);
+                                    return;
+                                  }
+                                }
+                                if (hasSubtasks) {
+                                  return;
+                                }
+                                setReplyingToId(replyingToId === comment.id ? null : comment.id);
+                              }}
+                              disabled={hasSubtasks && !comment.subtaskId && !comment.subtask}
+                              className={`flex items-center gap-1.5 px-2 h-6 rounded transition-colors text-[11px] font-medium ml-1 ${
+                                hasSubtasks && !comment.subtaskId && !comment.subtask
+                                  ? 'opacity-40 cursor-not-allowed text-zinc-500'
+                                  : 'hover:bg-zinc-700/80 text-zinc-400 hover:text-zinc-200 cursor-pointer'
+                              }`}
+                              title={
+                                comment.subtaskId || comment.subtask
+                                  ? 'Open subtask and reply'
+                                  : (hasSubtasks ? 'Commenting is disabled on parent task' : 'Reply')
+                              }
                             >
-                              <MessageSquare className="w-3 h-3" /> Reply {((comment.replies?.length ?? comment.replyCount) > 0) && `(${comment.replies?.length ?? comment.replyCount})`}
+                              <MessageSquare className="w-3 h-3" />
+                              <span>Reply</span>
+                              {((comment.replies?.length ?? comment.replyCount) > 0) && ` (${comment.replies?.length ?? comment.replyCount})`}
                             </button>
                           )}
+                          {!isReply && Boolean(comment.subtaskId || comment.subtask) && (() => {
+                            const subtaskTitle = comment.subtask?.title || task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id))?.title;
+                            const matchingSubtask = task.subtasks?.find((s: any) => s.id === (comment.subtaskId || comment.subtask?.id));
+                            return (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (matchingSubtask) {
+                                    setActiveSubtask(matchingSubtask);
+                                  }
+                                }}
+                                className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 border border-indigo-500/20 transition-colors cursor-pointer max-w-[180px]"
+                                title={`Subtask: ${subtaskTitle || 'Subtask'}`}
+                              >
+                                <CornerDownRight className="w-2.5 h-2.5 text-indigo-400 shrink-0" />
+                                <span className="truncate">{subtaskTitle || 'Subtask'}</span>
+                              </button>
+                            );
+                          })()}
                         </div>
                         {/* Reply input */}
                         {!isReply && replyingToId === comment.id && (
@@ -5651,6 +5755,24 @@ export function TaskDetailModalContent({
             </div>
 
             {/* Comment Input */}
+            {hasSubtasks ? (
+              <div className="p-4 border-t border-zinc-800/60 shrink-0 bg-card/60 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-3 text-zinc-400 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center shrink-0 text-zinc-400">
+                    <Lock className="w-4 h-4 text-zinc-400" />
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-zinc-200 text-xs">Comments disabled on parent task</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 font-medium">Overview Only</span>
+                    </div>
+                    <span className="text-[11px] text-zinc-400 mt-0.5">
+                      This task has subtasks. Comments are managed inside each subtask and displayed above as an overview.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className="p-5 border-t border-zinc-800/60 shrink-0 bg-card flex flex-col gap-2">
               {stagedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2.5 mb-1.5">
@@ -5989,6 +6111,7 @@ export function TaskDetailModalContent({
                 <input type="file" ref={commentFileInputRef} className="hidden" onChange={handleCommentFileChange} />
               </div>
             </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -6103,6 +6226,8 @@ export function SubtaskDetailView({
   targetCommentId,
   targetCommentText,
   scrollToComments,
+  initialReplyCommentId,
+  onConsumeInitialReply,
   activityWidth: propActivityWidth,
   onActivityWidthChange,
 }: {
@@ -6123,6 +6248,8 @@ export function SubtaskDetailView({
   targetCommentId?: string | null;
   targetCommentText?: string | null;
   scrollToComments?: boolean;
+  initialReplyCommentId?: string | null;
+  onConsumeInitialReply?: () => void;
   activityWidth?: number;
   onActivityWidthChange?: (width: number) => void;
 }) {
@@ -6344,6 +6471,7 @@ export function SubtaskDetailView({
   const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<HTMLElement | null>(null);
   const [commentEmojiAnchor, setCommentEmojiAnchor] = useState<HTMLElement | null>(null);
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [subtaskReplyTargetId, setSubtaskReplyTargetId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
 
   const [fullscreenCommentId, setFullscreenCommentId] = useState<string | null>(null);
@@ -6367,6 +6495,21 @@ export function SubtaskDetailView({
     setFullscreenCommentId(null);
     setShowActivityInfo(false);
   }, [subtask?.id]);
+
+  useEffect(() => {
+    if (!initialReplyCommentId || loadingActivities) return;
+    const exists = richComments.some((c: any) => c.id === initialReplyCommentId);
+    if (!exists) return;
+    setReplyingToId(initialReplyCommentId);
+    onConsumeInitialReply?.();
+    const timer = setTimeout(() => {
+      const el = document.getElementById(`comment-${initialReplyCommentId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [initialReplyCommentId, loadingActivities, richComments, onConsumeInitialReply]);
 
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
@@ -7903,6 +8046,7 @@ export function SubtaskDetailView({
   useEffect(() => {
     return () => {
       activitiesAbortRef.current?.abort();
+      commentsBootstrappedRef.current = null;
     };
   }, []);
 
@@ -8590,7 +8734,9 @@ export function SubtaskDetailView({
             </Popover.Portal>
           </Popover.Root>
           <button
-            onClick={() => {
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
               if (onCloseModal) {
                 onCloseModal();
               } else {
@@ -8598,6 +8744,7 @@ export function SubtaskDetailView({
               }
             }}
             className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-white transition-colors cursor-pointer"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -10906,19 +11053,8 @@ export function TaskDetailModal(props: Props) {
     }
 
     const handlePopState = () => {
-      // Absorb stale popstate from an asynchronous history.back() triggered by closing
-      // the previous modal moments before the user rapidly opened this new task.
+      // Absorb stale popstate from history.back() triggered by closing a modal
       if (clearPendingModalHistoryBack()) {
-        const url = new URL(window.location.href);
-        if (url.searchParams.get('task') !== currentTaskId) {
-          url.searchParams.set('task', currentTaskId);
-          window.history.pushState(
-            { nexusTaskModal: currentTaskId },
-            '',
-            url.pathname + url.search
-          );
-          hasPushedHistoryRef.current = true;
-        }
         return;
       }
 
@@ -10926,7 +11062,7 @@ export function TaskDetailModal(props: Props) {
         hasPushedHistoryRef.current = false;
         syncedHistoryTaskIdRef.current = null;
         isHandlingPopStateRef.current = true;
-        onCloseRef.current();
+        onCloseRef.current?.();
         setTimeout(() => {
           isHandlingPopStateRef.current = false;
         }, 120);
@@ -10940,15 +11076,28 @@ export function TaskDetailModal(props: Props) {
   }, [props.isOpen, fullTask?.id]);
 
   const handleSafeClose = useCallback(() => {
+    isHandlingPopStateRef.current = true;
     syncedHistoryTaskIdRef.current = null;
-    if (hasPushedHistoryRef.current && !isHandlingPopStateRef.current) {
-      hasPushedHistoryRef.current = false;
-      if (typeof window !== 'undefined') {
+
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('task') || url.searchParams.has('subtask')) {
+        url.searchParams.delete('task');
+        url.searchParams.delete('subtask');
+        window.history.replaceState(window.history.state || {}, '', url.pathname + url.search);
+      }
+
+      if (hasPushedHistoryRef.current) {
+        hasPushedHistoryRef.current = false;
         markPendingModalHistoryBack();
         window.history.back();
       }
     }
-    onCloseRef.current();
+
+    onCloseRef.current?.();
+    setTimeout(() => {
+      isHandlingPopStateRef.current = false;
+    }, 150);
   }, []);
 
   useEffect(() => {

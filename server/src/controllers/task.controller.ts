@@ -1924,6 +1924,17 @@ export async function createTaskComment(req: Request, res: Response) {
       }
     }
 
+    if (!effectiveSubtaskId) {
+      const subtaskCount = await prisma.subtask.count({
+        where: { taskId: effectiveTaskId },
+      });
+      if (subtaskCount > 0) {
+        return res.status(400).json({
+          error: 'Comments are disabled on parent tasks with subtasks. Please add comments directly inside the subtasks.',
+        });
+      }
+    }
+
     // The comment, its audit log, the author lookup and the parent's reply count are independent writes/reads,
     // so they run in parallel: one ~190 ms DB round trip before the broadcast instead of one per step. Ids are
     // made here so the audit log can reference the comment without waiting for it.
@@ -1939,6 +1950,9 @@ export async function createTaskComment(req: Request, res: Response) {
           userId: effectiveUserId,
           ...(parentCommentId ? { parentCommentId } : {}),
           ...(effectiveSubtaskId ? { subtaskId: effectiveSubtaskId } : {}),
+        },
+        include: {
+          subtask: { select: { id: true, title: true } },
         },
       }),
       prisma.user.findUnique({
@@ -1996,11 +2010,11 @@ export async function createTaskComment(req: Request, res: Response) {
 
     const payload = { taskId: effectiveTaskId, comment, activity, subtaskId: effectiveSubtaskId || undefined };
 
-    // Drop the cached comment list so the next GET rebuilds it from the DB. Pushing onto it
-    // instead started a one-comment list whenever the key had expired or been cleared, which
-    // hid every earlier comment (and its images) until the key expired.
-    const redisCommentKey = `comments:list:${effectiveTaskId}${effectiveSubtaskId ? `:sub:${effectiveSubtaskId}` : ''}`;
-    redis.del(redisCommentKey).catch(() => {});
+    // Drop the cached comment list so the next GET rebuilds it from the DB. Invalidate both main task and subtask caches
+    redis.del(`comments:list:${effectiveTaskId}`).catch(() => {});
+    if (effectiveSubtaskId) {
+      redis.del(`comments:list:${effectiveTaskId}:sub:${effectiveSubtaskId}`).catch(() => {});
+    }
     // Also invalidate the activity cache since a new comment writes an AuditLog
     invalidateCache(`task:activities:${effectiveTaskId}`).catch(() => {});
 
@@ -2246,7 +2260,8 @@ export async function updateTaskComment(req: Request, res: Response) {
             reactions: { include: { user: { select: { id: true, name: true } } } },
           },
         },
-        user: { select: { id: true, name: true, avatarUrl: true, email: true } }
+        user: { select: { id: true, name: true, avatarUrl: true, email: true } },
+        subtask: { select: { id: true, title: true } },
       }
     });
 
@@ -2564,8 +2579,6 @@ export async function getTaskComments(req: Request, res: Response) {
     const whereClause: any = { taskId: effectiveTaskId, parentCommentId: null };
     if (effectiveSubtaskId) {
       whereClause.subtaskId = String(effectiveSubtaskId);
-    } else {
-      whereClause.subtaskId = null;
     }
 
     const enriched = await prisma.taskComment.findMany({
@@ -2581,6 +2594,7 @@ export async function getTaskComments(req: Request, res: Response) {
           orderBy: { createdAt: 'asc' },
         },
         attachments: true,
+        subtask: { select: { id: true, title: true } },
       },
       orderBy: { createdAt: 'asc' },
     });

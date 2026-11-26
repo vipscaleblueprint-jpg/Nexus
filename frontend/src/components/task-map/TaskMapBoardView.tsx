@@ -29,6 +29,9 @@ import {
   getManilaDateKey,
   extractTaskLinkIdentifiers,
   matchesTaskLinkOrId,
+  SheetActivityLogRow,
+  getSubStatusTransitionGuide,
+  SubStatusTransitionGuide,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
@@ -37,6 +40,8 @@ import { TaskDescriptionButton } from './TaskDescriptionButton';
 import { UserRoleBadge } from './UserRoleBadge';
 import { ClientOtpModal } from '../modals/ClientOtpModal';
 import { TaskDeliverablesModal } from '../modals/TaskDeliverablesModal';
+import { InactiveMaConfirmModal } from '../modals/InactiveMaConfirmModal';
+import { SubStatusChangeGuideModal } from '../modals/SubStatusChangeGuideModal';
 import {
   CardStatusDropdown,
   CardPriorityDropdown,
@@ -157,7 +162,7 @@ interface Props {
   selectedCustomMAs?: string[];
   clients?: Array<{ id: string; name: string; count: number }>;
   onTaskUpdate?: (taskId: string, fields: Partial<TaskMapItem>) => Promise<void> | void;
-  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string, taskOverride?: TaskMapItem) => Promise<void> | void;
+  onAssignTask?: (taskId: string, targetUserId: string | null, mode?: 'IN_PROGRESS' | 'QUEUE', assigneeRoleRestrictions?: string[], otp?: string, taskOverride?: TaskMapItem, preserveHandover?: boolean) => Promise<void> | void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   currentDate?: string;
   isHistory?: boolean;
@@ -250,6 +255,10 @@ export const isClosedTask = (task?: TaskMapItem | null): boolean => {
   if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(s)) return true;
   const customStatuses = task.taskMap?.statuses || [];
   if (customStatuses.some((cs) => ['DONE', 'CLOSED', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes((cs || '').toUpperCase().replace(/[\s_-]+/g, '')))) return true;
+  // A finished DailySheetLog session (progress.status === 'Completed') only means that time entry clocked out;
+  // do NOT treat an open/paused task (e.g. PENDING + Paused) as closed!
+  if (customStatuses.some((cs) => (cs || '').toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED')) return false;
+  if (s && !['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(s)) return false;
   const progStatus = (task.progress?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
   if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes(progStatus)) return true;
   return false;
@@ -302,9 +311,9 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
   }
 
   // On-hold or paused tasks belong out of In Progress unless live clocked in right now
-  if (isTaskOnHold(task)) return false;
+  const hasPausedStatus = statuses.some((s) => s.replace(/[\s_-]+/g, '') === 'PAUSED');
+  if (isTaskOnHold(task) || hasPausedStatus) return false;
   if (isTaskLiveWorking(task, userName)) return true;
-  if (statuses.includes('PAUSED')) return false;
 
   const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
   if (isMyProg && task.progress?.timeOut) return false;
@@ -426,15 +435,6 @@ const DraggableTaskCard: React.FC<{
           : 'cursor-grab active:cursor-grabbing'
         }`}
     >
-      {isSaving && !isDragging && (
-        <div
-          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-1.5 rounded-xl bg-zinc-950/80 backdrop-blur-[2px] border border-zinc-700/60 shadow-lg pointer-events-auto animate-in fade-in duration-150 select-none"
-          title="Saving changes..."
-        >
-          <NexusLogoLoader size={26} />
-          <span className="text-[10px] font-semibold text-zinc-300 tracking-wide">Syncing data...</span>
-        </div>
-      )}
       {children}
     </div>
   );
@@ -1333,10 +1333,26 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const [deliverablesModalTarget, setDeliverablesModalTarget] = useState<{
     task: TaskMapItem;
-    targetStatus: 'To Review' | 'Hand-over';
+    targetStatus: 'To Review' | 'Hand-over' | 'Paused' | string;
     user?: any;
     nextStatuses?: string[];
     realTaskId?: string;
+  } | null>(null);
+  const [inactiveMaModal, setInactiveMaModal] = useState<{
+    isOpen: boolean;
+    targetUserId: string;
+    targetUserName: string;
+    taskTitle: string;
+    reason: string;
+    elapsedLabel?: string | null;
+    recentRows?: SheetActivityLogRow[];
+    source?: 'GOOGLE_SHEET' | 'DAILY_SHEET_LOG' | 'NONE';
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [subStatusGuideTarget, setSubStatusGuideTarget] = useState<{
+    task: TaskMapItem;
+    guide: SubStatusTransitionGuide;
+    onConfirm: () => Promise<void>;
   } | null>(null);
   const submittingDeliverablesRef = useRef<Set<string>>(new Set());
   const recentlyClockedOutRef = useRef<Map<string, number>>(new Map());
@@ -1789,7 +1805,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const isAdmin = isTaskUnderAdmin(task);
       const isDev = isDeveloperUser(targetUser, workspaceTeams);
       const hasSheetInput = hasSpreadsheetTaskInput(task, { isHistory, now: boardTime, targetDate: currentDate });
-      if (!effectiveShowAdmin && isAdmin && !isDev && !hasSheetInput) return;
+      const isPausedTask = (task.taskMap?.statuses || []).some(
+        (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+      );
+      const hasExplicitQueueAssignment = Boolean(
+        effectiveHandlerId &&
+        effectiveHandlerId !== 'unassigned' &&
+        hasPmAssignmentForUser(task, effectiveHandlerId)
+      );
+      if (!effectiveShowAdmin && isAdmin && !isDev && !hasSheetInput && !isPausedTask && !hasExplicitQueueAssignment) return;
       if (nextPoolIds.has(task.id)) return;
       const hasProgress = Boolean(task.progress?.timeIn || task.progress?.maName);
       if (isClosedTask(task)) return;
@@ -2235,6 +2259,34 @@ export const TaskMapBoardView: React.FC<Props> = ({
     return true;
   };
 
+  const executeWithInactiveCheck = async (
+    targetUserId: string,
+    targetUser: any,
+    taskTitle: string,
+    proceedFn: () => Promise<void>
+  ) => {
+    try {
+      const activity = await taskMapApi.checkUserSheetActivity(targetUserId).catch(() => null);
+      if (activity?.isInactive) {
+        setInactiveMaModal({
+          isOpen: true,
+          targetUserId,
+          targetUserName: targetUser?.name || activity.userName || 'Team Member',
+          taskTitle,
+          reason: activity.reason,
+          elapsedLabel: activity.elapsedLabel,
+          recentRows: activity.recentRows,
+          source: activity.source,
+          onConfirm: proceedFn,
+        });
+        return;
+      }
+    } catch {
+      // If activity lookup fails, proceed normally rather than blocking workflow
+    }
+    await proceedFn();
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     const dragTask = activeDragTask;
@@ -2284,71 +2336,80 @@ export const TaskMapBoardView: React.FC<Props> = ({
         remainingAvailableSubtasks.length > 0
           ? ` (+${remainingAvailableSubtasks.length} available subtask${remainingAvailableSubtasks.length > 1 ? 's' : ''})`
           : '';
-      toast.success(
-        (isCadence
-          ? `Task assigned to ${targetUser?.name || 'user'}`
-          : `Task set In Progress for ${targetUser?.name || 'user'}`) + subSuffix
-      );
-      try {
-        if (onAssignTask) {
-          await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
-          if (remainingAvailableSubtasks.length > 0) {
-            await Promise.all(
-              remainingAvailableSubtasks.map((sub) =>
-                onAssignTask(sub.id, targetUserId, 'QUEUE', getResolvedRoleRestrictionsForUser(sub, targetUser))
-              )
-            );
-          }
-        } else {
-          const nextStatus = isCadence ? toCanonicalTaskStatus(currentTask!.status) : 'IN PROGRESS';
-          await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
-          if (onTaskUpdate) {
-            await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
+
+      const runInProgressAssign = async () => {
+        toast.success(
+          (isCadence
+            ? `Task assigned to ${targetUser?.name || 'user'}`
+            : `Task set In Progress for ${targetUser?.name || 'user'}`) + subSuffix
+        );
+        try {
+          if (onAssignTask) {
+            await onAssignTask(taskId, targetUserId, 'IN_PROGRESS', nextRoles);
+            if (remainingAvailableSubtasks.length > 0) {
+              await Promise.all(
+                remainingAvailableSubtasks.map((sub) =>
+                  onAssignTask(sub.id, targetUserId, 'QUEUE', getResolvedRoleRestrictionsForUser(sub, targetUser))
+                )
+              );
+            }
           } else {
-            await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+            const nextStatus = isCadence ? toCanonicalTaskStatus(currentTask!.status) : 'IN PROGRESS';
+            await taskMapApi.assignTask(taskId, targetUserId, 'IN_PROGRESS', { assigneeRoleRestrictions: nextRoles });
+            if (onTaskUpdate) {
+              await onTaskUpdate(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
+            } else {
+              await tasksApi.updateTask(taskId, { status: nextStatus, assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+            }
+            if (remainingAvailableSubtasks.length > 0) {
+              await Promise.all(
+                remainingAvailableSubtasks.map((sub) =>
+                  taskMapApi.assignTask(sub.id, targetUserId, 'QUEUE', {
+                    assigneeRoleRestrictions: getResolvedRoleRestrictionsForUser(sub, targetUser),
+                  })
+                )
+              );
+            }
+            onDataRefresh();
           }
-          if (remainingAvailableSubtasks.length > 0) {
-            await Promise.all(
-              remainingAvailableSubtasks.map((sub) =>
-                taskMapApi.assignTask(sub.id, targetUserId, 'QUEUE', {
-                  assigneeRoleRestrictions: getResolvedRoleRestrictionsForUser(sub, targetUser),
-                })
-              )
-            );
+        } catch (err: any) {
+          const errData = err?.response?.data || err?.data;
+          const isClientLocked =
+            err?.isClientLocked ||
+            errData?.isClientLocked ||
+            errData?.error === 'CLIENT_LOCKED' ||
+            err?.error === 'CLIENT_LOCKED' ||
+            err?.message?.includes('CLIENT_LOCKED') ||
+            err?.message?.toLowerCase().includes('exceeded weekly');
+          if (isClientLocked) {
+            const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+            const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+            const hoursInfo =
+              typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+                ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+                : '';
+            const clientName = err?.clientName || errData?.clientName || (currentTask as any)?.list?.name || (currentTask as any)?.listName || 'Client';
+            toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
+            setClientOtpModal({
+              isOpen: true,
+              clientName,
+              taskId,
+              targetUserId,
+              mode: 'IN_PROGRESS',
+              nextRoles,
+              hoursLogged,
+              weeklyLimit,
+            });
+          } else {
+            toast.error(err.message || 'Failed to set task In Progress');
           }
-          onDataRefresh();
         }
-      } catch (err: any) {
-        const errData = err?.response?.data || err?.data;
-        const isClientLocked =
-          err?.isClientLocked ||
-          errData?.isClientLocked ||
-          errData?.error === 'CLIENT_LOCKED' ||
-          err?.error === 'CLIENT_LOCKED' ||
-          err?.message?.includes('CLIENT_LOCKED') ||
-          err?.message?.toLowerCase().includes('exceeded weekly');
-        if (isClientLocked) {
-          const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
-          const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
-          const hoursInfo =
-            typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
-              ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
-              : '';
-          const clientName = err?.clientName || errData?.clientName || (currentTask as any)?.list?.name || (currentTask as any)?.listName || 'Client';
-          toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
-          setClientOtpModal({
-            isOpen: true,
-            clientName,
-            taskId,
-            targetUserId,
-            mode: 'IN_PROGRESS',
-            nextRoles,
-            hoursLogged,
-            weeklyLimit,
-          });
-        } else {
-          toast.error(err.message || 'Failed to set task In Progress');
-        }
+      };
+
+      if (sourceOwnerId !== targetUserId) {
+        await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runInProgressAssign);
+      } else {
+        await runInProgressAssign();
       }
       return;
     }
@@ -2368,73 +2429,115 @@ export const TaskMapBoardView: React.FC<Props> = ({
         remainingAvailableSubtasks.length > 0
           ? ` (+${remainingAvailableSubtasks.length} available subtask${remainingAvailableSubtasks.length > 1 ? 's' : ''})`
           : '';
-      toast.success(`Task queued for ${targetUser?.name || 'user'}${subSuffix}`);
-      try {
-        if (onAssignTask) {
-          await onAssignTask(taskId, targetUserId, 'QUEUE', nextRoles);
-          if (remainingAvailableSubtasks.length > 0) {
-            await Promise.all(
-              remainingAvailableSubtasks.map((sub) =>
-                onAssignTask(sub.id, targetUserId, 'QUEUE', getResolvedRoleRestrictionsForUser(sub, targetUser))
-              )
-            );
-          }
-        } else {
-          await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE', { assigneeRoleRestrictions: nextRoles });
-          if (onTaskUpdate) {
-            await onTaskUpdate(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
+      const preserveHandover = Boolean(
+        isTaskHandedOver(currentTask) ||
+        (sourceOwnerId && sourceOwnerId !== targetUserId)
+      );
+
+      const runQueueAssign = async () => {
+        toast.success(`Task queued for ${targetUser?.name || 'user'}${subSuffix}`);
+        try {
+          if (onAssignTask) {
+            await onAssignTask(taskId, targetUserId, 'QUEUE', nextRoles, undefined, currentTask, preserveHandover);
+            if (remainingAvailableSubtasks.length > 0) {
+              await Promise.all(
+                remainingAvailableSubtasks.map((sub) =>
+                  onAssignTask(
+                    sub.id,
+                    targetUserId,
+                    'QUEUE',
+                    getResolvedRoleRestrictionsForUser(sub, targetUser),
+                    undefined,
+                    sub,
+                    preserveHandover
+                  )
+                )
+              );
+            }
           } else {
-            await tasksApi.updateTask(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+            await taskMapApi.assignTask(taskId, targetUserId, 'QUEUE', {
+              assigneeRoleRestrictions: nextRoles,
+              preserveHandover,
+            });
+            if (onTaskUpdate) {
+              await onTaskUpdate(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
+            } else {
+              await tasksApi.updateTask(taskId, { assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+            }
+            if (remainingAvailableSubtasks.length > 0) {
+              await Promise.all(
+                remainingAvailableSubtasks.map((sub) =>
+                  taskMapApi.assignTask(sub.id, targetUserId, 'QUEUE', {
+                    assigneeRoleRestrictions: getResolvedRoleRestrictionsForUser(sub, targetUser),
+                    preserveHandover,
+                  })
+                )
+              );
+            }
+            onDataRefresh();
           }
-          if (remainingAvailableSubtasks.length > 0) {
-            await Promise.all(
-              remainingAvailableSubtasks.map((sub) =>
-                taskMapApi.assignTask(sub.id, targetUserId, 'QUEUE', {
-                  assigneeRoleRestrictions: getResolvedRoleRestrictionsForUser(sub, targetUser),
-                })
-              )
-            );
+        } catch (err: any) {
+          const errData = err?.response?.data || err?.data;
+          const isClientLocked =
+            err?.isClientLocked ||
+            errData?.isClientLocked ||
+            errData?.error === 'CLIENT_LOCKED' ||
+            err?.error === 'CLIENT_LOCKED' ||
+            err?.message?.includes('CLIENT_LOCKED') ||
+            err?.message?.toLowerCase().includes('exceeded weekly');
+          if (isClientLocked) {
+            const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+            const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+            const hoursInfo =
+              typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+                ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+                : '';
+            const clientName = err?.clientName || errData?.clientName || (currentTask as any)?.list?.name || (currentTask as any)?.listName || 'Client';
+            toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
+            setClientOtpModal({
+              isOpen: true,
+              clientName,
+              taskId,
+              targetUserId,
+              mode: 'QUEUE',
+              nextRoles,
+              hoursLogged,
+              weeklyLimit,
+            });
+          } else {
+            toast.error(err.message || 'Failed to queue task');
           }
-          onDataRefresh();
         }
-      } catch (err: any) {
-        const errData = err?.response?.data || err?.data;
-        const isClientLocked =
-          err?.isClientLocked ||
-          errData?.isClientLocked ||
-          errData?.error === 'CLIENT_LOCKED' ||
-          err?.error === 'CLIENT_LOCKED' ||
-          err?.message?.includes('CLIENT_LOCKED') ||
-          err?.message?.toLowerCase().includes('exceeded weekly');
-        if (isClientLocked) {
-          const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
-          const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
-          const hoursInfo =
-            typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
-              ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
-              : '';
-          const clientName = err?.clientName || errData?.clientName || (currentTask as any)?.list?.name || (currentTask as any)?.listName || 'Client';
-          toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
-          setClientOtpModal({
-            isOpen: true,
-            clientName,
-            taskId,
-            targetUserId,
-            mode: 'QUEUE',
-            nextRoles,
-            hoursLogged,
-            weeklyLimit,
-          });
-        } else {
-          toast.error(err.message || 'Failed to queue task');
-        }
+      };
+
+      if (sourceOwnerId !== targetUserId) {
+        await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runQueueAssign);
+      } else {
+        await runQueueAssign();
       }
     } else if (targetColumnId === 'available-pool') {
       // If already in available pool, do nothing!
       if (isFromAvailable) {
         return;
       }
-      toast.success('Task moved to available pool');
+
+      // If dragged by the column owner themselves ("user = user column"), mark as sign-out / Hand-over
+      // and open the Deliverables & Task Update modal before returning to Available tasks.
+      const isOwnColumnHandover = Boolean(
+        sourceOwnerId && currentUser?.id && sourceOwnerId === currentUser.id
+      );
+      if (isOwnColumnHandover && currentTask) {
+        const ownerUser = getUserProfile(sourceOwnerId!);
+        setDeliverablesModalTarget({
+          task: currentTask,
+          targetStatus: 'Hand-over',
+          user: ownerUser,
+          realTaskId: currentTask.id,
+        });
+        return;
+      }
+
+      toast.success('Task moved to Available tasks');
       try {
         if (onAssignTask) {
           await onAssignTask(taskId, null, 'QUEUE');
@@ -2513,49 +2616,53 @@ export const TaskMapBoardView: React.FC<Props> = ({
     }
     const targetUser = getUserProfile(targetUserId);
     const nextRoles = getResolvedRoleRestrictionsForUser(task, targetUser);
-    toast.success(`Task transferred to ${targetUser?.name || 'MA'}'s To Do`);
-    try {
-      if (onTransferTask) {
-        await onTransferTask(task.id, targetUserId);
-      } else {
-        await taskMapApi.transferTask(task.id, targetUserId, { assigneeRoleRestrictions: nextRoles });
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { assigneeRoleRestrictions: nextRoles });
+    const runTransfer = async () => {
+      toast.success(`Task transferred to ${targetUser?.name || 'MA'}'s To Do`);
+      try {
+        if (onTransferTask) {
+          await onTransferTask(task.id, targetUserId);
+        } else {
+          await taskMapApi.transferTask(task.id, targetUserId, { assigneeRoleRestrictions: nextRoles });
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { assigneeRoleRestrictions: nextRoles });
+          }
+          onDataRefresh();
         }
-        onDataRefresh();
+      } catch (err: any) {
+        const errData = err?.response?.data || err?.data;
+        const isClientLocked =
+          err?.isClientLocked ||
+          errData?.isClientLocked ||
+          errData?.error === 'CLIENT_LOCKED' ||
+          err?.error === 'CLIENT_LOCKED' ||
+          err?.message?.includes('CLIENT_LOCKED') ||
+          err?.message?.toLowerCase().includes('exceeded weekly');
+        if (isClientLocked) {
+          const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
+          const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
+          const hoursInfo =
+            typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
+              ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
+              : '';
+          const clientName = err?.clientName || errData?.clientName || (task as any)?.list?.name || (task as any)?.listName || 'Client';
+          toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
+          setClientOtpModal({
+            isOpen: true,
+            clientName,
+            taskId: task.id,
+            targetUserId,
+            mode: 'QUEUE',
+            nextRoles,
+            hoursLogged,
+            weeklyLimit,
+          });
+        } else {
+          toast.error(err?.message || 'Failed to transfer task');
+        }
       }
-    } catch (err: any) {
-      const errData = err?.response?.data || err?.data;
-      const isClientLocked =
-        err?.isClientLocked ||
-        errData?.isClientLocked ||
-        errData?.error === 'CLIENT_LOCKED' ||
-        err?.error === 'CLIENT_LOCKED' ||
-        err?.message?.includes('CLIENT_LOCKED') ||
-        err?.message?.toLowerCase().includes('exceeded weekly');
-      if (isClientLocked) {
-        const hoursLogged = err?.hoursLogged ?? errData?.hoursLogged;
-        const weeklyLimit = err?.weeklyLimit ?? errData?.weeklyLimit;
-        const hoursInfo =
-          typeof hoursLogged === 'number' && typeof weeklyLimit === 'number'
-            ? ` (${hoursLogged.toFixed(1)} / ${weeklyLimit.toFixed(1)} hrs)`
-            : '';
-        const clientName = err?.clientName || errData?.clientName || (task as any)?.list?.name || (task as any)?.listName || 'Client';
-        toast.error(errData?.message || err?.message || `Client "${clientName}" is locked: exceeded weekly limit${hoursInfo}. PM OTP required.`);
-        setClientOtpModal({
-          isOpen: true,
-          clientName,
-          taskId: task.id,
-          targetUserId,
-          mode: 'QUEUE',
-          nextRoles,
-          hoursLogged,
-          weeklyLimit,
-        });
-      } else {
-        toast.error(err?.message || 'Failed to transfer task');
-      }
-    }
+    };
+
+    await executeWithInactiveCheck(targetUserId, targetUser, task.title, runTransfer);
   };
 
   // Unified Status Presets: pure workflow statuses for Task Map
@@ -2624,7 +2731,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
   }) => {
     if (!deliverablesModalTarget) return;
     const { task, targetStatus, user: modalUser, realTaskId } = deliverablesModalTarget;
-    const isHandover = targetStatus.toLowerCase().replace(/[\s_-]+/g, '') === 'handover';
+    const compactTarget = targetStatus.toLowerCase().replace(/[\s_-]+/g, '');
+    const isHandover = compactTarget === 'handover';
+    const isToReview = compactTarget === 'toreview' || compactTarget === 'inreview';
+    const isPaused = compactTarget === 'paused';
+    const isAvailableTask = compactTarget === 'availabletask';
+    const isAskClient = compactTarget === 'askclient';
+    const isWaiting = compactTarget === 'waiting';
+    const isOnHold = compactTarget === 'onhold' || compactTarget.includes('hold');
+    const isRevision = compactTarget === 'revision' || compactTarget === 'revisions';
     const effectiveTaskId = realTaskId || task.id;
     const lockKey = `${effectiveTaskId}::${targetStatus}`;
     if (submittingDeliverablesRef.current.has(lockKey)) return;
@@ -2633,16 +2748,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
     recentlyClockedOutRef.current.set(effectiveTaskId, Date.now());
 
     const nowTimeOut = data.timeOut || formatManilaTime(new Date());
+    const hasActiveTimeIn = Boolean(task.progress?.timeIn && !task.progress?.timeOut);
 
     try {
       // 1. If it's an assumption block
       if (task.isAssumptionBlock) {
-        const targetMainStatus = isHandover ? (toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS') : 'IN REVIEW';
+        const targetMainStatus = isToReview
+          ? 'IN REVIEW'
+          : isWaiting
+            ? 'WAITING'
+            : isOnHold
+              ? 'ON-HOLD'
+              : isRevision
+                ? 'REVISION'
+                : isPaused
+                  ? 'PENDING'
+                  : (toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS');
         task.status = targetMainStatus;
         task.taskMap = {
           ...task.taskMap,
           statuses: [targetStatus],
-          ...(isHandover ? { handedOver: true } : {}),
+          ...(isHandover || isAvailableTask ? { handedOver: true } : {}),
         };
         if (task.progress) {
           task.progress.timeOut = nowTimeOut;
@@ -2669,42 +2795,63 @@ export const TaskMapBoardView: React.FC<Props> = ({
           } catch (_) {}
         }
 
-        // Persist sheet clock-out FIRST so any subsequent loadData(true) sees timeOut populated
-        await taskMapApi.syncScheduleToSpreadsheet({
-          taskId: linkedId || task.id,
-          subtaskId: task.subtaskId || null,
-          sheetRow: task.progress?.sheetRow,
-          taskTitle: task.title,
-          clientName: task.progress?.client || task.list?.name || 'General',
-          status: targetStatus,
-          mode: 'STOP',
-          startedAt: startDt,
-          stoppedAt: new Date(),
-          taskDeliverablesDescription: data.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-        }).catch(console.error);
+        if (hasActiveTimeIn || isHandover || isToReview) {
+          // Persist sheet clock-out FIRST so any subsequent loadData(true) sees timeOut populated
+          await taskMapApi.syncScheduleToSpreadsheet({
+            taskId: linkedId || task.id,
+            subtaskId: task.subtaskId || null,
+            sheetRow: task.progress?.sheetRow,
+            taskTitle: task.title,
+            clientName: task.progress?.client || task.list?.name || 'General',
+            status: targetStatus,
+            mode: 'STOP',
+            startedAt: startDt,
+            stoppedAt: new Date(),
+            taskDeliverablesDescription: data.taskDeliverablesDescription,
+            taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+          }).catch(console.error);
+        }
 
         if (linkedId) {
           await taskMapApi.updateTaskStatuses(linkedId, [targetStatus], {
-            timeOut: nowTimeOut,
+            timeOut: hasActiveTimeIn ? nowTimeOut : undefined,
             taskDeliverablesDescription: data.taskDeliverablesDescription,
             taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
             sheetRow: task.progress?.sheetRow,
             timeIn: task.progress?.timeIn || undefined,
             skipN8nSync: true,
           }).catch(console.error);
-          if (onTaskUpdate) {
-            await onTaskUpdate(linkedId, {
-              assigneeId: null,
-              status: targetMainStatus,
+          if (isPaused && modalUser?.id && onAssignTask) {
+            onStatusChange(linkedId, ['Paused']);
+            await onAssignTask(linkedId, modalUser.id, 'QUEUE', undefined, undefined, {
+              ...task,
+              id: linkedId,
+              isAssumptionBlock: false,
+              status: 'PENDING',
+              taskMap: {
+                ...task.taskMap,
+                taskId: linkedId,
+                statuses: ['Paused'],
+                handedOver: false,
+              },
             });
+          } else if (onTaskUpdate) {
+            const updateFields: Partial<TaskMapItem> = { status: targetMainStatus };
+            if (isPmUser && (isHandover || isToReview || isAvailableTask || isAskClient || isWaiting || isOnHold)) {
+              updateFields.assigneeId = null;
+            }
+            await onTaskUpdate(linkedId, updateFields);
           }
         }
 
         toast.success(
-          isHandover
-            ? `Task handed over — clocked out at ${nowTimeOut}`
-            : `Deliverables submitted to Review — clocked out at ${nowTimeOut}`
+          isPaused
+            ? `Task paused & stored in Queue — timed out at ${nowTimeOut}`
+            : isHandover
+              ? `Task handed over — clocked out at ${nowTimeOut}`
+              : isToReview
+                ? `Deliverables submitted to Review — clocked out at ${nowTimeOut}`
+                : `Status updated to ${targetStatus} — timed out at ${nowTimeOut}`
         );
         setDeliverablesModalTarget(null);
         return;
@@ -2715,7 +2862,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (targetAssigneeUser?.name) {
         useAppStore.getState().updateMaActiveSession(targetAssigneeUser.name, null);
       }
-      if (task.progress) {
+      if (task.progress && hasActiveTimeIn) {
         task.progress.timeOut = nowTimeOut;
         task.progress.taskDeliverablesDescription = data.taskDeliverablesDescription;
         task.progress.taskUpdateAndDeliverables = data.taskUpdateAndDeliverables;
@@ -2731,43 +2878,95 @@ export const TaskMapBoardView: React.FC<Props> = ({
         } catch (_) {}
       }
 
-      // Persist DailySheetLog & spreadsheet STOP BEFORE onTaskUpdate triggers loadData(true)
-      await taskMapApi.syncScheduleToSpreadsheet({
-        taskId: effectiveTaskId,
-        subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
-        sheetRow: task.progress?.sheetRow,
-        taskTitle: task.title,
-        clientName: task.progress?.client || task.list?.name || 'General',
-        status: targetStatus,
-        mode: 'STOP',
-        startedAt: realStartDt,
-        stoppedAt: new Date(),
-        taskDeliverablesDescription: data.taskDeliverablesDescription,
-        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-      }).catch(console.error);
-
-      const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
-
-      if (isHandover) {
-        const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
-        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], {
-          timeOut: nowTimeOut,
+      if (hasActiveTimeIn) {
+        // Persist DailySheetLog & spreadsheet STOP BEFORE onTaskUpdate / onAssignTask triggers loadData(true)
+        await taskMapApi.syncScheduleToSpreadsheet({
+          taskId: effectiveTaskId,
+          subtaskId: task.subtaskId || (task.isSubtask ? task.id : null),
+          sheetRow: task.progress?.sheetRow,
+          taskTitle: task.title,
+          clientName: task.progress?.client || task.list?.name || 'General',
+          status: targetStatus,
+          mode: 'STOP',
+          startedAt: realStartDt,
+          stoppedAt: new Date(),
           taskDeliverablesDescription: data.taskDeliverablesDescription,
           taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-          sheetRow: task.progress?.sheetRow,
-          timeIn: task.progress?.timeIn || undefined,
-          skipN8nSync: true,
         }).catch(console.error);
-        if (onTaskUpdate) {
+      }
+
+      const ownerId =
+        modalUser?.id ||
+        getEffectiveTaskMapHandlerId(task) ||
+        task.assigneeId ||
+        task.assignee?.id ||
+        null;
+
+      const statusPayloadExtra = {
+        timeOut: hasActiveTimeIn ? nowTimeOut : undefined,
+        taskDeliverablesDescription: data.taskDeliverablesDescription,
+        taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
+        sheetRow: task.progress?.sheetRow,
+        timeIn: task.progress?.timeIn || undefined,
+        skipN8nSync: true,
+      };
+
+      if (isPaused) {
+        onStatusChange(effectiveTaskId, ['Paused']);
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Paused'], statusPayloadExtra).catch(console.error);
+        const pausedOverride: TaskMapItem = {
+          ...task,
+          status: ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes((task.status || '').trim().toUpperCase())
+            ? task.status
+            : 'PENDING',
+          progress: task.progress
+            ? {
+                ...task.progress,
+                timeOut: task.progress.timeOut || (hasActiveTimeIn ? nowTimeOut : null),
+              }
+            : task.progress,
+          taskMap: {
+            ...(task.taskMap || {
+              taskId: effectiveTaskId,
+              statuses: ['Paused'],
+              shift: 'DAY',
+              stepOrder: 0,
+              dontRollover: false,
+            }),
+            statuses: ['Paused'],
+            handedOver: false,
+          },
+        };
+        if (ownerId) {
+          if (onAssignTask) {
+            await onAssignTask(effectiveTaskId, ownerId, 'QUEUE', undefined, undefined, pausedOverride);
+          } else {
+            await taskMapApi.assignTask(effectiveTaskId, ownerId, 'QUEUE');
+            onDataRefresh();
+          }
+        } else {
+          onDataRefresh();
+        }
+        toast.info(
+          hasActiveTimeIn
+            ? `Task paused & stored in Queue — timed out at ${nowTimeOut}`
+            : 'Task paused & stored in Queue'
+        );
+      } else if (isHandover) {
+        const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], statusPayloadExtra).catch(console.error);
+        if (isPmUser && onTaskUpdate) {
           await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
         } else {
-          await tasksApi.updateTask(effectiveTaskId, { assigneeId: null } as any).catch(console.error);
           onDataRefresh();
         }
 
-        toast.info(`Task handed over — clocked out at ${nowTimeOut}`);
-      } else {
-        // To Review
+        toast.info(
+          hasActiveTimeIn
+            ? `Task handed over — clocked out at ${nowTimeOut}`
+            : 'Task handed over & signed out'
+        );
+      } else if (isToReview) {
         if (ownerId) {
           setRecentlyMovedToReviewByUser((prev) => {
             const existing = prev[ownerId] || [];
@@ -2778,22 +2977,66 @@ export const TaskMapBoardView: React.FC<Props> = ({
             };
           });
         }
-        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['To Review'], {
-          timeOut: nowTimeOut,
-          taskDeliverablesDescription: data.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-          sheetRow: task.progress?.sheetRow,
-          timeIn: task.progress?.timeIn || undefined,
-          skipN8nSync: true,
-        }).catch(console.error);
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['To Review'], statusPayloadExtra).catch(console.error);
         if (onTaskUpdate) {
-          await onTaskUpdate(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null });
+          await onTaskUpdate(effectiveTaskId, isPmUser ? { status: 'IN REVIEW', assigneeId: null } : { status: 'IN REVIEW' });
         } else {
-          await tasksApi.updateTask(effectiveTaskId, { status: 'IN REVIEW', assigneeId: null } as any).catch(console.error);
+          await tasksApi.updateTask(effectiveTaskId, { status: 'IN REVIEW' } as any).catch(console.error);
           onDataRefresh();
         }
+        if (!isPmUser) onDataRefresh();
 
         toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
+      } else if (isAvailableTask) {
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Available Task'], statusPayloadExtra).catch(console.error);
+        if (isPmUser && onAssignTask) {
+          await onAssignTask(effectiveTaskId, null, 'QUEUE');
+        } else {
+          onDataRefresh();
+        }
+        toast.info(`Task returned to Available Tasks — timed out at ${nowTimeOut}`);
+      } else if (isAskClient) {
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Ask Client'], statusPayloadExtra).catch(console.error);
+        if (isPmUser && onTaskUpdate) {
+          await onTaskUpdate(effectiveTaskId, { assigneeId: null });
+        } else {
+          onDataRefresh();
+        }
+        toast.info(`Task marked 'Ask Client' — timed out at ${nowTimeOut}`);
+      } else if (isWaiting) {
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Waiting'], statusPayloadExtra).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(effectiveTaskId, isPmUser ? { status: 'WAITING', assigneeId: null } : { status: 'WAITING' });
+        } else {
+          onDataRefresh();
+        }
+        if (!isPmUser) onDataRefresh();
+        toast.info(`Task status changed to WAITING — timed out at ${nowTimeOut}`);
+      } else if (isOnHold) {
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['On-hold'], statusPayloadExtra).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(effectiveTaskId, isPmUser ? { status: 'ON-HOLD', assigneeId: null } : { status: 'ON-HOLD' });
+        } else {
+          onDataRefresh();
+        }
+        if (!isPmUser) onDataRefresh();
+        toast.info(`Task status changed to ON-HOLD — timed out at ${nowTimeOut}`);
+      } else if (isRevision) {
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Revision'], statusPayloadExtra).catch(console.error);
+        if (onTaskUpdate) {
+          await onTaskUpdate(effectiveTaskId, { status: 'REVISION' });
+        } else {
+          onDataRefresh();
+        }
+        toast.info(`Task marked for Revision — timed out at ${nowTimeOut}`);
+      } else {
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, [targetStatus], statusPayloadExtra).catch(console.error);
+        if (ownerId && onAssignTask) {
+          await onAssignTask(effectiveTaskId, ownerId, 'QUEUE', undefined, undefined, task);
+        } else {
+          onDataRefresh();
+        }
+        toast.info(`Sub-status updated to ${targetStatus} — timed out at ${nowTimeOut}`);
       }
 
       setDeliverablesModalTarget(null);
@@ -2808,25 +3051,70 @@ export const TaskMapBoardView: React.FC<Props> = ({
     nextStatuses?: string[],
     user?: any
   ) => {
-    if (task.isAssumptionBlock) {
-      const isSelecting = (nextStatuses || []).includes(label);
-      const cleanNext = isSelecting ? [label] : [];
-      const norm = label.trim().toLowerCase();
-      const compactNorm = norm.replace(/[\s_-]+/g, '');
-      if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
+    const isSelecting = (nextStatuses || []).includes(label);
+    const cleanNext = isSelecting ? [label] : [];
+    const norm = label.trim().toLowerCase();
+    const compactNorm = norm.replace(/[\s_-]+/g, '');
+    const ownerNameForLive = user?.name || task.assignee?.name;
+    const isTaskCurrentlyLive = Boolean(
+      (task.progress?.timeIn && !task.progress?.timeOut && !task.progress?.isMissingTime) ||
+      (!task.isAssumptionBlock && isTaskLiveWorking(task, ownerNameForLive, boardTime)) ||
+      (!task.isAssumptionBlock && isTaskActiveInProgress(task, ownerNameForLive))
+    );
+
+    const shouldRequireTimeoutModal =
+      (isSelecting &&
+        (compactNorm === 'handover' ||
+          compactNorm === 'toreview' ||
+          compactNorm === 'inreview' ||
+          compactNorm === 'paused')) ||
+      isTaskCurrentlyLive;
+
+    if (shouldRequireTimeoutModal) {
+      const targetModalStatus = isSelecting ? label : 'Paused';
+      const targetCompact = targetModalStatus.toLowerCase().replace(/[\s_-]+/g, '');
+      const normalizedModalStatus =
+        targetCompact === 'handover'
+          ? 'Hand-over'
+          : targetCompact === 'toreview' || targetCompact === 'inreview'
+            ? 'To Review'
+            : targetCompact === 'paused'
+              ? 'Paused'
+              : targetModalStatus;
+
+      if (targetCompact === 'handover' || targetCompact === 'toreview') {
         const lastClockOut = recentlyClockedOutRef.current.get(task.id);
         if (lastClockOut && Date.now() - lastClockOut < 15000) {
           toast.info('Already clocked out — syncing spreadsheet...');
           return;
         }
-        setDeliverablesModalTarget({
-          task,
-          targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
-          user,
-          nextStatuses: cleanNext,
-        });
-        return;
       }
+
+      if (targetCompact === 'availabletask') {
+        const isAssigned =
+          !poolIds.has(task.id) ||
+          Boolean(getEffectiveTaskMapHandlerId(task)) ||
+          Boolean(task.assigneeId) ||
+          (task.assignees || []).length > 0;
+        if (isAssigned && !isPmUser) {
+          toast.error('Only Project Managers can move tasks to the Available column');
+          return;
+        }
+      }
+
+      setDeliverablesModalTarget({
+        task,
+        targetStatus: normalizedModalStatus,
+        user,
+        nextStatuses: isSelecting ? cleanNext : ['Paused'],
+        realTaskId: task.isAssumptionBlock && task.linkedTaskId && !task.linkedTaskId.startsWith('general-slot-')
+          ? task.linkedTaskId
+          : task.id,
+      });
+      return;
+    }
+
+    if (task.isAssumptionBlock) {
       task.taskMap.statuses = cleanNext;
       if (user?.name) {
         const sKey = (user.name || '').trim().toLowerCase();
@@ -2845,210 +3133,210 @@ export const TaskMapBoardView: React.FC<Props> = ({
       task = { ...task, id: linkedId, isAssumptionBlock: false };
     }
 
-    const isSelecting = (nextStatuses || []).includes(label);
-    const cleanNext = isSelecting ? [label] : [];
-    const norm = label.trim().toLowerCase();
-    const compactNorm = norm.replace(/[\s_-]+/g, '');
-
-    // Intercept Hand Over & To Review selection for deliverables input & clock out
-    if (isSelecting && (compactNorm === 'handover' || norm === 'to review' || norm === 'to_review')) {
-      const lastClockOut = recentlyClockedOutRef.current.get(task.id);
-      if (lastClockOut && Date.now() - lastClockOut < 15000) {
-        toast.info('Already clocked out — syncing spreadsheet...');
-        return;
-      }
-      setDeliverablesModalTarget({
-        task,
-        targetStatus: compactNorm === 'handover' ? 'Hand-over' : 'To Review',
-        user,
-        nextStatuses: cleanNext,
-      });
-      return;
-    }
-
-    // 0. Available Task: unassigns the MA/PM (assigneeId = null), preserves main status, moves back to Available Tasks
+    // 0. Available Task: permission gate before opening guide modal
     if (norm === 'available task' || norm === 'availabletask') {
       const isAssigned =
         !poolIds.has(task.id) ||
         Boolean(getEffectiveTaskMapHandlerId(task)) ||
         Boolean(task.assigneeId) ||
         (task.assignees || []).length > 0;
-      if (isAssigned) {
-        if (!isPmUser) {
-          toast.error('Only Project Managers can move tasks to the Available column');
-          return;
-        }
-        onStatusChange(task.id, ['Available Task']);
-        try {
-          if (onAssignTask) {
-            await onAssignTask(task.id, null, 'QUEUE');
-          } else {
-            await taskMapApi.assignTask(task.id, null);
+      if (isAssigned && !isPmUser) {
+        toast.error('Only Project Managers can move tasks to the Available column');
+        return;
+      }
+    }
+
+    const executeNonLiveSubStatusTransition = async () => {
+      // 0. Available Task: unassigns the MA/PM (assigneeId = null), preserves main status, moves back to Available Tasks
+      if (norm === 'available task' || norm === 'availabletask') {
+        const isAssigned =
+          !poolIds.has(task.id) ||
+          Boolean(getEffectiveTaskMapHandlerId(task)) ||
+          Boolean(task.assigneeId) ||
+          (task.assignees || []).length > 0;
+        if (isAssigned) {
+          onStatusChange(task.id, ['Available Task']);
+          try {
+            if (onAssignTask) {
+              await onAssignTask(task.id, null, 'QUEUE');
+            } else {
+              await taskMapApi.assignTask(task.id, null);
+              onDataRefresh();
+            }
+            toast.info('Task returned to Available Tasks');
+          } catch (err: any) {
+            toast.error(err?.message || 'Failed to move task to Available Tasks');
             onDataRefresh();
           }
-          toast.info('Task returned to Available Tasks');
-        } catch (err: any) {
-          toast.error(err?.message || 'Failed to move task to Available Tasks');
-          onDataRefresh();
+          return;
+        }
+        onStatusChange(task.id, isSelecting ? ['Available Task'] : cleanNext);
+        return;
+      }
+
+      onStatusChange(task.id, cleanNext);
+
+      // 1. Hand Over: stays at main status, transfers to Available Tasks so PMs can reassign to other MAs
+      if (compactNorm === 'handover') {
+        if (isSelecting) {
+          const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+          if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+            task.progress.timeOut = formatManilaTime(new Date());
+          }
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { ...(isPmUser ? { assigneeId: null } : {}), status: preservedStatus });
+          } else {
+            await tasksApi.updateTask(task.id, { ...(isPmUser ? { assigneeId: null } : {}), status: preservedStatus } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info('Task handed over — transferred to Available Tasks for PM reassignment');
         }
         return;
       }
-      onStatusChange(task.id, isSelecting ? ['Available Task'] : cleanNext);
-      return;
-    }
 
-    onStatusChange(task.id, cleanNext);
-
-    // 1. Hand Over: stays at main status, transfers to Available Tasks so PMs can reassign to other MAs
-    if (compactNorm === 'handover') {
-      if (isSelecting) {
-        const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
-        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
-          task.progress.timeOut = formatManilaTime(new Date());
-        }
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { assigneeId: null, status: preservedStatus });
+      // 1b. Revision: returns/keeps task in the original assigned MA's column with REVISION status
+      if (compactNorm === 'revision' || compactNorm === 'revisions') {
+        if (isSelecting) {
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'REVISION' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info('Task marked for Revision');
         } else {
-          await tasksApi.updateTask(task.id, { assigneeId: null } as any).catch(console.error);
-          onDataRefresh();
+          const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: revertStatus });
+          } else {
+            await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
         }
-        toast.info('Task handed over — transferred to Available Tasks for PM reassignment');
+        return;
       }
-      return;
-    }
 
-    // 1b. Revision: returns/keeps task in the original assigned MA's column with REVISION status
-    if (compactNorm === 'revision' || compactNorm === 'revisions') {
-      if (isSelecting) {
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: 'REVISION' });
+      // 2. Paused: stays at IN PROGRESS main status, stays in current MA Queue
+      if (norm === 'paused') {
+        if (isSelecting) {
+          toast.info('Task marked Paused — stored in Queue');
+        }
+        return;
+      }
+
+      // 3. Ask Client: transfer to CRM Map pool, remove from MA/PM column
+      if (norm === 'ask client' || norm === 'askclient') {
+        if (isSelecting) {
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, isPmUser ? { assigneeId: null } : {});
+          }
+          toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
+        }
+        return;
+      }
+
+      // 4. To Review: changes main status to IN REVIEW
+      // and removes from MA/PM column so it moves to the Auditor Map tab
+      if (norm === 'to review' || norm === 'to_review') {
+        const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
+        if (isSelecting) {
+          const targetStatus = 'IN REVIEW';
+          if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+            task.progress.timeOut = formatManilaTime(new Date());
+          }
+          if (ownerId) {
+            setRecentlyMovedToReviewByUser((prev) => {
+              const existing = prev[ownerId] || [];
+              if (existing.some((t) => t.id === task.id)) return prev;
+              return {
+                ...prev,
+                [ownerId]: [{ ...task, status: targetStatus, assigneeId: null }, ...existing],
+              };
+            });
+          }
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: targetStatus, ...(isPmUser ? { assigneeId: null } : {}) });
+          } else {
+            await tasksApi.updateTask(task.id, { status: targetStatus, ...(isPmUser ? { assigneeId: null } : {}) } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info(`Task status changed to ${targetStatus} — transferred to Auditor Map`);
         } else {
-          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
-          onDataRefresh();
-        }
-        toast.info('Task marked for Revision');
-      } else {
-        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: revertStatus });
-        } else {
-          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-          onDataRefresh();
-        }
-        toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
-      }
-      return;
-    }
-
-    // 2. Paused: stays at IN PROGRESS main status, stays in current MA column
-    if (norm === 'paused') {
-      if (isSelecting) {
-        toast.info('Task marked Paused');
-      }
-      return;
-    }
-
-    // 3. Ask Client: transfer to CRM Map pool, remove from MA/PM column
-    if (norm === 'ask client' || norm === 'askclient') {
-      if (isSelecting) {
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { assigneeId: null });
-        }
-        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
-      }
-      return;
-    }
-
-    // 4. To Review: changes main status to IN REVIEW
-    // and removes from MA/PM column so it moves to the Auditor Map tab
-    if (norm === 'to review' || norm === 'to_review') {
-      const ownerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || task.assignee?.id;
-      if (isSelecting) {
-        const targetStatus = 'IN REVIEW';
-        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
-          task.progress.timeOut = formatManilaTime(new Date());
-        }
-        if (ownerId) {
-          setRecentlyMovedToReviewByUser((prev) => {
-            const existing = prev[ownerId] || [];
-            if (existing.some((t) => t.id === task.id)) return prev;
-            return {
+          if (ownerId) {
+            setRecentlyMovedToReviewByUser((prev) => ({
               ...prev,
-              [ownerId]: [{ ...task, status: targetStatus, assigneeId: null }, ...existing],
-            };
-          });
+              [ownerId]: (prev[ownerId] || []).filter((t) => t.id !== task.id),
+            }));
+          }
+          const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: revertStatus });
+          } else {
+            await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info(`Reverted 'To Review' — returned to ${revertStatus}`);
         }
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: targetStatus, assigneeId: null });
-        } else {
-          await tasksApi.updateTask(task.id, { status: targetStatus, assigneeId: null } as any).catch(console.error);
-          onDataRefresh();
-        }
-        toast.info(`Task status changed to ${targetStatus} — transferred to Auditor Map`);
-      } else {
-        if (ownerId) {
-          setRecentlyMovedToReviewByUser((prev) => ({
-            ...prev,
-            [ownerId]: (prev[ownerId] || []).filter((t) => t.id !== task.id),
-          }));
-        }
-        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: revertStatus });
-        } else {
-          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-          onDataRefresh();
-        }
-        toast.info(`Reverted 'To Review' — returned to ${revertStatus}`);
+        return;
       }
-      return;
-    }
 
-    // 5. Waiting: changes main status to WAITING, removes from PM/MA column, and transfers to CRM Map
-    if (norm === 'waiting') {
-      if (isSelecting) {
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: 'WAITING', assigneeId: null });
+      // 5. Waiting: changes main status to WAITING, removes from PM/MA column, and transfers to CRM Map
+      if (norm === 'waiting') {
+        if (isSelecting) {
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'WAITING', ...(isPmUser ? { assigneeId: null } : {}) });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'WAITING', ...(isPmUser ? { assigneeId: null } : {}) } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info('Task status changed to WAITING — transferred to CRM Map');
         } else {
-          await tasksApi.updateTask(task.id, { status: 'WAITING', assigneeId: null } as any).catch(console.error);
-          onDataRefresh();
+          const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: revertStatus });
+          } else {
+            await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info(`Reverted 'Waiting' — returned to ${revertStatus}`);
         }
-        toast.info('Task status changed to WAITING — transferred to CRM Map');
-      } else {
-        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || (task.assigneeId ? 'IN PROGRESS' : 'PENDING'));
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: revertStatus });
-        } else {
-          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-          onDataRefresh();
-        }
-        toast.info(`Reverted 'Waiting' — returned to ${revertStatus}`);
+        return;
       }
-      return;
-    }
 
-    // 6. On-hold: changes main status to ON-HOLD, transfers to Available Tasks at bottom, excluded from count
-    if (norm === 'on-hold' || norm === 'onhold' || norm.includes('hold')) {
-      if (isSelecting) {
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: 'ON-HOLD', assigneeId: null });
+      // 6. On-hold: changes main status to ON-HOLD, transfers to Available Tasks at bottom, excluded from count
+      if (norm === 'on-hold' || norm === 'onhold' || norm.includes('hold')) {
+        if (isSelecting) {
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'ON-HOLD', ...(isPmUser ? { assigneeId: null } : {}) });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'ON-HOLD', ...(isPmUser ? { assigneeId: null } : {}) } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info('Task status changed to ON-HOLD — moved to Available Tasks (bottom)');
         } else {
-          await tasksApi.updateTask(task.id, { status: 'ON-HOLD', assigneeId: null } as any).catch(console.error);
-          onDataRefresh();
+          const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || 'PENDING');
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: revertStatus });
+          } else {
+            await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info(`Reverted 'On-hold' — returned to ${revertStatus}`);
         }
-        toast.info('Task status changed to ON-HOLD — moved to Available Tasks (bottom)');
-      } else {
-        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || 'PENDING');
-        if (onTaskUpdate) {
-          await onTaskUpdate(task.id, { status: revertStatus });
-        } else {
-          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-          onDataRefresh();
-        }
-        toast.info(`Reverted 'On-hold' — returned to ${revertStatus}`);
+        return;
       }
-      return;
-    }
+    };
+
+    const guide = getSubStatusTransitionGuide(label, 'TASK_MAP', {
+      isSelecting,
+      isLiveSession: false,
+    });
+    setSubStatusGuideTarget({
+      task,
+      guide,
+      onConfirm: executeNonLiveSubStatusTransition,
+    });
   };
 
   return (
@@ -3121,10 +3409,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
             );
           }
 
+          const activeDragIsPool = Boolean(activeDragTask && poolIds.has(activeDragTask.id));
+          const activeDragOwnerId = activeDragTask && !activeDragIsPool
+            ? getEffectiveTaskMapHandlerId(activeDragTask)
+            : null;
           const canShowAvailableCutout = Boolean(
             activeDragTask &&
-            isPmUser &&
-            (activeDragTask.assigneeId || !poolIds.has(activeDragTask.id))
+            !activeDragIsPool &&
+            (isPmUser || (currentUser?.id && activeDragOwnerId === currentUser.id))
           );
 
           return (
@@ -3584,13 +3876,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
             if (!matchesSubStatusFilter(t, userSubStatusFilter)) return false;
 
             // Admin task check: hide all tasks that are for the admin by default,
-            // except the General Task (assumption block) or real tasks inputted by this MA from the spreadsheet!
+            // except the General Task (assumption block), real tasks inputted by this MA from the spreadsheet,
+            // or tasks paused in this user's column so they stay visible in Queue!
             const isAdmin = isTaskUnderAdmin(t);
             const hasUserSheetInput = Boolean(
               hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate }) &&
               doesProgressMatchUser(t.progress?.maName, user.name)
             );
-            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !searchQuery) return false;
+            const isPausedInColumn = (t.taskMap?.statuses || []).some(
+              (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+            );
+            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !isPausedInColumn && !searchQuery) return false;
 
             // Client filter check: the General Task representing the user's active schedule input is always shown in their column
             if (!t.isAssumptionBlock && userClientFilter !== 'ALL') {
@@ -4353,26 +4649,34 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     </div>
 
                     {/* QUEUE SECTION */}
-                    {(queuedTasks.length > 0 || canShowColumnCutout) && (
-                      <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
-                        <div className="flex items-center justify-between px-1">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                            Queue ({countNonOnHoldTasks(queuedTasks)})
-                          </span>
-                        </div>
-                        <div className="space-y-2.5">
-                          <ColumnDropCutout
-                            columnId={`user-${userId}`}
-                            canShow={canShowColumnCutout}
-                            task={activeDragTask}
-                            targetName={user.name}
-                            carriedSubtasks={remainingAvailableSubtasks}
-                            getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
-                          />
-                          {queuedTasks.map((t) => renderCard(t))}
-                        </div>
+                    <div className="mt-2.5 pt-2.5 border-t border-border/80 space-y-1.5">
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                          Queue ({countNonOnHoldTasks(queuedTasks)})
+                        </span>
                       </div>
-                    )}
+                      <div className="space-y-2.5">
+                        <ColumnDropCutout
+                          columnId={`user-${userId}`}
+                          canShow={canShowColumnCutout}
+                          task={activeDragTask}
+                          targetName={user.name}
+                          carriedSubtasks={remainingAvailableSubtasks}
+                          getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
+                        />
+                        {queuedTasks.length > 0 ? (
+                          queuedTasks.map((t) => renderCard(t))
+                        ) : !canShowColumnCutout ? (
+                          <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/30 px-3 py-3 text-center">
+                            <p className="text-[11px] text-zinc-500">
+                              {userTasks.some((t) => t.id !== activeInProgTask?.id && !isTaskHandedOver(t) && !isClosedTask(t))
+                                ? 'Queued tasks hidden by active column filters'
+                                : 'No tasks in queue — paused or assigned tasks appear here'}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
 
                     {/* TO REVIEW SECTION (transparent, non-draggable) */}
                     {toReviewTasks.length > 0 && (
@@ -4482,11 +4786,41 @@ export const TaskMapBoardView: React.FC<Props> = ({
           onSubmit={handleDeliverablesSubmit}
           taskTitle={deliverablesModalTarget.task.title}
           clientName={deliverablesModalTarget.task.progress?.client || deliverablesModalTarget.task.list?.name || ''}
+          isAdminTask={isTaskUnderAdmin(deliverablesModalTarget.task)}
           targetStatus={deliverablesModalTarget.targetStatus}
           initialDeliverables={deliverablesModalTarget.task.progress?.taskDeliverablesDescription || deliverablesModalTarget.task.title}
           initialUpdate={deliverablesModalTarget.task.progress?.taskUpdateAndDeliverables || ''}
           userName={deliverablesModalTarget.user?.name || deliverablesModalTarget.task.assignee?.name}
           timeIn={deliverablesModalTarget.task.progress?.timeIn || ''}
+        />
+      )}
+
+      {/* Inactive MA Confirmation Modal */}
+      {inactiveMaModal && (
+        <InactiveMaConfirmModal
+          isOpen={inactiveMaModal.isOpen}
+          onClose={() => setInactiveMaModal(null)}
+          onConfirm={inactiveMaModal.onConfirm}
+          targetUserName={inactiveMaModal.targetUserName}
+          taskTitle={inactiveMaModal.taskTitle}
+          reason={inactiveMaModal.reason}
+          elapsedLabel={inactiveMaModal.elapsedLabel}
+          recentRows={inactiveMaModal.recentRows}
+          source={inactiveMaModal.source}
+        />
+      )}
+
+      {/* Sub-Status Change Guide Modal */}
+      {subStatusGuideTarget && (
+        <SubStatusChangeGuideModal
+          isOpen={true}
+          onClose={() => setSubStatusGuideTarget(null)}
+          onConfirm={subStatusGuideTarget.onConfirm}
+          guide={subStatusGuideTarget.guide}
+          taskTitle={subStatusGuideTarget.task.title}
+          clientName={subStatusGuideTarget.task.progress?.client || subStatusGuideTarget.task.list?.name || ''}
+          currentSubStatuses={subStatusGuideTarget.task.taskMap?.statuses || []}
+          currentMainStatus={subStatusGuideTarget.task.status}
         />
       )}
     </DndContext>

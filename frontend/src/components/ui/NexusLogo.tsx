@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 
 const MASK_STYLE: React.CSSProperties = {
   maskImage: "url('/nexus-logo.png')",
@@ -80,5 +81,32 @@ export const NexusLogoLoader: React.FC<NexusLogoLoaderProps> = ({
         </span>
       )}
     </div>
+  );
+};
+
+interface NexusFullScreenLoaderProps {
+  isOpen: boolean;
+  label?: string;
+}
+
+/**
+ * Full-viewport overlay loader rendered outside of modals/cards during data transfers.
+ */
+export const NexusFullScreenLoader: React.FC<NexusFullScreenLoaderProps> = ({
+  isOpen,
+  label = 'Please wait...',
+}) => {
+  if (!isOpen || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-150 select-none"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <NexusLogoLoader size={52} label={label} />
+    </div>,
+    document.body
   );
 };

@@ -339,7 +339,7 @@ export default function BoardPage() {
       return null;
     });
     lastUrlTaskId.current = null;
-    if (typeof window !== 'undefined' && !isModalHistoryBackPending()) {
+    if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       if (url.searchParams.has('task') || url.searchParams.has('subtask')) {
         url.searchParams.delete('task');

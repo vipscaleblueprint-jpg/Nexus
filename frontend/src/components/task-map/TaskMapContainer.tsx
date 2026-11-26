@@ -11,6 +11,7 @@ import {
   AuditorRoleOption,
   isDeveloperUser,
   getEffectiveTaskMapHandlerId,
+  hasPmAssignmentForUser,
   isTaskHandedOver,
   isSessionProjectBased,
   getDefaultTaskMapSubStatuses,
@@ -21,6 +22,7 @@ import {
   syncTaskPmReviewsWithAssignee,
   markTaskSavingToDb,
   isTaskSavingToDb,
+  subscribeTaskMapSaving,
   collectClientDashboardLists,
   isTaskUnderAdmin,
   hasSpreadsheetTaskInput,
@@ -62,7 +64,7 @@ const UncheckedAuditsModal = dynamic(
   { ssr: false }
 );
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { NexusLogoLoader } from '@/components/ui/NexusLogo';
+import { NexusLogoLoader, NexusFullScreenLoader } from '@/components/ui/NexusLogo';
 import { toast } from '@/lib/toast';
 import { useAppStore } from '@/lib/store';
 import { hasCrmAccess, canTransitionTaskStatus } from '@/lib/permissions';
@@ -182,6 +184,7 @@ export const TaskMapContainer: React.FC = () => {
     return getTodayDateStr();
   });
   const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS'>('BOARD');
+  const [hasOpenedDailyTracker, setHasOpenedDailyTracker] = useState(false);
   const [dailySheetLogs, setDailySheetLogs] = useState<any[]>([]);
   const [superviseChecks, setSuperviseChecks] = useState<any[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
@@ -346,6 +349,9 @@ export const TaskMapContainer: React.FC = () => {
     syncTaskFromUrl();
 
     const handlePopState = () => {
+      if (isModalHistoryBackPending()) {
+        return;
+      }
       closedTaskIdRef.current = null;
       syncTaskFromUrl();
     };
@@ -1052,6 +1058,9 @@ export const TaskMapContainer: React.FC = () => {
   const handleViewChange = useCallback(
     (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS') => {
       setCurrentView(nextView);
+      if (nextView === 'DAILY_TRACKER' || nextView === 'SHEETS') {
+        setHasOpenedDailyTracker(true);
+      }
       if (nextView === 'BOARD') {
         setSelectedTaskModal(null);
         setSelectedSubtaskTargetId(undefined);
@@ -1558,7 +1567,8 @@ export const TaskMapContainer: React.FC = () => {
     mode: 'IN_PROGRESS' | 'QUEUE' = 'QUEUE',
     assigneeRoleRestrictions?: string[],
     otp?: string,
-    taskOverride?: TaskMapItem
+    taskOverride?: TaskMapItem,
+    preserveHandover?: boolean
   ) => {
     const currentTask = [...tasks, ...availablePool].find((t) => t.id === taskId) || taskOverride;
     if (!currentTask) return;
@@ -1573,7 +1583,13 @@ export const TaskMapContainer: React.FC = () => {
         }
       : null;
 
-    const optimisticTask = applyOptimisticTaskMapAssignment(currentTask, targetUser, mode, assigneeRoleRestrictions);
+    const optimisticTask = applyOptimisticTaskMapAssignment(
+      currentTask,
+      targetUser,
+      mode,
+      assigneeRoleRestrictions,
+      preserveHandover
+    );
     pendingAssignRef.current.set(taskId, {
       task: optimisticTask,
       targetUserId,
@@ -1670,6 +1686,7 @@ export const TaskMapContainer: React.FC = () => {
         {
           ...(assigneeRoleRestrictions ? { assigneeRoleRestrictions } : {}),
           ...(otp ? { otp } : {}),
+          ...(preserveHandover ? { preserveHandover } : {}),
         }
       );
 
@@ -1909,7 +1926,15 @@ export const TaskMapContainer: React.FC = () => {
           (t.status || '').toUpperCase().includes('PROGRESS') ||
           (t.taskMap?.statuses || []).some((s: string) => s.toUpperCase().includes('PROGRESS')) ||
           Boolean(t.progress?.timeIn && !t.progress?.timeOut);
-        if (!isDeveloperUser(handlerUser, workspaceTeams) && !hasSheetInput && !isInProgress && !search) {
+        const isPausedAssigned =
+          Boolean(handlerId) &&
+          (t.taskMap?.statuses || []).some(
+            (s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+          );
+        const hasExplicitQueueAssignment = Boolean(
+          handlerId && hasPmAssignmentForUser(t, handlerId)
+        );
+        if (!isDeveloperUser(handlerUser, workspaceTeams) && !hasSheetInput && !isInProgress && !isPausedAssigned && !hasExplicitQueueAssignment && !search) {
           return false;
         }
       }
@@ -2075,6 +2100,9 @@ export const TaskMapContainer: React.FC = () => {
     useAppStore.getState().setActiveUpworkSessions(effectiveUpworkSessions);
   }, [effectiveUpworkSessions]);
 
+  const [hasSavingTasks, setHasSavingTasks] = useState(false);
+  useEffect(() => subscribeTaskMapSaving((ids) => setHasSavingTasks(ids.size > 0)), []);
+
   const isInitialBoardLoading = loading && !hasLoadedOnceRef.current && tasks.length === 0 && availablePool.length === 0;
   const isInitialLoadFailed = !hasLoadedOnceRef.current && Boolean(loadError) && tasks.length === 0 && availablePool.length === 0;
   const showJournalLoader = (isInitialBoardLoading || isInitialLoadFailed) && !selectedTaskModal && !restoringUrlTask;
@@ -2160,7 +2188,7 @@ export const TaskMapContainer: React.FC = () => {
         />
 
         {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {currentView === 'BOARD' ? (
             <TaskMapBoardView
               tasks={displayedTasks}
@@ -2246,19 +2274,7 @@ export const TaskMapContainer: React.FC = () => {
               onToggleAdminTasks={() => setShowAdminTasks((prev) => !prev)}
               search={search}
             />
-          ) : currentView === 'DAILY_TRACKER' || currentView === 'SHEETS' ? (
-            <TaskMapDailyTrackerView
-              tasks={displayedTasks.filter((t) => !t.isSubtask)}
-              allTasks={tasks}
-              allUsers={allUsers}
-              currentUser={currentUser}
-              initialDate={currentDate}
-              initialLogs={dailySheetLogs}
-              clients={clients}
-              onOpenDetail={handleOpenTaskDetail}
-              onRefresh={() => loadData(true)}
-            />
-          ) : (
+          ) : currentView === 'UPWORK' ? (
             <TaskMapUpworkView
               tasks={displayedTasks.filter((t) => !t.isSubtask)}
               availablePool={displayedPool.filter((t) => !t.isSubtask)}
@@ -2268,6 +2284,29 @@ export const TaskMapContainer: React.FC = () => {
               onOpenDetail={handleOpenTaskDetail}
               onRefresh={() => loadData(true)}
             />
+          ) : null}
+
+          {/* Keep Daily Tracker mounted once visited so the embedded Google Sheets iframe is cached across tab switches */}
+          {(hasOpenedDailyTracker || currentView === 'DAILY_TRACKER' || currentView === 'SHEETS') && (
+            <div
+              className={
+                currentView === 'DAILY_TRACKER' || currentView === 'SHEETS'
+                  ? 'flex-1 h-full flex flex-col min-h-0 overflow-hidden'
+                  : 'hidden'
+              }
+            >
+              <TaskMapDailyTrackerView
+                tasks={displayedTasks.filter((t) => !t.isSubtask)}
+                allTasks={tasks}
+                allUsers={allUsers}
+                currentUser={currentUser}
+                initialDate={currentDate}
+                initialLogs={dailySheetLogs}
+                clients={clients}
+                onOpenDetail={handleOpenTaskDetail}
+                onRefresh={() => loadData(true)}
+              />
+            </div>
           )}
         </div>
       </main>
@@ -2286,12 +2325,10 @@ export const TaskMapContainer: React.FC = () => {
             setRestoringUrlTask(false);
             setSelectedTaskModal(null);
             setSelectedSubtaskTargetId(undefined);
-            if (!isModalHistoryBackPending()) {
-              const url = new URL(window.location.href);
-              url.searchParams.delete('task');
-              url.searchParams.delete('subtask');
-              window.history.replaceState(window.history.state || {}, '', `${url.pathname}${url.search}`);
-            }
+            const url = new URL(window.location.href);
+            url.searchParams.delete('task');
+            url.searchParams.delete('subtask');
+            window.history.replaceState(window.history.state || {}, '', `${url.pathname}${url.search}`);
             void loadData(true);
           }}
           task={selectedTaskModal}
@@ -2336,6 +2373,8 @@ export const TaskMapContainer: React.FC = () => {
             : 'Open Task & Review Subtasks'
         }
       />
+
+      <NexusFullScreenLoader isOpen={hasSavingTasks} label="Please wait..." />
     </>
   );
 };

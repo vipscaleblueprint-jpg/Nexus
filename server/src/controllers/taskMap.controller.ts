@@ -77,6 +77,7 @@ import {
   getDailySheetLogsForDate,
   getDailySheetLogsIndexForDate,
 } from '../services/dailySheetLogService';
+import { checkMaSheetActivityStatus } from '../services/maInactivityService';
 
 // Closed status check matching Nexus conventions
 const isClosedStatus = (status?: string | null) => {
@@ -303,6 +304,7 @@ async function triggerN8nStartTaskWebhook(params: {
   description?: string | null;
   date?: string;
   mode?: 'START' | 'STOP' | 'UPDATE';
+  insertEmptyRowBeforeStart?: boolean;
 }) {
   const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
   try {
@@ -1372,8 +1374,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return false;
       }
 
-      const isExplicitlyHandedOver = Boolean(t.taskMap?.handedOver) || mapStatuses.includes('HANDOVER');
-      if (isExplicitlyHandedOver) {
+      if (t.taskMap?.handedOver) {
         return true;
       }
 
@@ -1386,6 +1387,10 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       if (hasPmAssignment) {
         return false;
+      }
+
+      if (mapStatuses.includes('HANDOVER')) {
+        return true;
       }
 
       // If a task is not live working and has no active Task Map PM assignment,
@@ -2922,12 +2927,27 @@ async function executeTaskMapAssignment(
       let subMaSession: any = null;
 
       if (assigneeId) {
+        const hasPausedSub = subStatuses.some(
+          (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+        );
+        const hadSubHandover =
+          subHandedOver ||
+          subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+        const isSubTransferBetweenUsers =
+          action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
+        const shouldSetSubHandover =
+          mode === 'QUEUE' &&
+          !hasPausedSub &&
+          (hadSubHandover || isSubTransferBetweenUsers || Boolean((req.body as any)?.preserveHandover));
+
         subStatuses = subStatuses.filter((s) => {
           const up = s.toUpperCase().replace(/[\s_-]+/g, '');
           if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
           return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
         });
-        if (mode === 'IN_PROGRESS' && !subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+        if (shouldSetSubHandover) {
+          subStatuses = ['Hand-over'];
+        } else if (mode === 'IN_PROGRESS' && !subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
           subStatuses.push('In progress');
         }
         subHandedOver = false;
@@ -3009,51 +3029,50 @@ async function executeTaskMapAssignment(
             reviewsList.push(liveSubProg);
           }
 
-          // Persist DailySheetLog & trigger n8n webhook to append row to MA Daily Schedule
+          // Persist DailySheetLog synchronously and trigger n8n Google Sheets sync in the background
           const subTaskTitleForSheet = `${currentSubtask.title} (${currentSubtask.task?.title || 'Subtask'})`;
 
-          const [savedSubLog] = await Promise.all([
-            upsertDailySheetLog({
-              date: nowManilaDate,
-              maName: subMaName,
-              userId: assigneeId,
-              taskId: currentSubtask.taskId,
-              subtaskId: currentSubtask.id,
-              sheetRow: null,
-              client: subClientForSheet,
-              taskName: subTaskTitleForSheet,
-              timeIn: nowManilaTime,
-              timeOut: null,
-              isUpwork: false,
-              timeTracker: 'No Need to Track',
-              status: 'In Progress',
-              taskDeliverables: currentSubtask.title,
-              taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
-              source: 'NEXUS_BOARD',
-            }).catch((err) => {
-              logger.warn({ err }, 'Failed to upsert DailySheetLog on subtask IN_PROGRESS');
-              return null;
-            }),
-            triggerN8nStartTaskWebhook({
-              userId: assigneeId,
-              userName: subMaName,
-              userEmail: targetSubUser?.email || actorUser?.email,
-              dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
-              taskId: currentSubtask.taskId,
-              subtaskId: currentSubtask.id,
-              taskTitle: subTaskTitleForSheet,
-              clientName: subClientForSheet,
-              taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
-              status: 'In Progress',
-              timeIn: nowManilaTime,
-              timeOut: null,
-              timeTracker: 'No Need to Track',
-              taskDeliverablesDescription: currentSubtask.title,
-              description: currentSubtask.title,
-              date: nowManilaDate,
-              mode: 'START',
-            }),
-          ]);
+          const savedSubLog = await upsertDailySheetLog({
+            date: nowManilaDate,
+            maName: subMaName,
+            userId: assigneeId,
+            taskId: currentSubtask.taskId,
+            subtaskId: currentSubtask.id,
+            sheetRow: null,
+            client: subClientForSheet,
+            taskName: subTaskTitleForSheet,
+            timeIn: nowManilaTime,
+            timeOut: null,
+            isUpwork: false,
+            timeTracker: 'No Need to Track',
+            status: 'In Progress',
+            taskDeliverables: currentSubtask.title,
+            taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
+            source: 'NEXUS_BOARD',
+          }).catch((err) => {
+            logger.warn({ err }, 'Failed to upsert DailySheetLog on subtask IN_PROGRESS');
+            return null;
+          });
+          void triggerN8nStartTaskWebhook({
+            userId: assigneeId,
+            userName: subMaName,
+            userEmail: targetSubUser?.email || actorUser?.email,
+            dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
+            taskId: currentSubtask.taskId,
+            subtaskId: currentSubtask.id,
+            taskTitle: subTaskTitleForSheet,
+            clientName: subClientForSheet,
+            taskLink: `https://nexus.vipscaleph.com/lists/${currentSubtask.task?.listId}?task=${currentSubtask.taskId}&subtask=${currentSubtask.id}`,
+            status: 'In Progress',
+            timeIn: nowManilaTime,
+            timeOut: null,
+            timeTracker: 'No Need to Track',
+            taskDeliverablesDescription: currentSubtask.title,
+            description: currentSubtask.title,
+            date: nowManilaDate,
+            mode: 'START',
+            insertEmptyRowBeforeStart: hasPausedSub,
+          });
           await closeOtherOpenBoardSessionsForMa(subMaName, currentSubtask.taskId, currentSubtask.id, nowManilaTime);
           subProgressPayload = savedSubLog ? buildProgressFromSheetLog(savedSubLog) : liveSubProg;
           subMaSession = {
@@ -3521,12 +3540,27 @@ async function executeTaskMapAssignment(
     let mainMaSession: any = null;
 
     if (assigneeId) {
+      const hasPausedMain = newStatuses.some(
+        (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+      );
+      const hadMainHandover =
+        Boolean(record.handedOver) ||
+        newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+      const isMainTransferBetweenUsers =
+        action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
+      const shouldSetMainHandover =
+        mode === 'QUEUE' &&
+        !hasPausedMain &&
+        (hadMainHandover || isMainTransferBetweenUsers || Boolean((req.body as any)?.preserveHandover));
+
       newStatuses = newStatuses.filter((s) => {
         const up = s.toUpperCase().replace(/[\s_-]+/g, '');
         if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
         return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
       });
-      if (mode === 'IN_PROGRESS' && !newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
+      if (shouldSetMainHandover) {
+        newStatuses = ['Hand-over'];
+      } else if (mode === 'IN_PROGRESS' && !newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
         newStatuses.push('In progress');
       }
       handedOver = false;
@@ -3585,47 +3619,46 @@ async function executeTaskMapAssignment(
           reviewsList.push(liveProg);
         }
 
-        // Persist DailySheetLog & trigger n8n webhook to append row to MA Daily Schedule
-        const [savedMainLog] = await Promise.all([
-          upsertDailySheetLog({
-            date: nowManilaDate,
-            maName: mainMaName,
-            userId: assigneeId,
-            taskId: id,
-            sheetRow: null,
-            client: mainClientForSheet,
-            taskName: updatedTask.title,
-            timeIn: nowManilaTime,
-            timeOut: null,
-            isUpwork: false,
-            timeTracker: 'No Need to Track',
-            status: 'In Progress',
-            taskDeliverables: updatedTask.title,
-            taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
-            source: 'NEXUS_BOARD',
-          }).catch((err) => {
-            logger.warn({ err }, 'Failed to upsert DailySheetLog on main task IN_PROGRESS');
-            return null;
-          }),
-          triggerN8nStartTaskWebhook({
-            userId: assigneeId,
-            userName: mainMaName,
-            userEmail: updatedTask.assignee?.email || actorUser?.email,
-            dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
-            taskId: id,
-            taskTitle: updatedTask.title,
-            clientName: mainClientForSheet,
-            taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
-            status: 'In Progress',
-            timeIn: nowManilaTime,
-            timeOut: null,
-            timeTracker: 'No Need to Track',
-            taskDeliverablesDescription: updatedTask.title,
-            description: updatedTask.title,
-            date: nowManilaDate,
-            mode: 'START',
-          }),
-        ]);
+        // Persist DailySheetLog synchronously and trigger n8n Google Sheets sync in the background
+        const savedMainLog = await upsertDailySheetLog({
+          date: nowManilaDate,
+          maName: mainMaName,
+          userId: assigneeId,
+          taskId: id,
+          sheetRow: null,
+          client: mainClientForSheet,
+          taskName: updatedTask.title,
+          timeIn: nowManilaTime,
+          timeOut: null,
+          isUpwork: false,
+          timeTracker: 'No Need to Track',
+          status: 'In Progress',
+          taskDeliverables: updatedTask.title,
+          taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
+          source: 'NEXUS_BOARD',
+        }).catch((err) => {
+          logger.warn({ err }, 'Failed to upsert DailySheetLog on main task IN_PROGRESS');
+          return null;
+        });
+        void triggerN8nStartTaskWebhook({
+          userId: assigneeId,
+          userName: mainMaName,
+          userEmail: updatedTask.assignee?.email || actorUser?.email,
+          dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
+          taskId: id,
+          taskTitle: updatedTask.title,
+          clientName: mainClientForSheet,
+          taskLink: `https://nexus.vipscaleph.com/lists/${updatedTask.listId}?task=${id}`,
+          status: 'In Progress',
+          timeIn: nowManilaTime,
+          timeOut: null,
+          timeTracker: 'No Need to Track',
+          taskDeliverablesDescription: updatedTask.title,
+          description: updatedTask.title,
+          date: nowManilaDate,
+          mode: 'START',
+          insertEmptyRowBeforeStart: hasPausedMain,
+        });
         await closeOtherOpenBoardSessionsForMa(mainMaName, id, null, nowManilaTime);
         mainProgressPayload = savedMainLog ? buildProgressFromSheetLog(savedMainLog) : liveProg;
         mainMaSession = {
@@ -5783,7 +5816,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       }
 
       if (!skipDuplicateWebhook) {
-        await triggerN8nStartTaskWebhook({
+        void triggerN8nStartTaskWebhook({
           userId: user?.id,
           userName: actorDisplayName,
           userEmail: actorUser?.email,
@@ -6051,6 +6084,20 @@ export const deleteSuperviseCheckHandler = async (req: Request, res: Response) =
   } catch (err: any) {
     logger.error({ err }, 'Error in deleteSuperviseCheckHandler');
     return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUserSheetActivityHandler = async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    const activity = await checkMaSheetActivityStatus(userId);
+    return res.json({ success: true, ...activity });
+  } catch (err: any) {
+    logger.error({ err }, 'Error checking MA sheet activity');
+    return res.status(500).json({ error: err.message || 'Failed to check MA sheet activity' });
   }
 };
 

@@ -21,6 +21,8 @@ import {
   isTaskSavingToDb,
   isTaskUnderAdmin,
   formatManilaTime,
+  getSubStatusTransitionGuide,
+  SubStatusTransitionGuide,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
@@ -45,6 +47,7 @@ import {
 import { format } from 'date-fns';
 import { isAuditorUser, isProjectManagerOrAdmin, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
+import { SubStatusChangeGuideModal } from '@/components/modals/SubStatusChangeGuideModal';
 import { toast } from '@/lib/toast';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
@@ -130,15 +133,6 @@ const DraggableTaskCard: React.FC<{
             : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
         }`}
     >
-      {isSaving && !isDragging && (
-        <div
-          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-1.5 rounded-xl bg-zinc-950/80 backdrop-blur-[2px] border border-zinc-700/60 shadow-lg pointer-events-auto animate-in fade-in duration-150 select-none"
-          title="Saving changes..."
-        >
-          <NexusLogoLoader size={26} />
-          <span className="text-[10px] font-semibold text-zinc-300 tracking-wide">Syncing data...</span>
-        </div>
-      )}
       {children}
     </div>
   );
@@ -363,6 +357,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     uncheckedAudits: [],
     openSubtasks: [],
   });
+  const [subStatusGuideTarget, setSubStatusGuideTarget] = useState<{
+    task: TaskMapItem;
+    guide: SubStatusTransitionGuide;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
   const boardScrollRef = useRef<HTMLDivElement>(null);
   useHorizontalScroll(boardScrollRef);
 
@@ -1063,120 +1062,131 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                     const cleanNext = isSelecting ? [label] : [];
                     const norm = label.toLowerCase().trim();
 
-                    if (norm === 'ready to send' || norm === 'readytosend' || norm === 'to send') {
-                      if (isSelecting) {
-                        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-                        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
-                        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                          try {
-                            const fresh = await tasksApi.getTask(task.id);
-                            if (fresh?.task) {
-                              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
-                              if (freshCheck.allowed) {
-                                transitionCheck = freshCheck;
-                                useAppStore.getState().updateTask(fresh.task);
-                              }
+                    if ((norm === 'ready to send' || norm === 'readytosend' || norm === 'to send') && isSelecting) {
+                      const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+                      let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+                      if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                        try {
+                          const fresh = await tasksApi.getTask(task.id);
+                          if (fresh?.task) {
+                            const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+                            if (freshCheck.allowed) {
+                              transitionCheck = freshCheck;
+                              useAppStore.getState().updateTask(fresh.task);
                             }
-                          } catch {
-                            // fallback
                           }
+                        } catch {
+                          // fallback
                         }
-                        if (!transitionCheck.allowed) {
-                          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-                            window.dispatchEvent(
-                              new CustomEvent('task:highlight-audits', {
-                                detail: {
-                                  taskId: task.id,
-                                  targetStatus: 'CRM',
-                                  uncheckedAudits: transitionCheck.uncheckedAudits,
-                                  openSubtasks: transitionCheck.openSubtasks,
-                                },
-                              })
-                            );
-                          }
-                          setBlockedAuditAlert({
-                            isOpen: true,
-                            task,
-                            targetStatus: 'CRM',
-                            uncheckedAudits: transitionCheck.uncheckedAudits,
-                            openSubtasks: transitionCheck.openSubtasks,
-                          });
-                          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
-                          return;
-                        }
-
-                        onStatusChange(task.id, ['Ready to Send']);
-                        if (onTaskUpdate) {
-                          await onTaskUpdate(task.id, { status: 'CRM' });
-                        } else {
-                          await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
-                          onDataRefresh();
-                        }
-                        toast.success('Task marked Ready to Send — transferred to CRM Map');
-                      } else {
-                        // User pressed 'Ready to Send' AGAIN in Auditing -> revert back to last status
-                        const defaultRev = 'IN REVIEW';
-                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
-                        onStatusChange(task.id, []);
-                        if (onTaskUpdate) {
-                          await onTaskUpdate(task.id, { status: revertStatus });
-                        } else {
-                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                          onDataRefresh();
-                        }
-                        toast.info(`Reverted 'Ready to Send' — returned to ${revertStatus}`);
                       }
-                    } else if (norm === 'ask client' || norm === 'askclient') {
-                      if (isSelecting) {
-                        onStatusChange(task.id, ['Ask Client']);
-                        toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
-                      } else {
-                        onStatusChange(task.id, []);
-                        toast.info("Removed 'Ask Client'");
-                      }
-                    } else if (norm === 'revision' || norm === 'revisions') {
-                      if (isSelecting) {
-                        onStatusChange(task.id, ['Revision']);
-                        if (onTaskUpdate) {
-                          await onTaskUpdate(task.id, { status: 'REVISION' } as any);
-                        } else {
-                          await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
-                          onDataRefresh();
+                      if (!transitionCheck.allowed) {
+                        if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+                          window.dispatchEvent(
+                            new CustomEvent('task:highlight-audits', {
+                              detail: {
+                                taskId: task.id,
+                                targetStatus: 'CRM',
+                                uncheckedAudits: transitionCheck.uncheckedAudits,
+                                openSubtasks: transitionCheck.openSubtasks,
+                              },
+                            })
+                          );
                         }
-                        toast.warning('Task marked for Revision — returned to original MA on Task Map');
-                      } else {
-                        const defaultRev = 'IN REVIEW';
-                        const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
-                        onStatusChange(task.id, []);
-                        if (onTaskUpdate) {
-                          await onTaskUpdate(task.id, { status: revertStatus });
-                        } else {
-                          await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
-                          onDataRefresh();
-                        }
-                        toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
-                      }
-                    } else if (norm === 'handover' || norm === 'hand-over' || norm === 'to review' || norm === 'to_review') {
-                      if (isSelecting) {
-                        if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
-                          task.progress.timeOut = formatManilaTime(new Date());
-                        }
-                        onStatusChange(task.id, []);
-                        if (onTaskUpdate) {
-                          await onTaskUpdate(task.id, { assigneeId: null, status: 'IN REVIEW' });
-                        } else {
-                          await tasksApi.updateTask(task.id, { assigneeId: null, status: 'IN REVIEW' } as any).catch(console.error);
-                          onDataRefresh();
-                        }
-                        toast.info('Task returned to Review queue');
-                      }
-                    } else {
-                      // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit
-                      onStatusChange(task.id, cleanNext);
-                      if (isSelecting) {
-                        toast.success(`Sub-status set to ${label}`);
+                        setBlockedAuditAlert({
+                          isOpen: true,
+                          task,
+                          targetStatus: 'CRM',
+                          uncheckedAudits: transitionCheck.uncheckedAudits,
+                          openSubtasks: transitionCheck.openSubtasks,
+                        });
+                        toast.error(transitionCheck.reason || 'Cannot move task to CRM');
+                        return;
                       }
                     }
+
+                    const executeAuditingSubStatusTransition = async () => {
+                      if (norm === 'ready to send' || norm === 'readytosend' || norm === 'to send') {
+                        if (isSelecting) {
+                          onStatusChange(task.id, ['Ready to Send']);
+                          if (onTaskUpdate) {
+                            await onTaskUpdate(task.id, { status: 'CRM' });
+                          } else {
+                            await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+                            onDataRefresh();
+                          }
+                          toast.success('Task marked Ready to Send — transferred to CRM Map');
+                        } else {
+                          // User pressed 'Ready to Send' AGAIN in Auditing -> revert back to last status
+                          const defaultRev = 'IN REVIEW';
+                          const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
+                          onStatusChange(task.id, []);
+                          if (onTaskUpdate) {
+                            await onTaskUpdate(task.id, { status: revertStatus });
+                          } else {
+                            await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                            onDataRefresh();
+                          }
+                          toast.info(`Reverted 'Ready to Send' — returned to ${revertStatus}`);
+                        }
+                      } else if (norm === 'ask client' || norm === 'askclient') {
+                        if (isSelecting) {
+                          onStatusChange(task.id, ['Ask Client']);
+                          toast.info("Task marked 'Ask Client' — transferred to CRM Map pool");
+                        } else {
+                          onStatusChange(task.id, []);
+                          toast.info("Removed 'Ask Client'");
+                        }
+                      } else if (norm === 'revision' || norm === 'revisions') {
+                        if (isSelecting) {
+                          onStatusChange(task.id, ['Revision']);
+                          if (onTaskUpdate) {
+                            await onTaskUpdate(task.id, { status: 'REVISION' } as any);
+                          } else {
+                            await tasksApi.updateTask(task.id, { status: 'REVISION' } as any).catch(console.error);
+                            onDataRefresh();
+                          }
+                          toast.warning('Task marked for Revision — returned to original MA on Task Map');
+                        } else {
+                          const defaultRev = 'IN REVIEW';
+                          const revertStatus = toCanonicalTaskStatus((task as any)._previousStatus || defaultRev);
+                          onStatusChange(task.id, []);
+                          if (onTaskUpdate) {
+                            await onTaskUpdate(task.id, { status: revertStatus });
+                          } else {
+                            await tasksApi.updateTask(task.id, { status: revertStatus } as any).catch(console.error);
+                            onDataRefresh();
+                          }
+                          toast.info(`Reverted 'Revision' — returned to ${revertStatus}`);
+                        }
+                      } else if (norm === 'handover' || norm === 'hand-over' || norm === 'to review' || norm === 'to_review') {
+                        if (isSelecting) {
+                          if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+                            task.progress.timeOut = formatManilaTime(new Date());
+                          }
+                          onStatusChange(task.id, []);
+                          if (onTaskUpdate) {
+                            await onTaskUpdate(task.id, { assigneeId: null, status: 'IN REVIEW' });
+                          } else {
+                            await tasksApi.updateTask(task.id, { assigneeId: null, status: 'IN REVIEW' } as any).catch(console.error);
+                            onDataRefresh();
+                          }
+                          toast.info('Task returned to Review queue');
+                        }
+                      } else {
+                        // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit
+                        onStatusChange(task.id, cleanNext);
+                        if (isSelecting) {
+                          toast.success(`Sub-status set to ${label}`);
+                        }
+                      }
+                    };
+
+                    const guide = getSubStatusTransitionGuide(label, 'AUDITOR_MAP', { isSelecting });
+                    setSubStatusGuideTarget({
+                      task,
+                      guide,
+                      onConfirm: executeAuditingSubStatusTransition,
+                    });
                   }}
                   onOptionsUpdated={onOptionsUpdated}
                   readOnly={false}
@@ -1728,6 +1738,20 @@ export const TaskMapAuditingView: React.FC<Props> = ({
             : 'Open Task & Review Subtasks'
         }
       />
+
+      {/* Sub-Status Change Guide Modal */}
+      {subStatusGuideTarget && (
+        <SubStatusChangeGuideModal
+          isOpen={Boolean(subStatusGuideTarget)}
+          onClose={() => setSubStatusGuideTarget(null)}
+          onConfirm={subStatusGuideTarget.onConfirm}
+          guide={subStatusGuideTarget.guide}
+          taskTitle={subStatusGuideTarget.task.title}
+          clientName={subStatusGuideTarget.task.progress?.client || subStatusGuideTarget.task.list?.name || ''}
+          currentSubStatuses={subStatusGuideTarget.task.taskMap?.statuses || []}
+          currentMainStatus={subStatusGuideTarget.task.status || ''}
+        />
+      )}
     </DndContext>
   );
 };

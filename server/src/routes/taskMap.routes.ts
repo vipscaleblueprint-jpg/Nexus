@@ -37,6 +37,7 @@ import {
   createDailySheetLogHandler,
   createSuperviseCheckHandler,
   deleteSuperviseCheckHandler,
+  getUserSheetActivityHandler,
 } from '../controllers/taskMap.controller';
 import {
   previewAutoQueueHandler,
@@ -100,6 +101,7 @@ taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
 taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);
 taskMapRouter.get('/sheets/logs', getDailySheetLogsHandler);
 taskMapRouter.post('/sheets/logs', createDailySheetLogHandler);
+taskMapRouter.get('/users/:userId/sheet-activity', getUserSheetActivityHandler);
 
 // Supervise 40-min Check-in routes
 taskMapRouter.post('/supervise/check', createSuperviseCheckHandler);

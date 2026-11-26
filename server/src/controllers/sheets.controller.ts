@@ -1713,7 +1713,11 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     );
     const isWorkflowOrReviewTask = existingRecordStatuses.some((s) => {
       const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-      return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'AVAILABLETASK', 'PAUSED', 'ONHOLD', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+      return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+    });
+    const isResumableFromSheet = existingRecordStatuses.some((s) => {
+      const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+      return ['PAUSED', 'AVAILABLETASK', 'ONHOLD'].includes(sn);
     });
 
     const maKey = (maNameStr || '').toLowerCase().trim();
@@ -1725,7 +1729,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // prefilled with timeIn = 8:23 AM (matching row N's timeOut) and the same task, but without timeOut or deliverables.
     // If this task was already completed or handed over today, reject the ghost row from resurrecting the task!
     let isGhostTrailingRow = false;
-    if (incomingIsLive && (isHandedOverTask || isWorkflowOrReviewTask)) {
+    if (incomingIsLive && (isHandedOverTask || isWorkflowOrReviewTask || isResumableFromSheet)) {
       const recentCompletedLog = await prisma.dailySheetLog.findFirst({
         where: {
           dateKey: sessionDateStr,

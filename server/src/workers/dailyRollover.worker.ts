@@ -439,7 +439,7 @@ export const dailyRolloverWorker = new Worker(
     if (job.name === SHIFT_AUDIT_JOB) return sweepInReviewTasksForShiftAudits(job.data?.shift);
     if (job.name === TASK_MAP_SHIFT_ROLLOVER_JOB) return executeTaskMapShiftRollover(job.data?.fromShift);
     if (job.name === TASK_MAP_DAILY_ROLLOVER_JOB) {
-      logger.info('Running Task Map Daily Rollover & Snapshot (12:00 AM Manila)...');
+      logger.info('Running Task Map Daily Rollover & Snapshot (4:30 AM Manila)...');
       try {
         const taskMapRes = await executeTaskMapDailyRollover();
         logger.info(`Finished Task Map Daily Rollover: rolled ${taskMapRes.rolledCount} tasks to ${taskMapRes.newDate}`);

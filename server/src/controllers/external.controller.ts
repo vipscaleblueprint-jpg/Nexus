@@ -857,7 +857,11 @@ export async function updateTask(req: Request, res: Response) {
       });
 
       // Audit log & activity feed when subtask status changed OR MA daily tracker update received
-      const isMaUpdate = Boolean(req.body.is_ma_update || req.body.ma_updaters);
+      const isRoleStr = req.body.is_role ? String(req.body.is_role).trim() : '';
+      const isCollaboratedFlag = /collab/i.test(isRoleStr);
+      const isAuditRoleFlag = !isCollaboratedFlag && /audit/i.test(isRoleStr);
+      const isAuditOnlyNoCollab = isAuditRoleFlag && !isCollaboratedFlag;
+      const isMaUpdate = !isAuditOnlyNoCollab && Boolean(req.body.is_ma_update || req.body.ma_updaters || isCollaboratedFlag);
       const rawMoverName = req.body.moved_by_name || req.body.author || (!isMaUpdate ? req.body.assignee : undefined);
       const statusChanged = normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status;
 
@@ -909,9 +913,12 @@ export async function updateTask(req: Request, res: Response) {
                 source: 'external',
                 movedByName: authorName,
                 movedById: resolvedMover?.id || null,
-                isMaUpdate: true,
-                maUpdaterIds: resolvedUpdaterIds,
-                maUpdaterNames: resolvedUpdaterNames,
+                isMaUpdate: !isAuditOnlyNoCollab,
+                isRole: req.body.is_role ? String(req.body.is_role).trim() : null,
+                isAuditRole: isAuditRoleFlag,
+                isCollaborated: isCollaboratedFlag,
+                maUpdaterIds: isAuditOnlyNoCollab ? [] : resolvedUpdaterIds,
+                maUpdaterNames: isAuditOnlyNoCollab ? [] : resolvedUpdaterNames,
               },
             }
           });
@@ -1074,7 +1081,11 @@ export async function updateTask(req: Request, res: Response) {
     }
 
     // Audit log & activity feed broadcast when status changed OR MA update received
-    const isMaUpdate = Boolean(req.body.is_ma_update || req.body.ma_updaters);
+    const isRoleStr = req.body.is_role ? String(req.body.is_role).trim() : '';
+    const isCollaboratedFlag = /collab/i.test(isRoleStr);
+    const isAuditRoleFlag = !isCollaboratedFlag && /audit/i.test(isRoleStr);
+    const isAuditOnlyNoCollab = isAuditRoleFlag && !isCollaboratedFlag;
+    const isMaUpdate = !isAuditOnlyNoCollab && Boolean(req.body.is_ma_update || req.body.ma_updaters || isCollaboratedFlag);
     const rawMoverName = req.body.moved_by_name || req.body.author || (!isMaUpdate ? req.body.assignee : undefined);
     const statusChanged = finalStatus !== undefined && finalStatus !== existingTask.status;
 
@@ -1125,9 +1136,12 @@ export async function updateTask(req: Request, res: Response) {
               source: 'external',
               movedByName: authorName,
               movedById: resolvedMover?.id || null,
-              isMaUpdate: true,
-              maUpdaterIds: resolvedUpdaterIds,
-              maUpdaterNames: resolvedUpdaterNames,
+              isMaUpdate: !isAuditOnlyNoCollab,
+              isRole: req.body.is_role ? String(req.body.is_role).trim() : null,
+              isAuditRole: isAuditRoleFlag,
+              isCollaborated: isCollaboratedFlag,
+              maUpdaterIds: isAuditOnlyNoCollab ? [] : resolvedUpdaterIds,
+              maUpdaterNames: isAuditOnlyNoCollab ? [] : resolvedUpdaterNames,
             },
           }
         });

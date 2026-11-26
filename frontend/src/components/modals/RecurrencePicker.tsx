@@ -86,13 +86,13 @@ export function RecurrencePicker({
   const formattedTime = useMemo(() => formatTimeDisplay(time), [time]);
   const formattedDate = useMemo(() => formatDateDisplay(), []);
 
-  // Live preview of the title that will be generated in PENDING
+  // Live preview of the title that will be generated in PENDING (date only)
   const previewTitle = useMemo(() => {
     const clean = (task.title || 'Untitled Task')
-      .replace(/\s+\d{2}-\d{2}-\d{4}\s+\d{1,2}(?::\d{2})?(?:am|pm)$/i, '')
+      .replace(/\s+\d{2}-\d{2}-\d{4}(?:\s+\d{1,2}(?::\d{2})?(?:am|pm))?$/i, '')
       .trim();
-    return `${clean} ${formattedDate} ${formattedTime}`;
-  }, [task.title, formattedDate, formattedTime]);
+    return `${clean} ${formattedDate}`;
+  }, [task.title, formattedDate]);
 
   const handleToggleDay = (dayVal: number) => {
     setDaysOfWeek((prev) => {

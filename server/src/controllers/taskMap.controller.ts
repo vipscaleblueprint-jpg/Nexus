@@ -4,6 +4,7 @@ import { io } from '../server';
 import { logger } from '../config/logger';
 import { invalidateCache, getCache, setCache, getCacheGeneration, redis, isRedisReady, getMaActiveSessionsMap, getMaActiveSession, setMaActiveSession, deleteMaActiveSession } from '../services/redisService';
 import { isReviewStatus } from '../utils/auditChecklist';
+import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { canUserSetAssignees } from '../utils/assignPermission';
 import { filterUsersByNotificationPreference } from '../utils/notificationPreferences';
 import { generateDailyOtpForUser, verifyDailyOtp, setClientUnlockedToday, getManilaDateString, isUserProjectManagerOrAdmin, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
@@ -5835,6 +5836,137 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           description: targetRow.taskDeliverablesDescription || targetRow.task,
           mode: mode || 'UPDATE',
         });
+
+        // Also post the submitted deliverables/update directly to the Nexus task's Activity/Comments
+        // because Google Sheets API writes from n8n do not fire Apps Script onEdit triggers.
+        if (cleanTaskId && mode === 'STOP') {
+          const deliverableMsg = [
+            targetRow.taskDeliverablesDescription,
+            targetRow.taskUpdateAndDeliverables,
+          ]
+            .map((s: any) => String(s || '').trim())
+            .filter(Boolean)
+            .join('\n\n');
+
+          const commentAuthorId = actorUser?.id || user?.id;
+          if (deliverableMsg && commentAuthorId) {
+            try {
+              const now = new Date();
+              const manilaParts = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Manila',
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+              }).formatToParts(now);
+              const mp = (type: string) => manilaParts.find((x) => x.type === type)?.value ?? '';
+              const editedStr = `${mp('month')} ${mp('day')}, ${mp('year')} ${mp('hour')}:${mp('minute')} ${mp('dayPeriod')}`;
+              const timeRangeStr =
+                targetRow.timeIn && effectiveTimeOut
+                  ? `${targetRow.timeIn} - ${effectiveTimeOut}`
+                  : effectiveTimeOut || targetRow.timeIn || `${mp('hour')}:${mp('minute')} ${mp('dayPeriod')}`;
+              const dateLabel = targetRow.date
+                ? new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'Asia/Manila',
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  }).format(new Date(targetRow.date))
+                : `${mp('month')} ${mp('day')}, ${mp('year')}`;
+              const formattedContent = plainTextToCommentHtml(
+                `👤 ${actorDisplayName} | 📅  ${dateLabel}, ${timeRangeStr} | ✏️ ${editedStr}\n\n${deliverableMsg}`
+              );
+
+              const targetSubtaskId = subtaskId ? String(subtaskId) : null;
+              const recentDup = await prisma.taskComment.findFirst({
+                where: {
+                  taskId: cleanTaskId,
+                  subtaskId: targetSubtaskId,
+                  userId: commentAuthorId,
+                  createdAt: { gte: new Date(Date.now() - 30_000) },
+                },
+                select: { id: true },
+              });
+
+              if (!recentDup) {
+                const taskRec = await prisma.task.findUnique({
+                  where: { id: cleanTaskId },
+                  select: { id: true, listId: true },
+                });
+                if (taskRec) {
+                  const createdComment = await prisma.taskComment.create({
+                    data: {
+                      content: formattedContent,
+                      taskId: cleanTaskId,
+                      userId: commentAuthorId,
+                      ...(targetSubtaskId ? { subtaskId: targetSubtaskId } : {}),
+                    },
+                    include: {
+                      user: { select: { id: true, name: true, avatarUrl: true, email: true } },
+                      subtask: { select: { id: true, title: true } },
+                    },
+                  });
+
+                  const auditLog = await prisma.auditLog.create({
+                    data: {
+                      action: 'COMMENT',
+                      entity: 'TASK',
+                      entityId: cleanTaskId,
+                      userId: commentAuthorId,
+                      details: {
+                        text: formattedContent,
+                        commentId: createdComment.id,
+                        subtaskId: targetSubtaskId,
+                        source: 'NEXUS_CLOCK_OUT',
+                      },
+                    },
+                  });
+
+                  await redis
+                    .del(
+                      `comments:list:${cleanTaskId}`,
+                      ...(targetSubtaskId ? [`comments:list:${cleanTaskId}:sub:${targetSubtaskId}`] : [])
+                    )
+                    .catch(() => {});
+                  await invalidateCache(`task:activities:${cleanTaskId}`).catch(() => {});
+
+                  const commentPayload = {
+                    ...createdComment,
+                    reactions: [],
+                    replies: [],
+                  };
+                  const activityPayload = {
+                    id: auditLog.id,
+                    commentId: createdComment.id,
+                    type: 'comment',
+                    author: createdComment.user?.name || actorDisplayName,
+                    text: formattedContent,
+                    date: auditLog.createdAt,
+                    user: createdComment.user,
+                    parentCommentId: null,
+                    subtaskId: targetSubtaskId,
+                  };
+
+                  io.emit('task:comment_added', {
+                    taskId: cleanTaskId,
+                    comment: commentPayload,
+                    activity: activityPayload,
+                    subtaskId: targetSubtaskId || undefined,
+                  });
+                  io.emit('task_activity', {
+                    listId: taskRec.listId,
+                    taskId: cleanTaskId,
+                    activity: activityPayload,
+                  });
+                }
+              }
+            } catch (commentErr) {
+              logger.warn({ err: commentErr }, 'Failed to post clock-out deliverables comment to Nexus task');
+            }
+          }
+        }
       }
     }
 

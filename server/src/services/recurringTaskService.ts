@@ -87,17 +87,17 @@ export function formatRecurrenceDateTime(
     timeStr = minute === '00' ? `${hour}${dayPeriod}` : `${hour}:${minute}${dayPeriod}`;
   }
 
-  const formattedTimestamp = `${dateStr} ${timeStr}`.trim();
+  const formattedTimestamp = dateStr;
 
-  return { dateStr, timeStr, formattedTimestamp };
+  return { dateStr, timeStr: '', formattedTimestamp };
 }
 
 /**
- * Cleans any existing date/time stamp from a task title before appending the new one.
+ * Cleans any existing date (or date/time) stamp from a task title before appending the new one.
  */
 export function cleanTitleFromTimestamp(title: string): string {
   return (title || 'Untitled Task')
-    .replace(/\s+\d{2}-\d{2}-\d{4}\s+\d{1,2}(?::\d{2})?(?:am|pm)$/i, '')
+    .replace(/\s+\d{2}-\d{2}-\d{4}(?:\s+\d{1,2}(?::\d{2})?(?:am|pm))?$/i, '')
     .trim();
 }
 
@@ -500,10 +500,9 @@ export interface RecurringRolloverResult {
 }
 
 /**
- * Daily Rollover function for recurring tasks:
- * Queries all recurring tasks from Prisma (status: Daily / Weekly or recurringConfig set).
- * Evaluates whether they are due today (Daily: every day; Weekly: Mon-Fri or configured daysOfWeek).
- * Duplicates each due recurring task into the list's canonical PENDING status column.
+ * Daily Rollover function for DAILY status tasks (runs at 4:30 AM Manila):
+ * Queries all tasks whose status is DAILY (with or without recurringConfig).
+ * Duplicates each DAILY task into the list's canonical PENDING status column with mm-dd-yyyy.
  * Handles deduplication so running multiple times on the same date is safe (unless force: true).
  */
 export async function runRecurringDailyRollover(
@@ -514,31 +513,20 @@ export async function runRecurringDailyRollover(
   const skipped: RecurringRolloverResult['skipped'] = [];
 
   try {
-    // 1. Pull all active recurring tasks from Prisma (strictly those with a recurringConfig configured)
-    const candidateTasks = (
-      await prisma.task.findMany({
-        where: {
-          AND: [
-            { status: { notIn: ['Closed', 'CLOSED', 'KYC', 'Pin Board', 'PIN BOARD'] } },
-            { recurringConfig: { not: Prisma.DbNull } },
-          ],
-        },
-        include: {
-          list: {
-            include: {
-              statuses: true,
-            },
+    // 1. Pull ONLY tasks with status = DAILY (case-insensitive)
+    const candidateTasks = await prisma.task.findMany({
+      where: {
+        status: { equals: 'DAILY', mode: 'insensitive' },
+      },
+      include: {
+        list: {
+          include: {
+            statuses: true,
           },
         },
-        orderBy: { createdAt: 'asc' },
-      })
-    ).filter(
-      (t) =>
-        t.recurringConfig !== null &&
-        t.recurringConfig !== undefined &&
-        typeof t.recurringConfig === 'object' &&
-        !!(t.recurringConfig as any).frequency
-    );
+      },
+      orderBy: { createdAt: 'asc' },
+    });
 
     // 2. Batch load existing pending tasks for today across all lists (avoids N+1 DB round-trips)
     const todayDateStr = formatRecurrenceDateTime(targetDate, 'Asia/Singapore').dateStr;
@@ -555,53 +543,9 @@ export async function runRecurringDailyRollover(
 
     for (const task of candidateTasks) {
       const config = (task.recurringConfig as RecurringConfig | null) || null;
-      if (!config || !config.frequency) {
-        continue;
-      }
-      const frequency = config.frequency;
-      const timezone = config.timezone || 'Asia/Singapore';
-
-      // Get target date parts in target timezone
-      const { dateStr } = formatRecurrenceDateTime(targetDate, timezone, config.time);
-
-      const dtf = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        weekday: 'short',
-        day: 'numeric',
-      });
-      const parts = dtf.formatToParts(targetDate);
-      const partMap: Record<string, string> = {};
-      for (const p of parts) partMap[p.type] = p.value;
-
-      const weekdayStr = (partMap.weekday || '').toLowerCase(); // 'mon', 'tue', ...
-      const weekdayMap: Record<string, number> = {
-        mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0,
-      };
-      const currentDayNum = weekdayMap[weekdayStr] ?? 1;
-      const currentDayOfMonth = parseInt(partMap.day || '1', 10);
-
-      // Check schedule eligibility
-      let isDue = false;
-      if (frequency === 'DAILY') {
-        isDue = true;
-      } else if (frequency === 'WEEKLY') {
-        const targetDays = config?.daysOfWeek && config.daysOfWeek.length > 0
-          ? config.daysOfWeek
-          : [1, 2, 3, 4, 5]; // Default Monday to Friday
-        isDue = targetDays.includes(currentDayNum);
-      } else if (frequency === 'MONTHLY') {
-        const targetDayOfMonth = config?.dayOfMonth || 1;
-        isDue = currentDayOfMonth === targetDayOfMonth;
-      }
-
-      if (!isDue) {
-        skipped.push({
-          taskId: task.id,
-          title: task.title,
-          reason: `Not due today (${frequency}, day: ${weekdayStr})`,
-        });
-        continue;
-      }
+      const frequency = 'DAILY';
+      const timezone = config?.timezone || 'Asia/Singapore';
+      const { dateStr } = formatRecurrenceDateTime(targetDate, timezone, config?.time);
 
       // Idempotency: Prevent duplicate pending task on the same date unless force is enabled
       if (!options?.force) {

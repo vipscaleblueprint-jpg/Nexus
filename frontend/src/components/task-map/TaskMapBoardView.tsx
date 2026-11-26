@@ -1350,6 +1350,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     user?: any;
     nextStatuses?: string[];
     realTaskId?: string;
+    queueTargetUserId?: string;
   } | null>(null);
   const [inactiveMaModal, setInactiveMaModal] = useState<{
     isOpen: boolean;
@@ -2431,9 +2432,37 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (targetColumnId.startsWith('user-')) {
       const targetUserId = targetColumnId.replace('user-', '');
       const targetUser = getUserProfile(targetUserId);
+      const sourceOwnerUser = sourceOwnerId ? getUserProfile(sourceOwnerId) : undefined;
+      const isDraggedFromInProgress = Boolean(
+        currentTask &&
+        sourceOwnerId &&
+        (isTaskActiveInProgress(currentTask as any, sourceOwnerUser?.name) ||
+          isTaskLiveWorking(currentTask as any, sourceOwnerUser?.name))
+      );
 
       // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
       if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId) && !isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
+        return;
+      }
+
+      // Dragging from In Progress to Queue opens the Deliverables & Time-Out modal;
+      // timing out only happens once the user inputs and submits inside the modal.
+      if (isDraggedFromInProgress && currentTask) {
+        const openQueueTimeoutModal = async () => {
+          setDeliverablesModalTarget({
+            task: currentTask,
+            targetStatus: 'Paused',
+            user: sourceOwnerUser || targetUser,
+            realTaskId: currentTask.id,
+            queueTargetUserId: targetUserId,
+          });
+        };
+
+        if (sourceOwnerId !== targetUserId) {
+          await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', openQueueTimeoutModal);
+        } else {
+          openQueueTimeoutModal();
+        }
         return;
       }
 
@@ -2947,8 +2976,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
       };
 
       if (isPaused) {
-        onStatusChange(effectiveTaskId, ['Paused']);
-        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Paused'], statusPayloadExtra).catch(console.error);
+        const queueDestinationUserId = deliverablesModalTarget.queueTargetUserId;
+        const effectiveQueueUserId = queueDestinationUserId || ownerId;
+        const isCrossUserQueueMove = Boolean(
+          queueDestinationUserId && ownerId && queueDestinationUserId !== ownerId
+        );
+        const nextPausedStatuses = isCrossUserQueueMove ? ['Hand-over'] : ['Paused'];
+        onStatusChange(effectiveTaskId, nextPausedStatuses);
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, nextPausedStatuses, statusPayloadExtra).catch(console.error);
         const pausedOverride: TaskMapItem = {
           ...task,
           status: ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes((task.status || '').trim().toUpperCase())
@@ -2963,20 +2998,30 @@ export const TaskMapBoardView: React.FC<Props> = ({
           taskMap: {
             ...(task.taskMap || {
               taskId: effectiveTaskId,
-              statuses: ['Paused'],
+              statuses: nextPausedStatuses,
               shift: 'DAY',
               stepOrder: 0,
               dontRollover: false,
             }),
-            statuses: ['Paused'],
+            statuses: nextPausedStatuses,
             handedOver: false,
           },
         };
-        if (ownerId) {
+        if (effectiveQueueUserId) {
           if (onAssignTask) {
-            await onAssignTask(effectiveTaskId, ownerId, 'QUEUE', undefined, undefined, pausedOverride);
+            await onAssignTask(
+              effectiveTaskId,
+              effectiveQueueUserId,
+              'QUEUE',
+              undefined,
+              undefined,
+              pausedOverride,
+              isCrossUserQueueMove
+            );
           } else {
-            await taskMapApi.assignTask(effectiveTaskId, ownerId, 'QUEUE');
+            await taskMapApi.assignTask(effectiveTaskId, effectiveQueueUserId, 'QUEUE', {
+              preserveHandover: isCrossUserQueueMove,
+            });
             onDataRefresh();
           }
         } else {

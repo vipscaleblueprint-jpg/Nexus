@@ -47,15 +47,15 @@ import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 const app = express();
 const server = http.createServer(app);
 
-// Initialize daily rollover cron job at 5:00 AM Manila Time (operational day turnover)
+// Initialize daily rollover cron jobs at 4:30 AM Manila Time (operational day turnover)
 (async () => {
   try {
     const existingRepeatables = await dailyRolloverQueue.getRepeatableJobs();
     for (const job of existingRepeatables) {
-      if (job.name === 'checkRollovers' && job.pattern !== '0 5 * * *') {
+      if (job.name === 'checkRollovers' && job.pattern !== '30 4 * * *') {
         await dailyRolloverQueue.removeRepeatableByKey(job.key);
       }
-      if (job.name === TASK_MAP_DAILY_ROLLOVER_JOB && job.pattern !== '0 0 * * *') {
+      if (job.name === TASK_MAP_DAILY_ROLLOVER_JOB && job.pattern !== '30 4 * * *') {
         await dailyRolloverQueue.removeRepeatableByKey(job.key);
       }
     }
@@ -65,19 +65,19 @@ const server = http.createServer(app);
 
   await dailyRolloverQueue.add('checkRollovers', {}, {
     repeat: {
-      pattern: '0 5 * * *', // Every day at 5:00 AM Manila Time (Docs & Recurring)
+      pattern: '30 4 * * *', // Every day at 4:30 AM Manila Time (Docs & Recurring)
       tz: 'Asia/Manila',
     },
-    jobId: 'daily-rollover-5am',
+    jobId: 'daily-rollover-430am',
   });
 
-  // Task Map Daily Rollover: Every day at 12:00 AM (midnight) Manila Time
+  // Task Map Daily Rollover: Every day at 4:30 AM Manila Time
   await dailyRolloverQueue.add(TASK_MAP_DAILY_ROLLOVER_JOB, {}, {
     repeat: {
-      pattern: '0 0 * * *',
+      pattern: '30 4 * * *',
       tz: 'Asia/Manila',
     },
-    jobId: 'task-map-daily-rollover-midnight',
+    jobId: 'task-map-daily-rollover-430am',
   });
 
   // Safety net for inactive MA shift duty end & inactivity handover (runs every 5 minutes)

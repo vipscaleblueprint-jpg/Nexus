@@ -366,8 +366,14 @@ export async function getTaskMoverAndUpdaters(taskId: string, subtaskId?: string
         break;
       }
 
-      // ONLY logs originating from the MA daily tracker count towards audit restrictions!
+      // ONLY logs originating from the MA daily tracker (or marked IsCollaborated) count towards audit restrictions!
+      // Logs explicitly marked as Audit role with IsCollaborated = false do NOT block the auditor.
+      if (details.isAuditRole === true && details.isCollaborated === false) {
+        continue;
+      }
+
       const isDailyTracker = Boolean(
+        details.isCollaborated === true ||
         details.isMaUpdate ||
         details.source === 'sheets' ||
         (details.source === 'external' && (details.movedByName || details.maUpdaterNames || details.maUpdaterIds))

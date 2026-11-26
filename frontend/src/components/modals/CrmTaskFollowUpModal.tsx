@@ -322,30 +322,34 @@ export const CrmTaskFollowUpModal: React.FC<CrmTaskFollowUpModalProps> = ({
             </div>
           )}
 
-          {/* Footer */}
-          <div className="flex items-center justify-between gap-3 pt-1">
-            <span className="text-[11px] text-zinc-500">
-              Posted as a comment &amp; logged to task activity.
-            </span>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={isSubmitting}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || !note.trim()}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#22A3AE] hover:bg-[#1d8e98] text-white text-xs font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-45 disabled:cursor-not-allowed"
-              >
-                {isSubmitting && <NexusLogoLoader size={15} inline />}
-                <span>{isSubmitting ? 'Submitting…' : 'Submit Response'}</span>
-              </button>
+          {/* Footer / Loading state */}
+          {isSubmitting ? (
+            <div className="py-6 flex flex-col items-center justify-center gap-2 animate-in fade-in duration-150 select-none">
+              <NexusLogoLoader size={38} label="Submitting response..." />
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <span className="text-[11px] text-zinc-500">
+                Posted as a comment &amp; logged to task activity.
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!note.trim()}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#22A3AE] hover:bg-[#1d8e98] text-white text-xs font-semibold transition-all cursor-pointer shadow-sm disabled:opacity-45 disabled:cursor-not-allowed"
+                >
+                  <span>Submit Response</span>
+                </button>
+              </div>
+            </div>
+          )}
         </form>
       </div>
     </div>,

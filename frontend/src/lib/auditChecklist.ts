@@ -95,7 +95,8 @@ export function getAiPickedAudits(
   const picked = (checklists ?? []).find(
     (c) => (subtaskId ? c.subtaskId === subtaskId : !c.subtaskId) && isAiAuditChecklist(c) && isNexusAuditChecklist(c)
   );
-  return picked ? (picked.items ?? []).map((i) => i.text) : null;
+  if (!picked || !picked.items || picked.items.length === 0) return null;
+  return picked.items.map((i) => i.text);
 }
 
 /**

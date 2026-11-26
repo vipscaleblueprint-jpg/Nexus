@@ -1,4 +1,5 @@
 'use client';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -471,14 +472,19 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={loading || success}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 disabled:opacity-50 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer"
-            >
-              {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span>{loading ? 'Saving...' : 'Save Changes'}</span>
-            </button>
+            {loading ? (
+              <div className="py-1 px-3 flex items-center justify-center select-none">
+                <NexusLogoLoader size={26} label="Saving..." />
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={success}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-zinc-200 disabled:opacity-50 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer"
+              >
+                <span>Save Changes</span>
+              </button>
+            )}
           </div>
         </form>
         </motion.div>

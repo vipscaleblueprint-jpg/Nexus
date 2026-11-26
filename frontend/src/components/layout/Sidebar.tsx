@@ -17,7 +17,7 @@ import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { RenameModal } from '@/components/modals/RenameModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Space, Folder, Doc, Page, List, User } from '@/lib/types';
-import { spacesApi, usersApi, authApi } from '@/api';
+import { spacesApi, usersApi, authApi, notificationsApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { SIDEBAR_SESSION_KEY } from '@/lib/sidebarSession';
 import { getStoredTheme, saveStoredTheme, applyTheme, ThemeMode } from '@/lib/theme';
@@ -1653,6 +1653,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
                   href="/activity/task-map"
                   title={taskMapUnreadCount > 0 ? `Task Map (${taskMapUnreadCount > 99 ? '99+' : taskMapUnreadCount} new)` : 'Task Map'}
                   onClick={() => {
+                    if (taskMapUnreadCount > 0) {
+                      useAppStore.getState().setTaskMapUnreadCount(0);
+                      notificationsApi.markTaskMapAsRead().catch(() => {});
+                    }
                     if (pathname?.startsWith('/activity/task-map') || pathname?.startsWith('/task-map')) {
                       window.dispatchEvent(new CustomEvent('task_map:reload'));
                     }
@@ -1731,6 +1735,10 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               <Link
                 href="/activity/task-map"
                 onClick={() => {
+                  if (taskMapUnreadCount > 0) {
+                    useAppStore.getState().setTaskMapUnreadCount(0);
+                    notificationsApi.markTaskMapAsRead().catch(() => {});
+                  }
                   if (pathname?.startsWith('/activity/task-map') || pathname?.startsWith('/task-map')) {
                     window.dispatchEvent(new CustomEvent('task_map:reload'));
                   }

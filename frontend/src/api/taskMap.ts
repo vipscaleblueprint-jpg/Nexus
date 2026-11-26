@@ -480,7 +480,7 @@ export function getEffectiveTaskMapHandlerId(task?: TaskMapItem | null): string 
   if (isTaskHandedOver(task)) return null;
   const pmAssignedId = getPmAssignedUserId(task);
   if (pmAssignedId) return pmAssignedId;
-  return task.assigneeId || task.assignee?.id || null;
+  return null;
 }
 
 /**
@@ -2426,9 +2426,12 @@ export const TASK_MAP_STATUS_COLORS = {
   SENT: '#D9534F',           // -> WAITING (Red)
   ON_HOLD: '#8A8F98',        // -> ON-HOLD (Gray)
   REVISION: '#5B6BD6',       // -> REVISION (Indigo)
-  TO_SEND: '#22A3AE',        // -> CRM (Teal)
-  READY_TO_SEND: '#22A3AE',  // -> CRM (Teal)
-  FOLLOW_UP: '#38bdf8',      // Retains CRM (Sky)
+  TO_SEND: '#0284c7',        // -> CRM Needed to Send (Sky-600)
+  READY_TO_SEND: '#0284c7',  // -> CRM Needed to Send (Sky-600)
+  FOLLOW_UP: '#6366F1',      // -> CRM Needed to Follow Up (Indigo)
+  CRM: '#22A3AE',            // Existing historical CRM (Teal)
+  CRM_TO_SEND: '#0284c7',    // CRM Needed to Send (Sky-600)
+  CRM_FOLLOW_UP: '#6366F1',  // CRM Needed to Follow Up (Indigo)
   CLOSED: '#2FA37A',         // -> CLOSED (Green)
 } as const;
 
@@ -2494,6 +2497,11 @@ export function getTaskMapSubStatusStyle(
     TOSEND: { color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff' },
     READYTOSEND: { color: TASK_MAP_STATUS_COLORS.READY_TO_SEND, textColor: '#ffffff' },
     FOLLOWUP: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff' },
+    CRM: { color: TASK_MAP_STATUS_COLORS.CRM, textColor: '#ffffff' },
+    CRMTOSEND: { color: TASK_MAP_STATUS_COLORS.CRM_TO_SEND, textColor: '#ffffff' },
+    CRMNEEDEDTOSEND: { color: TASK_MAP_STATUS_COLORS.CRM_TO_SEND, textColor: '#ffffff' },
+    CRMFOLLOWUP: { color: TASK_MAP_STATUS_COLORS.CRM_FOLLOW_UP, textColor: '#ffffff' },
+    CRMNEEDEDTOFOLLOWUP: { color: TASK_MAP_STATUS_COLORS.CRM_FOLLOW_UP, textColor: '#ffffff' },
     CLOSED: { color: TASK_MAP_STATUS_COLORS.CLOSED, textColor: '#ffffff' },
     DESIGNAUDIT: { color: '#ec4899', textColor: '#ffffff' },
     UIUXAUDIT: { color: '#06b6d4', textColor: '#ffffff' },
@@ -2521,8 +2529,14 @@ const SUB_STATUS_DB_ALIAS: Record<string, string> = {
   SENTBUTWAITING: 'WAITING',
   ONHOLD: 'ON-HOLD',
   TOREVIEW: 'IN REVIEW',
-  TOSEND: 'CRM',
-  READYTOSEND: 'CRM',
+  TOSEND: 'CRM Needed to Send',
+  READYTOSEND: 'CRM Needed to Send',
+  CRMTOSEND: 'CRM Needed to Send',
+  CRMNEEDEDTOSEND: 'CRM Needed to Send',
+  FOLLOWUP: 'CRM Needed to Follow Up',
+  CRMFOLLOWUP: 'CRM Needed to Follow Up',
+  CRMNEEDEDTOFOLLOWUP: 'CRM Needed to Follow Up',
+  CRM: 'CRM',
   CLOSED: 'CLOSED',
 };
 
@@ -2562,6 +2576,10 @@ const CANONICAL_STATUS_MAP: Record<string, string> = {
   CHECKING: 'CHECKING',
   INCHECKING: 'CHECKING',
   CRM: 'CRM',
+  CRMNEEDEDTOSEND: 'CRM Needed to Send',
+  CRMTOSEND: 'CRM Needed to Send',
+  CRMNEEDEDTOFOLLOWUP: 'CRM Needed to Follow Up',
+  CRMFOLLOWUP: 'CRM Needed to Follow Up',
   CLOSED: 'CLOSED',
   DONE: 'CLOSED',
   ONHOLD: 'ON-HOLD',
@@ -2589,7 +2607,8 @@ export function getDefaultTaskMapSubStatuses(
   options?: { isAssigned?: boolean }
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
-  if (canonical === 'CRM') return ['To send'];
+  if (canonical === 'CRM Needed to Send' || canonical === 'CRM') return ['To send'];
+  if (canonical === 'CRM Needed to Follow Up') return ['Follow up'];
   if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
   if (
@@ -2663,12 +2682,22 @@ export function normalizeTaskMapSubStatuses(
     return clean.slice(0, 1);
   }
 
-  if (canonical === 'CRM') {
+  if (canonical === 'CRM' || canonical === 'CRM Needed to Send') {
     if (
       clean.length === 0 ||
       clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
     ) {
       return ['To send'];
+    }
+    return clean.slice(0, 1);
+  }
+
+  if (canonical === 'CRM Needed to Follow Up') {
+    if (
+      clean.length === 0 ||
+      clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
+    ) {
+      return ['Follow up'];
     }
     return clean.slice(0, 1);
   }

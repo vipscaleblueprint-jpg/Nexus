@@ -89,10 +89,14 @@ const STALE_CRM_SUBSTATUSES = new Set([
  */
 async function syncTaskMapSubStatusesOnStatusChange(taskId: string, nextStatus: string, io?: any): Promise<void> {
   const nextStatusNorm = (nextStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (nextStatusNorm !== 'WAITING' && nextStatusNorm !== 'SENT' && nextStatusNorm !== 'CRM') return;
+  const isCrmStatus = nextStatusNorm === 'CRM' || nextStatusNorm === 'CRMNEEDEDTOSEND' || nextStatusNorm === 'CRMTOSEND';
+  const isFollowUpStatus = nextStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || nextStatusNorm === 'CRMFOLLOWUP';
+  const isWaitingStatus = nextStatusNorm === 'WAITING' || nextStatusNorm === 'SENT';
 
-  const targetSubStatuses = nextStatusNorm === 'CRM' ? ['To send'] : ['Sent but Waiting'];
-  const staleSet = nextStatusNorm === 'CRM' ? STALE_CRM_SUBSTATUSES : STALE_WAITING_SUBSTATUSES;
+  if (!isWaitingStatus && !isCrmStatus && !isFollowUpStatus) return;
+
+  const targetSubStatuses = isFollowUpStatus ? ['Follow up'] : isCrmStatus ? ['To send'] : ['Sent but Waiting'];
+  const staleSet = isFollowUpStatus || isCrmStatus ? STALE_CRM_SUBSTATUSES : STALE_WAITING_SUBSTATUSES;
   const existingRecord = await getOrCreateTaskMapRecord(taskId).catch(() => null);
   const curStatuses = Array.isArray(existingRecord?.statuses) ? existingRecord!.statuses : [];
   if (curStatuses.length === 0 || curStatuses.every((s: string) => staleSet.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
@@ -1088,7 +1092,7 @@ export async function updateTask(req: Request, res: Response) {
     if (
       status &&
       !areStatusesEqual(status, currentTask.status) &&
-      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM') &&
+      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM' || (status || '').toUpperCase().includes('CRM')) &&
       currentTask.assigneeId
     ) {
       await recordOriginalAssignedMa({ taskId, userId: currentTask.assigneeId });
@@ -1719,7 +1723,7 @@ export async function moveTask(req: Request, res: Response) {
     if (
       status &&
       !areStatusesEqual(oldStatus, status) &&
-      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM') &&
+      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM' || (status || '').toUpperCase().includes('CRM')) &&
       currentTask.assigneeId
     ) {
       await recordOriginalAssignedMa({ taskId: id, userId: currentTask.assigneeId });
@@ -2423,15 +2427,23 @@ export async function toggleCommentReaction(req: Request, res: Response) {
       return res.status(400).json({ error: 'userId and emoji are required' });
     }
 
+    const cleanEmoji = (e: string): string => {
+      if (!e) return e;
+      if (e.startsWith('\u00f0\u0178') || e.startsWith('ðŸ')) return '👍';
+      if (e.startsWith('\u00e2\u009d') || e.startsWith('â')) return '❤️';
+      return e;
+    };
+    const effectiveEmoji = cleanEmoji(emoji);
+
     const existing = await (prisma as any).taskCommentReaction.findUnique({
-      where: { commentId_userId_emoji: { commentId, userId: effectiveUserId, emoji } },
+      where: { commentId_userId_emoji: { commentId, userId: effectiveUserId, emoji: effectiveEmoji } },
     });
 
     if (existing) {
       await (prisma as any).taskCommentReaction.delete({ where: { id: existing.id } });
     } else {
       await (prisma as any).taskCommentReaction.create({
-        data: { commentId, userId: effectiveUserId, emoji },
+        data: { commentId, userId: effectiveUserId, emoji: effectiveEmoji },
       });
     }
 

@@ -131,7 +131,16 @@ export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review', 'review
 /** Checking involves Instruction Audit and Funnel Audit — requires subtasks Closed and Level 1 audits (UI UX & Design) completed. */
 export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
 /** Post-review completion statuses need every subtask Closed AND all required audits checked. */
-export const COMPLETION_GATE_STATUSES = ['closed', 'crm', 'done', 'completed'];
+export const COMPLETION_GATE_STATUSES = [
+  'closed',
+  'crm',
+  'crm needed to send',
+  'crm_to_send',
+  'crm needed to follow up',
+  'crm_follow_up',
+  'done',
+  'completed',
+];
 /** Every status that has any gate (kept for existing imports). */
 export const RESTRICTED_GATE_STATUSES = [...IN_REVIEW_STATUSES, ...CHECKING_STATUSES, ...COMPLETION_GATE_STATUSES];
 

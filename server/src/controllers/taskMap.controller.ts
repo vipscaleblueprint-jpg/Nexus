@@ -86,6 +86,10 @@ const isClosedStatus = (status?: string | null) => {
 
 const CRM_TAG_SET = new Set([
   'CRM',
+  'CRM NEEDED TO SEND',
+  'CRM_TO_SEND',
+  'CRM NEEDED TO FOLLOW UP',
+  'CRM_FOLLOW_UP',
   'SENT',
   'SENT BUT WAITING',
   'SENTBUTWAITING',
@@ -93,6 +97,7 @@ const CRM_TAG_SET = new Set([
   'OUTREACH SENT',
   'CLIENT SENT',
   'TO SEND',
+  'FOLLOW UP',
   'TOSEND',
   'READY TO SEND',
   'READYTOSEND',
@@ -877,7 +882,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-      if (statusKey === 'CRM') return ['To send'];
+      if (statusKey === 'CRM' || statusKey === 'CRMNEEDEDTOSEND' || statusKey === 'CRMTOSEND') return ['To send'];
+      if (statusKey === 'CRMNEEDEDTOFOLLOWUP' || statusKey === 'CRMFOLLOWUP') return ['Follow up'];
       if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
       if (
@@ -1030,7 +1036,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (cur.length === 0 || cur.every((s: string) => staleForWaiting.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['Sent but Waiting'] };
         }
-      } else if (taskStatusNorm === 'CRM') {
+      } else if (taskStatusNorm === 'CRM' || taskStatusNorm === 'CRMNEEDEDTOSEND' || taskStatusNorm === 'CRMTOSEND') {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForCrm = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
@@ -1038,6 +1044,15 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         ]);
         if (cur.length === 0 || cur.every((s: string) => staleForCrm.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['To send'] };
+        }
+      } else if (taskStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || taskStatusNorm === 'CRMFOLLOWUP') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        const staleForFollowUp = new Set([
+          'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+        ]);
+        if (cur.length === 0 || cur.every((s: string) => staleForFollowUp.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+          mapRecord = { ...mapRecord, statuses: ['Follow up'] };
         }
       }
 
@@ -1373,10 +1388,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return false;
       }
 
-      if (t.assigneeId) {
-        return false;
-      }
-
+      // If a task is not live working and has no active Task Map PM assignment,
+      // it belongs in Available Tasks pool so PMs can assign it on the Task Map
       return true;
     };
 
@@ -2016,7 +2029,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const isRevisionTransferOut = normSubStatuses.some((norm) => norm === 'REVISION' || norm === 'REVISIONS');
     const isHandoverSubStatus = normSubStatuses.includes('HANDOVER') || isAvailableTaskStatus;
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
-      ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND'].includes(norm)
+      ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'CRMNEEDEDTOSEND', 'CRMTOSEND', 'CRMNEEDEDTOFOLLOWUP', 'CRMFOLLOWUP', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'FOLLOWUP'].includes(norm)
     );
     const isClosedSubStatus = normSubStatuses.some((norm) =>
       ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(norm)
@@ -2936,6 +2949,10 @@ async function executeTaskMapAssignment(
           'CHECKING',
           'INCHECKING',
           'CRM',
+          'CRMNEEDEDTOSEND',
+          'CRMTOSEND',
+          'CRMNEEDEDTOFOLLOWUP',
+          'CRMFOLLOWUP',
           'WAITING',
           'SENT',
           'CLOSED',
@@ -3649,6 +3666,10 @@ async function executeTaskMapAssignment(
         'CHECKING',
         'INCHECKING',
         'CRM',
+        'CRMNEEDEDTOSEND',
+        'CRMTOSEND',
+        'CRMNEEDEDTOFOLLOWUP',
+        'CRMFOLLOWUP',
         'WAITING',
         'SENT',
         'CLOSED',
@@ -4341,7 +4362,8 @@ export const getHistoryDates = async (req: Request, res: Response) => {
   try {
     const dates = await getAvailableHistoryDates();
     const todayManila = getManilaDateStr();
-    const latestDate = dates[0] || todayManila;
+    // latestDate must always be today's operational date, never a past snapshot date
+    const latestDate = todayManila;
     res.json({
       success: true,
       dates,

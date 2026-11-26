@@ -380,6 +380,8 @@ export async function createExternalList(req: Request, res: Response) {
       { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
       { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
       { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
+      { name: 'CRM Needed to Send', color: '#0284c7', groupName: 'Management' },
+      { name: 'CRM Needed to Follow Up', color: '#6366F1', groupName: 'Management' },
       { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
     ];
 
@@ -855,23 +857,23 @@ export async function updateTask(req: Request, res: Response) {
       });
 
       // Audit log & activity feed when subtask status changed OR MA daily tracker update received
-      const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
-      const isMaUpdate = Boolean(req.body.is_ma_update || rawMoverName || req.body.ma_updaters);
+      const isMaUpdate = Boolean(req.body.is_ma_update || req.body.ma_updaters);
+      const rawMoverName = req.body.moved_by_name || req.body.author || (!isMaUpdate ? req.body.assignee : undefined);
       const statusChanged = normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status;
 
       if (statusChanged || isMaUpdate) {
         try {
-          const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
-          const resolvedMover = rawMoverName ? await findUserByName(rawMoverName) : null;
+          const isVipScaleMover = (rawMoverName && /^vip\s*scale$/i.test(String(rawMoverName))) || (!rawMoverName && isMaUpdate);
+          const resolvedMover = (rawMoverName && !isVipScaleMover) ? await findUserByName(rawMoverName) : null;
           const fallbackActor = apiKey.user || await getOrCreateVipScaleUser();
-          const actor = resolvedMover || fallbackActor;
-          const authorName = resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale');
+          const actor = isVipScaleMover ? (await getOrCreateVipScaleUser()) : (resolvedMover || fallbackActor);
+          const authorName = isVipScaleMover ? 'VIPScale' : (resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale'));
           let rawUpdaters: string[] = [];
           if (Array.isArray(req.body.ma_updaters)) {
             rawUpdaters = req.body.ma_updaters;
           } else if (typeof req.body.ma_updaters === 'string' && req.body.ma_updaters.trim()) {
             rawUpdaters = req.body.ma_updaters.split(',').map((s: string) => s.trim()).filter(Boolean);
-          } else if (rawMoverName) {
+          } else if (rawMoverName && !isVipScaleMover) {
             rawUpdaters = [rawMoverName];
           }
 
@@ -886,10 +888,10 @@ export async function updateTask(req: Request, res: Response) {
               resolvedUpdaterIds.push(uUser.id);
             }
           }
-          if (resolvedMover?.id && !resolvedUpdaterIds.includes(resolvedMover.id)) {
+          if (!isVipScaleMover && resolvedMover?.id && !resolvedUpdaterIds.includes(resolvedMover.id)) {
             resolvedUpdaterIds.push(resolvedMover.id);
           }
-          if (authorName && !resolvedUpdaterNames.includes(authorName)) {
+          if (!isVipScaleMover && authorName && !resolvedUpdaterNames.includes(authorName)) {
             resolvedUpdaterNames.push(authorName);
           }
 
@@ -1072,23 +1074,24 @@ export async function updateTask(req: Request, res: Response) {
     }
 
     // Audit log & activity feed broadcast when status changed OR MA update received
-    const rawMoverName = req.body.moved_by_name || req.body.assignee || req.body.author;
-    const isMaUpdate = Boolean(req.body.is_ma_update || rawMoverName || req.body.ma_updaters);
+    const isMaUpdate = Boolean(req.body.is_ma_update || req.body.ma_updaters);
+    const rawMoverName = req.body.moved_by_name || req.body.author || (!isMaUpdate ? req.body.assignee : undefined);
     const statusChanged = finalStatus !== undefined && finalStatus !== existingTask.status;
 
     if (statusChanged || isMaUpdate) {
       try {
-        const resolvedMover = rawMoverName ? await findUserByName(rawMoverName) : null;
+        const isVipScaleMover = (rawMoverName && /^vip\s*scale$/i.test(String(rawMoverName))) || (!rawMoverName && isMaUpdate);
+        const resolvedMover = (rawMoverName && !isVipScaleMover) ? await findUserByName(rawMoverName) : null;
         const fallbackActor = apiKey.user || await getOrCreateVipScaleUser();
-        const actor = resolvedMover || fallbackActor;
-        const authorName = resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale');
+        const actor = isVipScaleMover ? (await getOrCreateVipScaleUser()) : (resolvedMover || fallbackActor);
+        const authorName = isVipScaleMover ? 'VIPScale' : (resolvedMover ? resolvedMover.name : (rawMoverName ? String(rawMoverName).trim() : 'VIPScale'));
 
         let rawUpdaters: string[] = [];
         if (Array.isArray(req.body.ma_updaters)) {
           rawUpdaters = req.body.ma_updaters;
         } else if (typeof req.body.ma_updaters === 'string' && req.body.ma_updaters.trim()) {
           rawUpdaters = req.body.ma_updaters.split(',').map((s: string) => s.trim()).filter(Boolean);
-        } else if (rawMoverName) {
+        } else if (rawMoverName && !isVipScaleMover) {
           rawUpdaters = [rawMoverName];
         }
 
@@ -1103,10 +1106,10 @@ export async function updateTask(req: Request, res: Response) {
             resolvedUpdaterIds.push(uUser.id);
           }
         }
-        if (resolvedMover?.id && !resolvedUpdaterIds.includes(resolvedMover.id)) {
+        if (!isVipScaleMover && resolvedMover?.id && !resolvedUpdaterIds.includes(resolvedMover.id)) {
           resolvedUpdaterIds.push(resolvedMover.id);
         }
-        if (authorName && !resolvedUpdaterNames.includes(authorName)) {
+        if (!isVipScaleMover && authorName && !resolvedUpdaterNames.includes(authorName)) {
           resolvedUpdaterNames.push(authorName);
         }
 
@@ -2216,6 +2219,12 @@ const NEXUS_STATUS_HEX: Record<string, string> = {
   'WAITING': '#D9534F',
   'IN REVIEW': '#D97B3A',
   'CHECKING': '#A35DB8',
+  'CRM Needed to Send': '#0284c7',
+  'CRM NEEDED TO SEND': '#0284c7',
+  'crm_to_send': '#0284c7',
+  'CRM Needed to Follow Up': '#6366F1',
+  'CRM NEEDED TO FOLLOW UP': '#6366F1',
+  'crm_follow_up': '#6366F1',
   'CRM': '#22A3AE',
   'CLOSED': '#2FA37A',
   'ON-HOLD': '#8A8F98',

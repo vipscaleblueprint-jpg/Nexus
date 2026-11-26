@@ -455,6 +455,11 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
       window.dispatchEvent(new CustomEvent('notifications_all_read'));
     });
 
+    s.on('task_map_notifications_read', () => {
+      useAppStore.getState().setTaskMapUnreadCount(0);
+      window.dispatchEvent(new CustomEvent('task_map_notifications_read'));
+    });
+
     s.on('notification_cleared', (data: { id: string }) => {
       window.dispatchEvent(new CustomEvent('notification_cleared', { detail: data }));
     });

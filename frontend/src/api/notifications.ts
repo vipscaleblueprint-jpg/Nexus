@@ -71,6 +71,9 @@ export const notificationsApi = {
   markAllAsRead: async (): Promise<{ success: boolean }> => {
     return apiClient(`/api/notifications/read-all`, { method: 'PATCH' });
   },
+  markTaskMapAsRead: async (): Promise<{ success: boolean }> => {
+    return apiClient(`/api/notifications/read-task-map`, { method: 'PATCH' });
+  },
   clearAll: async (): Promise<{ success: boolean }> => {
     return apiClient(`/api/notifications/clear-all`, { method: 'PATCH' });
   },

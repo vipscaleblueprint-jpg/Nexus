@@ -100,6 +100,19 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
       where: { dateKey, maKey, sheetRow },
       orderBy: { submittedAt: 'desc' },
     });
+    // If not matched by sheetRow yet, check if there is an unrowed session for the same task
+    if (!existing && input.taskId) {
+      existing = await prisma.dailySheetLog.findFirst({
+        where: {
+          dateKey,
+          maKey,
+          taskId: input.taskId,
+          subtaskId: input.subtaskId || null,
+          sheetRow: null,
+        },
+        orderBy: { submittedAt: 'desc' },
+      });
+    }
   } else if (input.taskId) {
     existing = await prisma.dailySheetLog.findFirst({
       where: {
@@ -165,6 +178,7 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
   // If this entry is live, close any older open live entries for this MA on the same day.
   // Match by account as well as name: the Task Map logs under the account name ("Cherilyn")
   // while the sheet logs under its title name ("Che"), and both are the same person.
+  // Strictly avoid closing an entry for the same task or closing newly started unrowed sessions.
   if (isLive) {
     const closeTimeOut = cleanTimeIn || '11:59 PM';
     await prisma.dailySheetLog.updateMany({
@@ -172,10 +186,10 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
         dateKey,
         isLive: true,
         id: { not: saved.id },
+        ...(saved.taskId ? { taskId: { not: saved.taskId } } : {}),
         AND: [
           saved.userId ? { OR: [{ maKey }, { userId: saved.userId }] } : { maKey },
-          // Rows above on the sheet are older; Task Map sessions have no sheetRow
-          ...(sheetRow ? [{ OR: [{ sheetRow: null }, { sheetRow: { lt: sheetRow } }] }] : []),
+          ...(sheetRow ? [{ sheetRow: { lt: sheetRow } }] : []),
         ],
       },
       data: {

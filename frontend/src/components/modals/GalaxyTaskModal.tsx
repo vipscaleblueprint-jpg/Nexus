@@ -455,9 +455,23 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4">
-            {resultState.status !== 'idle' ? (
+            {submitting || resultState.status !== 'idle' ? (
               <div className="py-8 px-4 flex flex-col items-center text-center gap-4">
-                {resultState.status === 'success' ? (
+                {submitting ? (
+                  <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
+                    <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 shadow-xl flex items-center justify-center">
+                      <NexusLogoLoader size={56} />
+                    </div>
+                    <div className="space-y-1.5 max-w-sm">
+                      <h3 className="text-base font-bold text-zinc-100">
+                        {mode === 'subtask' ? 'Creating Subtask...' : 'Creating Task...'}
+                      </h3>
+                      <p className="text-xs text-zinc-400">
+                        Synchronizing details and assigning via Galaxy AI. Please wait...
+                      </p>
+                    </div>
+                  </div>
+                ) : resultState.status === 'success' ? (
                   <>
                     <motion.div
                       initial={{ scale: 0.8, opacity: 0 }}
@@ -955,25 +969,15 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
             )}
           </div>
 
-          {resultState.status === 'idle' && (
+          {!submitting && resultState.status === 'idle' && (
             <div className="px-5 py-3.5 border-t border-zinc-800/80 bg-zinc-950/60 shrink-0">
               <button
                 type="submit"
                 form="galaxy-task-form"
-                disabled={submitting}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-sm font-semibold shadow-md transition-all cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-sm font-semibold shadow-md transition-all cursor-pointer"
               >
-                {submitting ? (
-                  <>
-                    <NexusLogoLoader size={16} inline />
-                    <span>{mode === 'subtask' ? 'Creating Subtask...' : 'Creating Task...'}</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="size-4" />
-                    <span>{mode === 'subtask' ? 'Create Subtask' : 'Create Task'}</span>
-                  </>
-                )}
+                <Sparkles className="size-4" />
+                <span>{mode === 'subtask' ? 'Create Subtask' : 'Create Task'}</span>
               </button>
             </div>
           )}

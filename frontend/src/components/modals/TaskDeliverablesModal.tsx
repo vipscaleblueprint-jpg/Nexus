@@ -153,38 +153,35 @@ export function TaskDeliverablesModal({
             />
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || !deliverablesDescription.trim() || !updateAndDeliverables.trim()}
-              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                isHandover
-                  ? 'bg-sky-600 hover:bg-sky-500 active:bg-sky-700'
-                  : 'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700'
-              }`}
-            >
-              {isSubmitting ? (
-                <>
-                  <NexusLogoLoader size={15} inline />
-                  <span>Submitting...</span>
-                </>
-              ) : (
-                <>
-                  <Send className="size-3.5" />
-                  <span>Submit & Clock Out</span>
-                </>
-              )}
-            </button>
-          </div>
+          {/* Actions / Loading State */}
+          {isSubmitting ? (
+            <div className="py-8 flex flex-col items-center justify-center gap-2.5 border-t border-zinc-800 animate-in fade-in duration-150 select-none">
+              <NexusLogoLoader size={44} label={isHandover ? "Submitting handover deliverables..." : "Submitting deliverables & clocking out..."} />
+              <p className="text-[11px] text-zinc-500">Syncing with task logs and daily sheet...</p>
+            </div>
+          ) : (
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!deliverablesDescription.trim() || !updateAndDeliverables.trim()}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${
+                  isHandover
+                    ? 'bg-sky-600 hover:bg-sky-500 active:bg-sky-700'
+                    : 'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700'
+                }`}
+              >
+                <Send className="size-3.5" />
+                <span>Submit & Clock Out</span>
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>

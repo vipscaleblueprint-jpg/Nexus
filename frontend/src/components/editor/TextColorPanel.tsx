@@ -35,13 +35,14 @@ interface TextColorPanelProps {
   /** The editor's highlight palette; 'transparent' is skipped */
   highlightColors: string[];
   className?: string;
+  onClose?: () => void;
 }
 
 const sectionLabel = 'text-xs font-medium text-muted-foreground px-0.5';
 const noneSwatch =
   'w-7 h-7 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:bg-accent transition-colors cursor-pointer shrink-0';
 
-export function TextColorPanel({ editor, textColors, highlightColors, className = '' }: TextColorPanelProps) {
+export function TextColorPanel({ editor, textColors, highlightColors, className = '', onClose }: TextColorPanelProps) {
   const [recent, setRecent] = useState<RecentColor[]>(readRecent);
 
   const remember = (entry: RecentColor) => {
@@ -61,6 +62,7 @@ export function TextColorPanel({ editor, textColors, highlightColors, className 
     else if (entry.kind === 'highlight') chain.unsetBadge().setHighlight({ color: entry.color }).run();
     else chain.setBadge({ color: entry.color, textColor: entry.textColor }).run();
     remember(entry);
+    onClose?.();
   };
 
   const keepSelection = (e: React.MouseEvent) => e.preventDefault();
@@ -131,7 +133,10 @@ export function TextColorPanel({ editor, textColors, highlightColors, className 
           <button
             type="button"
             onMouseDown={keepSelection}
-            onClick={() => editor.chain().focus().unsetHighlight().run()}
+            onClick={() => {
+              editor.chain().focus().unsetHighlight().run();
+              onClose?.();
+            }}
             title="Remove highlight"
             className={noneSwatch}
           >
@@ -147,7 +152,10 @@ export function TextColorPanel({ editor, textColors, highlightColors, className 
           <button
             type="button"
             onMouseDown={keepSelection}
-            onClick={() => editor.chain().focus().unsetBadge().run()}
+            onClick={() => {
+              editor.chain().focus().unsetBadge().run();
+              onClose?.();
+            }}
             title="Remove badge"
             className={noneSwatch}
           >
@@ -171,7 +179,10 @@ export function TextColorPanel({ editor, textColors, highlightColors, className 
       <button
         type="button"
         onMouseDown={keepSelection}
-        onClick={() => editor.chain().focus().unsetColor().unsetHighlight().unsetBadge().run()}
+        onClick={() => {
+          editor.chain().focus().unsetColor().unsetHighlight().unsetBadge().run();
+          onClose?.();
+        }}
         className="w-full py-1.5 rounded-lg border border-border hover:bg-accent text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
       >
         <Ban className="w-3.5 h-3.5" />

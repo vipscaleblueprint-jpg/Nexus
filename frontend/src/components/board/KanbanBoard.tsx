@@ -70,6 +70,11 @@ const GROUP_STYLES: Record<string, { badgeClass: string; borderColor: string; ic
     borderColor: 'rgba(113, 113, 122, 0.5)',
     icon: '⚡',
   },
+  'Management': {
+    badgeClass: 'bg-sky-500/15 text-sky-300',
+    borderColor: 'rgba(14, 165, 233, 0.5)',
+    icon: '📋',
+  },
   'Closed Task': {
     badgeClass: 'bg-emerald-500/15 text-emerald-300',
     borderColor: 'rgba(16, 185, 129, 0.5)',

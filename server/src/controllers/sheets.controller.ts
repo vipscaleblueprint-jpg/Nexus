@@ -1644,8 +1644,8 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   }
                   return false;
                 }
-                const isOlderRow = !r.sheetRow || (incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum);
-                if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
+                const isOlderRow = sheet_row && r.sheetRow && incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum;
+                if (matchesMa && staleRec.taskId !== task.id && r.timeIn && !r.timeOut && isOlderRow) {
                   r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
                   mod = true;
                   if (r.isUpwork) {
@@ -1704,7 +1704,71 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       });
     }
 
+    // Get or create TaskMapRecord
+    const record = await getOrCreateTaskMapRecord(target.taskId);
+    const existingRecordStatuses: string[] = Array.isArray(record.statuses) ? record.statuses : [];
+    const isHandedOverTask = Boolean(
+      record.handedOver ||
+      existingRecordStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER')
+    );
+    const isWorkflowOrReviewTask = existingRecordStatuses.some((s) => {
+      const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
+      return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'AVAILABLETASK', 'PAUSED', 'ONHOLD', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+    });
+
+    const maKey = (maNameStr || '').toLowerCase().trim();
+    const sessionDateStr = date ? String(date).trim() : getManilaDateStr();
+    const incomingIsLive = !cleanTimeOut && Boolean(cleanTimeIn);
+
+    // Guard against trailing ghost row from Google Sheets:
+    // When an MA hands over / completes a task on row N (e.g. 8:23 AM), Google Sheets often has row N+1
+    // prefilled with timeIn = 8:23 AM (matching row N's timeOut) and the same task, but without timeOut or deliverables.
+    // If this task was already completed or handed over today, reject the ghost row from resurrecting the task!
+    let isGhostTrailingRow = false;
+    if (incomingIsLive && (isHandedOverTask || isWorkflowOrReviewTask)) {
+      const recentCompletedLog = await prisma.dailySheetLog.findFirst({
+        where: {
+          dateKey: sessionDateStr,
+          maKey,
+          taskId: target.taskId,
+          isLive: false,
+          timeOut: { not: null },
+        },
+        orderBy: { submittedAt: 'desc' },
+      });
+      if (recentCompletedLog?.timeOut) {
+        const prevTimeOutNorm = cleanTimeString(recentCompletedLog.timeOut);
+        const hasNewDeliverables = Boolean(
+          (task_deliverables_description && String(task_deliverables_description).trim()) ||
+          (task_update_and_deliverables && String(task_update_and_deliverables).trim())
+        );
+        if (prevTimeOutNorm && prevTimeOutNorm === cleanTimeIn && !hasNewDeliverables) {
+          isGhostTrailingRow = true;
+          console.warn(`[Sheets] Ignored ghost trailing row ${sheet_row} for MA "${maNameStr}" on task ${target.taskId}: timeIn "${cleanTimeIn}" matches previous row timeOut "${prevTimeOutNorm}" with no new deliverables.`);
+        }
+      }
+    }
+
+    if (isGhostTrailingRow) {
+      if (maKey) {
+        const currentActive = await getMaActiveSession(maKey).catch(() => null);
+        if (currentActive?.taskId === target.taskId) {
+          await deleteMaActiveSession(maKey).catch(() => {});
+          const clearedPayload = { maName: maNameStr, cleared: true, taskId: target.taskId };
+          io.emit('ma:session_updated', clearedPayload);
+          io.emit('task_map:ma_progress_changed', clearedPayload);
+          io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.taskId });
+        }
+      }
+      return res.status(200).json({
+        success: true,
+        ignored: true,
+        message: `Ignored ghost trailing row ${sheet_row} matching previously completed task timeOut`,
+      });
+    }
+
     // If MA name was provided, ensure the task is assigned to this MA if currently unassigned
+    // CRITICAL: Never auto-assign if the task is handed over, in review, or in the Available Tasks pool!
     let assignedUser: { id: string; name: string } | null = null;
     let didAssignUserToTask = false;
     let maUserRecord: { id: string; name: string } | null = null;
@@ -1727,20 +1791,18 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           where: { id: target.taskId },
           select: { assigneeId: true },
         });
-        if (!curTask?.assigneeId) {
+        if (!curTask?.assigneeId && !isHandedOverTask && !isWorkflowOrReviewTask) {
           await prisma.task.update({
             where: { id: target.taskId },
             data: { assigneeId: maUser.id },
           });
           didAssignUserToTask = true;
-        } else if (curTask.assigneeId === maUser.id) {
+        } else if (curTask?.assigneeId === maUser.id) {
           didAssignUserToTask = true;
         }
       }
     }
 
-    // Get or create TaskMapRecord
-    const record = await getOrCreateTaskMapRecord(target.taskId);
     const targetTaskMeta = await prisma.task.findUnique({
       where: { id: target.taskId },
       select: {
@@ -1827,7 +1889,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         isMissingTime,
         isUpwork,
         timeTracker: trackerStr || (isUpwork ? 'Upwork' : 'No Need to Track'),
-        status: statusStr || null,
+        status: isHandedOverTask && !cleanTimeOut ? 'Hand-over' : (statusStr || null),
         taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
         taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
         taskLink: task_link ? String(task_link).trim() : null,
@@ -1958,7 +2020,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         }
       }
 
-      if (!isOlderRowEdit) {
+      if (!isOlderRowEdit && !isHandedOverTask) {
         const maSession = {
           maName: maNameStr,
           taskId: target.taskId,
@@ -2110,7 +2172,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     }
 
     // Live-working & Time-Out automation
-    const existingRecordStatuses: string[] = Array.isArray(record.statuses) ? record.statuses : [];
     const currentTaskStatusNorm = (targetTaskMeta?.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
     const isCadenceTask =
       Boolean(targetTaskMeta?.recurringConfig) ||
@@ -2183,7 +2244,18 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
     } else if (cleanTimeIn && !cleanTimeOut && !isMissingTime) {
       // Live Working: transition any non-closed task into IN PROGRESS
-      if (currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
+      // CRITICAL GUARD: Handed-over tasks and tasks in review/workflow must NEVER be resurrected to IN PROGRESS by sheet sync!
+      if (isHandedOverTask) {
+        console.warn(`[Sheets] Preserving Hand-over state for task ${target.taskId}: incoming sheet row will not resurrect into IN PROGRESS`);
+        nextHandedOver = true;
+        nextAssigneeId = null;
+        nextAssigneeObj = null;
+        if (!nextRecordStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER')) {
+          nextRecordStatuses = ['Hand-over'];
+        }
+      } else if (isWorkflowOrReviewTask) {
+        console.warn(`[Sheets] Preserving review/workflow state for task ${target.taskId}: (${nextRecordStatuses.join(', ')})`);
+      } else if (currentTaskStatusNorm !== 'CLOSED' && currentTaskStatusNorm !== 'DONE') {
         if (!isCadenceTask && currentTaskStatusNorm !== 'INPROGRESS') {
           const listInProgressStatus = targetTaskMeta?.listId
             ? await prisma.listStatus.findFirst({
@@ -2294,7 +2366,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     await invalidateCache(`task:${target.taskId}`, 'task_map:*', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
-    if (maNameStr && !isClosedIncoming) {
+    if (maNameStr && !isClosedIncoming && !isHandedOverTask) {
       const maSession = {
         maName: maNameStr,
         taskId: target.taskId,
@@ -2319,6 +2391,16 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       await setMaActiveSession(maKey, maSession).catch(() => { });
       io.emit('ma:session_updated', maSession);
       io.emit('task_map:ma_progress_changed', maSession);
+    } else if (maNameStr && isHandedOverTask) {
+      const maKey = maNameStr.toLowerCase().trim();
+      const currentActive = await getMaActiveSession(maKey).catch(() => null);
+      if (currentActive?.taskId === target.taskId) {
+        await deleteMaActiveSession(maKey).catch(() => {});
+        const clearedPayload = { maName: maNameStr, cleared: true, taskId: target.taskId };
+        io.emit('ma:session_updated', clearedPayload);
+        io.emit('task_map:ma_progress_changed', clearedPayload);
+        io.emit('task_map:updated', { maSession: clearedPayload, taskId: target.taskId });
+      }
     }
 
     // Emit Realtime WebSockets so TaskMapContainer and BoardView update immediately

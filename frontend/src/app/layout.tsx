@@ -29,9 +29,14 @@ export const metadata: Metadata = {
   title: "Nexus — Enterprise Project Management Platform",
   description: "ClickUp-style workspace with Notion minimalist design and multi-role authorization.",
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon-light.png", media: "(prefers-color-scheme: light)" },
+      { url: "/favicon-dark.png", media: "(prefers-color-scheme: dark)" },
+      { url: "/favicon.ico" },
+    ],
     shortcut: "/favicon.ico",
-    apple: "/nexus-logo.png",
+    apple: "/apple-touch-icon.png",
   },
 };
 

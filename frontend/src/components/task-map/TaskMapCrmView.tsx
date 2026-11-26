@@ -134,12 +134,13 @@ const DraggableTaskCard: React.FC<{
           : 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
         }`}
     >
-      {isSaving && (
+      {isSaving && !isDragging && (
         <div
-          className="absolute top-2 right-2 z-20 inline-flex items-center justify-center p-1 rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700/80 shadow-md pointer-events-none backdrop-blur-xs"
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-1.5 rounded-xl bg-zinc-950/80 backdrop-blur-[2px] border border-zinc-700/60 shadow-lg pointer-events-auto animate-in fade-in duration-150 select-none"
           title="Saving changes..."
         >
-          <NexusLogoLoader inline size={15} />
+          <NexusLogoLoader size={26} />
+          <span className="text-[10px] font-semibold text-zinc-300 tracking-wide">Syncing data...</span>
         </div>
       )}
       {children}
@@ -382,8 +383,19 @@ export const TaskMapCrmView: React.FC<Props> = ({
     ) {
       return false;
     }
+    const isCrmStatusName =
+      s === 'CRM' ||
+      s === 'CRM NEEDED TO SEND' ||
+      s === 'CRM_TO_SEND' ||
+      s === 'CRM NEEDED TO FOLLOW UP' ||
+      s === 'CRM_FOLLOW_UP';
+
     const hasCrmMarker =
       mapStatuses.includes('CRM') ||
+      mapStatuses.includes('CRMNEEDEDTOSEND') ||
+      mapStatuses.includes('CRMTOSEND') ||
+      mapStatuses.includes('CRMNEEDEDTOFOLLOWUP') ||
+      mapStatuses.includes('CRMFOLLOWUP') ||
       mapStatuses.includes('TOSEND') ||
       mapStatuses.includes('READYTOSEND') ||
       mapStatuses.includes('ASKCLIENT') ||
@@ -394,7 +406,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       mapStatuses.includes('FOLLOWUP');
 
     return (
-      s === 'CRM' ||
+      isCrmStatusName ||
       ((s === 'WAITING' || s === 'SENT') && isTaskInClientDashboard(t, clients)) ||
       (!(s === 'CLOSED' || s === 'DONE') && mapStatuses.includes('ASKCLIENT')) ||
       ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker)
@@ -432,7 +444,13 @@ export const TaskMapCrmView: React.FC<Props> = ({
       st.toUpperCase().replace(/[\s_-]+/g, '')
     );
     const hasAskClient = mapStatusesNorm.includes('ASKCLIENT');
-    if (s !== 'CRM' && !hasAskClient) return false;
+    const isCrm =
+      s === 'CRM' ||
+      s === 'CRM NEEDED TO SEND' ||
+      s === 'CRM_TO_SEND' ||
+      s === 'CRM NEEDED TO FOLLOW UP' ||
+      s === 'CRM_FOLLOW_UP';
+    if (!isCrm && !hasAskClient) return false;
 
     const effectiveHandlerId = getEffectiveTaskMapHandlerId(task);
     if (effectiveHandlerId) {
@@ -458,7 +476,13 @@ export const TaskMapCrmView: React.FC<Props> = ({
       st.toUpperCase().replace(/[\s_-]+/g, '')
     );
     const hasAskClient = mapStatusesNorm.includes('ASKCLIENT');
-    if (s !== 'CRM' && !hasAskClient) return false;
+    const isCrm =
+      s === 'CRM' ||
+      s === 'CRM NEEDED TO SEND' ||
+      s === 'CRM_TO_SEND' ||
+      s === 'CRM NEEDED TO FOLLOW UP' ||
+      s === 'CRM_FOLLOW_UP';
+    if (!isCrm && !hasAskClient) return false;
     if (
       crmUsers.some((u) => isTaskAssignedToCrmMember(t, u)) ||
       (allUsers || []).some((u) => isCrmUser(u) && isTaskAssignedToCrmMember(t, u))

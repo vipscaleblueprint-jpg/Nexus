@@ -100,7 +100,9 @@ async function askToolsForAudits(input: {
       return null;
     }
     const data: any = await res.json();
-    return Array.isArray(data?.audits) && data.audits.length > 0 ? toAuditItems(data.audits) : null;
+    if (!Array.isArray(data?.audits) || data.audits.length === 0) return null;
+    const items = toAuditItems(data.audits);
+    return items.length > 0 ? items : null;
   } catch (err) {
     console.warn(`[AI Audits] Could not reach Tools for "${input.title}":`, err);
     return null;
@@ -113,6 +115,7 @@ async function askToolsForAudits(input: {
  */
 export async function saveAuditPicks(target: Target, audits: string[]): Promise<boolean> {
   const items = toAuditItems(audits);
+  if (items.length === 0) return false;
   const subtaskId = target.subtaskId || null;
   try {
     const checklist = await prisma.checklist.create({
@@ -169,9 +172,10 @@ export async function pickAndSaveAudits(target: Target): Promise<string[] | null
   if (isAuditSubtaskTitle(title) || isCompletionStatus(status)) return null;
 
   const aiPick = await askToolsForAudits({ title, description: plainText(description), parentTitle });
-  const audits = aiPick ?? fallbackAudits(title);
-  console.log(`[AI Audits] "${title}" -> ${audits.join(', ')}${aiPick ? '' : ' (title rules: AI unavailable)'}`);
+  const audits = (aiPick && aiPick.length > 0) ? aiPick : fallbackAudits(title);
+  console.log(`[AI Audits] "${title}" -> ${audits.join(', ')}${aiPick && aiPick.length > 0 ? '' : ' (title rules: AI unavailable or empty)'}`);
 
+  if (audits.length === 0) return null;
   const saved = await saveAuditPicks(target, audits);
   // Already in review (e.g. created there): hand the new audit items to this shift's auditors.
   if (saved && !subtaskId && isReviewStatus(status)) {
@@ -192,11 +196,11 @@ export async function repickAuditsAfterRename(target: Target): Promise<void> {
     where: { externalId: aiAuditExternalId(subtaskId || target.taskId) },
     include: { items: { select: { completed: true, assigneeId: true } } },
   });
-  if (!checklist) return;
-  if (checklist.items.some((i) => i.completed || i.assigneeId.length > 0)) return;
-
-  await prisma.checklist.delete({ where: { id: checklist.id } });
-  getIo()?.emit('task:checklist_deleted', { taskId: target.taskId, subtaskId, checklistId: checklist.id });
+  if (checklist) {
+    if (checklist.items.some((i) => i.completed || i.assigneeId.length > 0)) return;
+    await prisma.checklist.delete({ where: { id: checklist.id } });
+    getIo()?.emit('task:checklist_deleted', { taskId: target.taskId, subtaskId, checklistId: checklist.id });
+  }
   queueAuditPick(target);
 }
 

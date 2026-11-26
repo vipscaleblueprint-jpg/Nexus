@@ -1077,8 +1077,6 @@ export async function executeTaskMapDailyRollover(params?: {
       const isLive = Boolean(t.progress?.maName && !t.progress?.timeOut && t.progress?.timeIn);
       const hasPmAssign = revs.some((r: any) => r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId && r?.assignedTo);
       if (isLive || hasPmAssign) return false;
-      const handedOver = Boolean(t.taskMap?.handedOver) || mapStatuses.includes('HANDOVER');
-      if (t.assigneeId && !handedOver) return false;
       return true;
     };
 
@@ -1139,15 +1137,8 @@ export async function executeTaskMapDailyRollover(params?: {
     const isActivelyProgressed = hasAssignedUser && !isPaused && hasLiveSheetProgress;
 
     if (hasAssignedUser && !isActivelyProgressed) {
-      // Hand over to Available Tasks without changing Task.status
-      await prisma.task.update({
-        where: { id: t.id },
-        data: {
-          assigneeId: null,
-          assignees: { set: [] },
-        },
-      });
-
+      // Hand over to Available Tasks on the Task Map layer (TaskMapRecord)
+      // Project assignee on Task table remains intact as requested.
       const nowIso = new Date().toISOString();
       let reviewsModified = false;
       const cleanedReviews = reviewsList
@@ -1214,33 +1205,27 @@ export async function executeTaskMapDailyRollover(params?: {
     const modifiedTaskIds = new Set<string>();
 
     for (const st of openSubtasks) {
-      if (isNonTaskMapSectionStatus(st.task?.status) || isNonTaskMapSectionStatus(st.status)) {
-        continue;
-      }
-
       const taskRevs = latestReviewsByTask.get(st.taskId) || [];
       const hasSubPmAssignment = taskRevs.some(
         (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id && r?.assignedTo
       );
+      const subState = taskRevs.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id);
       const hasSubAssignee = Boolean(
         st.assigneeId || (Array.isArray(st.assignees) && st.assignees.length > 0) || hasSubPmAssignment
       );
 
       if (!hasSubAssignee) continue;
 
-      const subState = taskRevs.find((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id);
       const isSubPaused = Array.isArray(subState?.statuses) &&
         subState.statuses.some((s: string) => normalizeRolloverStatus(s) === 'PAUSED');
-      const isSubActivelyProgressed = false;
+
+      const hasLiveSubProgress = taskRevs.some(
+        (r: any) => r?.type === 'SHEET_PROGRESS' && r?.subtaskId === st.id && Boolean(r?.timeIn) && !r?.timeOut && !r?.isMissingTime
+      );
+      const isSubActivelyProgressed = hasSubAssignee && !isSubPaused && hasLiveSubProgress;
 
       if (!isSubActivelyProgressed) {
-        if (st.assigneeId || (st.assignees && st.assignees.length > 0)) {
-          await prisma.subtask.update({
-            where: { id: st.id },
-            data: { assigneeId: null, assignees: { set: [] } },
-          });
-        }
-
+        // Hand over subtask on Task Map layer (TaskMapRecord) without clearing subtask.assigneeId
         const nextRevs = taskRevs.filter(
           (r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id)
         );
@@ -1275,6 +1260,27 @@ export async function executeTaskMapDailyRollover(params?: {
     }
   } catch (err: any) {
     logger.warn({ err }, 'Failed to process subtask rollover during 12:00 AM daily rollover');
+  }
+
+  // 5. Mark older Task Map / Audit / CRM assignment notifications as read upon 12:00 AM daily rollover
+  // so yesterday's handed-over tasks do not linger as unread notification badges for the new day
+  try {
+    await prisma.taskNotification.updateMany({
+      where: {
+        isRead: false,
+        createdAt: { lt: toDateObj },
+        OR: [
+          { type: { in: ['ASSIGNMENT', 'CHECKLIST_ITEM_ASSIGNED', 'CRM_FOLLOW_UP_ALERT', 'TASK_MAP_HANDOVER_REMINDER', 'UNASSIGNMENT'] } },
+          { title: { contains: 'on Task Map', mode: 'insensitive' } },
+          { title: { contains: 'on Auditor Map', mode: 'insensitive' } },
+          { title: { contains: 'on CRM Map', mode: 'insensitive' } },
+        ],
+      },
+      data: { isRead: true },
+    });
+    getIo()?.emit('task_map_notifications_read');
+  } catch (notifErr: any) {
+    logger.warn({ notifErr }, 'Failed to mark Task Map notifications as read during daily rollover');
   }
 
   // Log daily rollover in AuditLog

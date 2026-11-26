@@ -28,6 +28,7 @@ import {
   formatManilaTime,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { notificationsApi } from '@/api/notifications';
 import dynamic from 'next/dynamic';
 import { TaskMapSidebar } from './TaskMapSidebar';
 import { TaskMapHeader } from './TaskMapHeader';
@@ -112,6 +113,14 @@ export const TaskMapContainer: React.FC = () => {
       loadSpaces();
     }
   }, [spaces, loadSpaces]);
+
+  // Clear Task Map unread notifications when viewing Task Map
+  useEffect(() => {
+    if (useAppStore.getState().taskMapUnreadCount > 0) {
+      useAppStore.getState().setTaskMapUnreadCount(0);
+      notificationsApi.markTaskMapAsRead().catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     if (!workspaceTeams || workspaceTeams.length === 0) {
@@ -623,12 +632,12 @@ export const TaskMapContainer: React.FC = () => {
     loadData();
   }, [loadData, currentShift, currentDate]);
 
-  // Load history dates for journal & ensure Task Map opens on latest date
+  // Load history dates for journal & ensure Task Map stays on today's operational date unless explicitly chosen
   useEffect(() => {
     taskMapApi.getHistoryDates().then((res) => {
       if (res.success && res.dates) {
         setHistoryDates(res.dates);
-        const latest = res.latestDate || (res.dates.length > 0 ? res.dates[0] : null);
+        const latest = res.currentDate || res.latestDate || getTodayDateStr();
         if (latest && !userSelectedDateRef.current) {
           setCurrentDate((prev) => (prev !== latest ? latest : prev));
         }
@@ -989,7 +998,7 @@ export const TaskMapContainer: React.FC = () => {
         url.searchParams.delete('subtask');
         window.history.replaceState(window.history.state || {}, '', `${url.pathname}${url.search}`);
       }
-      const latestDate = historyDates[0] || getTodayDateStr();
+      const latestDate = getTodayDateStr();
       if (currentDate !== latestDate) {
         setCurrentDate(latestDate);
       } else {

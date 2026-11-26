@@ -1,4 +1,5 @@
 'use client';
+import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 
 import React, { useState } from 'react';
 import { authApi } from '@/api';
@@ -149,23 +150,19 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Sending OTP Code...</span>
-                </>
-              ) : (
-                <>
-                  <span>Send OTP Verification Code</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
+            {isLoading ? (
+              <div className="w-full py-3 flex flex-col items-center justify-center gap-2 animate-in fade-in duration-150 select-none">
+                <NexusLogoLoader size={36} label="Sending OTP Code..." />
+              </div>
+            ) : (
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>Send OTP Verification Code</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </form>
         )}
 
@@ -242,20 +239,18 @@ export function ForgotPasswordModal({ isOpen, onClose }: ForgotPasswordModalProp
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-1"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Verifying OTP & Updating...</span>
-                </>
-              ) : (
+            {isLoading ? (
+              <div className="w-full py-3 flex flex-col items-center justify-center gap-2 animate-in fade-in duration-150 select-none">
+                <NexusLogoLoader size={36} label="Verifying OTP & Updating..." />
+              </div>
+            ) : (
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer mt-1"
+              >
                 <span>Reset Password Now</span>
-              )}
-            </button>
+              </button>
+            )}
           </form>
         )}
 

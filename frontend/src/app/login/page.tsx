@@ -216,23 +216,19 @@ export default function LoginPage() {
               </button>
             </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-zinc-200 hover:bg-white text-zinc-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all duration-200 shadow-md mt-2 flex items-center justify-center gap-2"
-            >
-              {isLoading ? (
-                <>
-                  <NexusLogoLoader size={16} inline />
-                  <span>Authenticating...</span>
-                </>
-              ) : (
-                <>
-                  <span>Sign In</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
+            {isLoading ? (
+              <div className="w-full mt-2 py-3 flex flex-col items-center justify-center gap-2 animate-in fade-in duration-150 select-none">
+                <NexusLogoLoader size={36} label="Authenticating..." />
+              </div>
+            ) : (
+              <button
+                type="submit"
+                className="w-full bg-zinc-200 hover:bg-white text-zinc-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all duration-200 shadow-md mt-2 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>Sign In</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </form>
         </div>
       </main>

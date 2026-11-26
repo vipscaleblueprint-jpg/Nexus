@@ -112,7 +112,8 @@ export function getAiPickedAudits(
   const picked = (checklists ?? []).find(
     (c) => (subtaskId ? c.subtaskId === subtaskId : !c.subtaskId) && isAiAuditChecklist(c) && isNexusAuditChecklist(c)
   );
-  return picked ? (picked.items ?? []).map((i) => i.text) : null;
+  if (!picked || !picked.items || picked.items.length === 0) return null;
+  return picked.items.map((i) => i.text);
 }
 
 /**
@@ -157,7 +158,16 @@ export function resolveRequiredAudits(opts: {
  */
 export const IN_REVIEW_STATUSES = ['in review', 'inreview', 'in-review', 'review', 'under review', 'for review'];
 export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
-export const COMPLETION_GATE_STATUSES = ['closed', 'crm', 'done', 'completed'];
+export const COMPLETION_GATE_STATUSES = [
+  'closed',
+  'crm',
+  'crm needed to send',
+  'crm_to_send',
+  'crm needed to follow up',
+  'crm_follow_up',
+  'done',
+  'completed',
+];
 
 const norm = (status: string | null | undefined) =>
   (status || '').trim().toLowerCase().replace(/[\-_]/g, ' ').replace(/\s+/g, ' ');

@@ -167,33 +167,29 @@ export function ClientOtpModal({
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isVerifying}
-              className="px-3.5 py-2 text-xs rounded-lg border border-border bg-secondary hover:bg-zinc-800 text-zinc-300 transition-colors cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isVerifying || otp.trim().length !== 4}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-semibold shadow-xs"
-            >
-              {isVerifying ? (
-                <>
-                  <NexusLogoLoader size={15} inline />
-                  <span>Verifying...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Authorize & Assign</span>
-                </>
-              )}
-            </button>
-          </div>
+          {isVerifying ? (
+            <div className="py-6 flex flex-col items-center justify-center gap-3 animate-in fade-in duration-150 select-none">
+              <NexusLogoLoader size={44} label="Verifying OTP & transferring task..." />
+            </div>
+          ) : (
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-2 text-xs rounded-lg border border-border bg-secondary hover:bg-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={otp.trim().length !== 4}
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-semibold shadow-xs"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Authorize & Assign</span>
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>

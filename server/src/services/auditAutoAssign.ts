@@ -405,9 +405,17 @@ export async function autoAssignAudits(
       checklistId = checklist.id;
     }
 
-    const item = existing
+    let targetItem = existing;
+    if (!targetItem && checklistId) {
+      targetItem = (await prisma.checklistItem.findFirst({
+        where: { checklistId, text: { equals: text, mode: 'insensitive' } },
+        select: { id: true, text: true, assigneeId: true, completed: true, checkedById: true },
+      })) as any;
+    }
+
+    const item = targetItem
       ? await prisma.checklistItem.update({
-          where: { id: existing.id },
+          where: { id: targetItem.id },
           data: { assigneeId: updatedAssignees },
           select: { id: true },
         })

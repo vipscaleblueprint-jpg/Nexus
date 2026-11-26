@@ -62,7 +62,13 @@ const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkif
 const keepUrl = (url: string) => url;
 const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);
 const copyCommentImage = (url: string) => uploadApi.uploadFromUrl(url, 'comments').then(res => res.url);
-const QUICK_EMOJIS = ['ðŸ‘', 'â¤ï¸', 'ðŸ˜‚', 'ðŸ˜®', 'ðŸ˜¢', 'ðŸŽ‰', 'ðŸ”¥', 'ðŸ‘€'];
+const sanitizeEmoji = (emoji: string): string => {
+  if (!emoji) return '';
+  if (emoji.startsWith('\u00f0\u0178') || emoji.startsWith('ðŸ')) return '👍';
+  if (emoji.startsWith('\u00e2\u009d') || emoji.startsWith('â')) return '❤️';
+  return emoji;
+};
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'];
 
 // Parsing a comment (remark-gfm + rehype-raw) is the costly part of the feed. Memoized on its content, so typing
 // in the comment box or posting another comment doesn't re-parse every comment already shown.
@@ -1502,6 +1508,16 @@ export function TaskDetailModalContent({
           );
         }
       }
+      const dataBadge = rest['data-badge'] || (rest as any).dataBadge || (node?.properties as any)?.['data-badge'] || (node?.properties as any)?.dataBadge;
+      if (dataBadge) {
+        return (
+          <span
+            {...rest}
+            data-badge={dataBadge}
+            className={`inline-block font-semibold rounded px-1.5 py-0.5 text-[12px] leading-tight align-baseline ${(rest as any).className || ''}`}
+          />
+        );
+      }
       return <span {...rest} />;
     },
     img: (props: any) => {
@@ -1756,7 +1772,7 @@ export function TaskDetailModalContent({
     if (!task?.id || !currentUser?.id) return;
     try {
       const targetId = (task as any).parentTaskId || task.id;
-      const res = await tasksApi.toggleCommentReaction(targetId, commentId, emoji, currentUser.id);
+      const res = await tasksApi.toggleCommentReaction(targetId, commentId, sanitizeEmoji(emoji), currentUser.id);
       setRichComments(prev => prev.map(c => {
         if (c.id === commentId) return { ...c, reactions: res.reactions };
         // also check replies
@@ -4956,10 +4972,12 @@ export function TaskDetailModalContent({
                     const cTimeStr = new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
                     (comment.reactions || []).forEach((r: any) => {
-                      if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
-                      cGroups[r.emoji].count++;
-                      cGroups[r.emoji].users.push(r.user?.name || '?');
-                      if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
+                      const emoji = sanitizeEmoji(r.emoji);
+                      if (!emoji) return;
+                      if (!cGroups[emoji]) cGroups[emoji] = { count: 0, users: [], hasMe: false };
+                      cGroups[emoji].count++;
+                      cGroups[emoji].users.push(r.user?.name || '?');
+                      if (r.userId === currentUser?.id) cGroups[emoji].hasMe = true;
                     });
                     const isEditing = editingCommentId === comment.id;
                     return (
@@ -5101,8 +5119,8 @@ export function TaskDetailModalContent({
                         {/* Action row */}
                         <div className="flex items-center gap-1 mt-1 pl-11 relative">
                           <button
-                            onClick={() => handleToggleReaction(comment.id, 'ðŸ‘')}
-                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['ðŸ‘']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
+                            onClick={() => handleToggleReaction(comment.id, '👍')}
+                            className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
                             title="Like"
                           >
                             <ThumbsUp className="w-3.5 h-3.5" />
@@ -8301,7 +8319,7 @@ export function SubtaskDetailView({
     if (!parentTask?.id || !currentUser?.id) return;
     setShowEmojiPickerFor(null);
     try {
-      const res = await tasksApi.toggleCommentReaction(parentTask.id, commentId, emoji, currentUser.id);
+      const res = await tasksApi.toggleCommentReaction(parentTask.id, commentId, sanitizeEmoji(emoji), currentUser.id);
       setRichComments(prev => prev.map(c => {
         if (c.id === commentId) return { ...c, reactions: res.reactions };
         return {
@@ -9575,10 +9593,12 @@ export function SubtaskDetailView({
 
                   const cGroups: Record<string, { count: number; users: string[]; hasMe: boolean }> = {};
                   (c.reactions || []).forEach((r: any) => {
-                    if (!cGroups[r.emoji]) cGroups[r.emoji] = { count: 0, users: [], hasMe: false };
-                    cGroups[r.emoji].count++;
-                    cGroups[r.emoji].users.push(r.user?.name || '?');
-                    if (r.userId === currentUser?.id) cGroups[r.emoji].hasMe = true;
+                    const emoji = sanitizeEmoji(r.emoji);
+                      if (!emoji) return;
+                      if (!cGroups[emoji]) cGroups[emoji] = { count: 0, users: [], hasMe: false };
+                      cGroups[emoji].count++;
+                      cGroups[emoji].users.push(r.user?.name || '?');
+                      if (r.userId === currentUser?.id) cGroups[emoji].hasMe = true;
                   });
 
                   const isEditing = editingCommentId === c.id;
@@ -9723,8 +9743,8 @@ export function SubtaskDetailView({
                       {/* Action row */}
                       <div className="flex items-center gap-1 mt-1 pl-11 relative">
                         <button
-                          onClick={() => handleToggleReaction(c.id, 'ðŸ‘')}
-                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['ðŸ‘']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
+                          onClick={() => handleToggleReaction(c.id, '👍')}
+                          className={`flex items-center justify-center w-6 h-6 rounded hover:bg-accent cursor-pointer transition-colors ${cGroups['👍']?.hasMe ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground hover:text-foreground'}`}
                           title="Like"
                         >
                           <ThumbsUp className="w-3.5 h-3.5" />

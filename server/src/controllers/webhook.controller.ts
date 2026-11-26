@@ -12,7 +12,7 @@ import { applyAssistantToNexus, reconcileWithTools, SYNCED_ASSISTANT_FIELDS } fr
 import { getClickUpTask, clickupMarkdownToHtml, resolveClickUpListId, extractClickUpTaskId } from '../services/clickupService';
 import { scheduleListPull, auditorRoleFromTitle } from '../services/clickupSyncService';
 import { isReviewStatus } from '../utils/auditChecklist';
-import { queueAuditPick, saveAuditPicks } from '../services/aiAuditPicker';
+import { queueAuditPick, saveAuditPicks, toAuditItems } from '../services/aiAuditPicker';
 import { autoAssignAudits } from '../services/auditAutoAssign';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
@@ -84,6 +84,8 @@ const DEFAULT_CLIENT_STATUSES = [
   { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
   { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
   { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
+  { name: 'CRM Needed to Send', color: '#0284c7', groupName: 'Management' },
+  { name: 'CRM Needed to Follow Up', color: '#6366F1', groupName: 'Management' },
   { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
   { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
   { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress' },
@@ -511,9 +513,10 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
 
     // Audits the Galaxy AI picked become the task's Audit items (final: no title rules added).
     // Nexus-only, so no ClickUp checklist is created or matched for them. When Galaxy sent
-    // none (its AI step failed), ask the AI here.
-    if (Array.isArray(audits) && audits.length > 0) {
-      await saveAuditPicks({ taskId: newTask.id }, audits);
+    // none or only hidden ones (its AI step failed), ask the AI here.
+    const validAudits = Array.isArray(audits) ? toAuditItems(audits) : [];
+    if (validAudits.length > 0) {
+      await saveAuditPicks({ taskId: newTask.id }, validAudits);
     } else {
       queueAuditPick({ taskId: newTask.id });
     }
@@ -948,8 +951,8 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     io.emit('subtask_created', subtask);
 
     // The subtask's own audits: the ones Galaxy's AI picked, else ask the AI here.
-    const pickedAudits = req.body.audits;
-    if (Array.isArray(pickedAudits) && pickedAudits.length > 0) {
+    const pickedAudits = Array.isArray(req.body.audits) ? toAuditItems(req.body.audits) : [];
+    if (pickedAudits.length > 0) {
       await saveAuditPicks({ taskId: parentTask.id, subtaskId: subtask.id }, pickedAudits);
     } else {
       queueAuditPick({ taskId: parentTask.id, subtaskId: subtask.id });

@@ -57,7 +57,7 @@ export const NexusLogoLoader: React.FC<NexusLogoLoaderProps> = ({
       {/* Base unfilled silhouette */}
       <span
         style={MASK_STYLE}
-        className="absolute inset-0 bg-zinc-300/80 dark:bg-zinc-800"
+        className="absolute inset-0 bg-zinc-400/80 dark:bg-zinc-800 transition-colors"
       />
       {/* Rising colored fill */}
       <span

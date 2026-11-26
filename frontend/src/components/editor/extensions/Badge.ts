@@ -55,7 +55,8 @@ export const Badge = Mark.create({
     return {
       color: {
         default: null,
-        parseHTML: (element: HTMLElement) => element.getAttribute('data-badge') || element.style.backgroundColor || null,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute('data-badge') || element.getAttribute('databadge') || element.style.backgroundColor || null,
         rendered: false,
       },
       textColor: {
@@ -68,7 +69,10 @@ export const Badge = Mark.create({
 
   parseHTML() {
     // Above TextStyle's span[style] rule, so the badge's inline colour isn't also read as a text colour
-    return [{ tag: 'span[data-badge]', priority: 1000 }];
+    return [
+      { tag: 'span[data-badge]', priority: 1000 },
+      { tag: 'span[databadge]', priority: 1000 },
+    ];
   },
 
   renderHTML({ mark }) {

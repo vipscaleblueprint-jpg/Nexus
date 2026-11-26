@@ -191,6 +191,16 @@ function CommentSpan({ node, ...rest }: any) {
       );
     }
   }
+  const dataBadge = rest['data-badge'] || (rest as any).dataBadge || (node?.properties as any)?.['data-badge'] || (node?.properties as any)?.dataBadge;
+  if (dataBadge) {
+    return (
+      <span
+        {...rest}
+        data-badge={dataBadge}
+        className={`inline-block font-semibold rounded px-1.5 py-0.5 text-[12px] leading-tight align-baseline ${(rest as any).className || ''}`}
+      />
+    );
+  }
   return <span {...rest} />;
 }
 

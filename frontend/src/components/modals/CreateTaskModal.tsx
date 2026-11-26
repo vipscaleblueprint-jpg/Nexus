@@ -264,15 +264,21 @@ export function CreateTaskModal({ isOpen, onClose, status, listId, onSave }: Pro
             />
           </div>
 
-          {/* Submit Button */}
-          <button 
-            onClick={handleSave}
-            disabled={isSaving}
-            className="w-full mt-2 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 disabled:opacity-50 text-white text-sm font-bold rounded-md transition-opacity shadow-lg shadow-pink-500/10"
-          >
-            {isSaving ? <NexusLogoLoader size={16} inline /> : <Sparkles className="w-4 h-4" />}
-            Create Task
-          </button>
+          {/* Submit Button / Loading state */}
+          {isSaving ? (
+            <div className="w-full mt-2 py-3.5 flex flex-col items-center justify-center gap-2 rounded-md bg-zinc-900/80 border border-zinc-800 animate-in fade-in duration-150 select-none">
+              <NexusLogoLoader size={36} />
+              <span className="text-xs font-medium text-zinc-300 tracking-wide">Creating task...</span>
+            </div>
+          ) : (
+            <button 
+              onClick={handleSave}
+              className="w-full mt-2 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 text-white text-sm font-bold rounded-md transition-opacity shadow-lg shadow-pink-500/10 cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4" />
+              Create Task
+            </button>
+          )}
         </div>
       </div>
     </div>

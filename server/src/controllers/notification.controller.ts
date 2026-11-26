@@ -79,6 +79,19 @@ export async function getNotifications(req: Request, res: Response) {
     }
 
     const isBadgeOnlyPoll = take === 1 && !filter;
+
+    // Task Map notifications strictly follow the Task Map daily shift rollover:
+    // Only genuine new work assignments (Task Map assignment, Audit assignment, CRM alerts)
+    // created since today's Manila shift rollover (12:00 AM Manila) count towards the Task Map badge.
+    // Handover reminders and unassignments are strictly excluded.
+    const todayManilaStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const todayManilaStart = new Date(`${todayManilaStr}T00:00:00+08:00`);
+
     const [notifications, total, unreadCount, taskMapUnreadCount] = await Promise.all([
       prisma.taskNotification.findMany({
         where: whereClause,
@@ -107,15 +120,40 @@ export async function getNotifications(req: Request, res: Response) {
           userId: authReq.user.id,
           isCleared: false,
           isRead: false,
+          createdAt: { gte: todayManilaStart },
           AND: [
             { OR: forMeCondition },
             {
               OR: [
-                { title: { contains: 'on Task Map', mode: 'insensitive' } },
-                { title: { contains: 'on Auditor Map', mode: 'insensitive' } },
-                { title: { contains: 'on CRM Map', mode: 'insensitive' } },
+                {
+                  type: { equals: 'ASSIGNMENT', mode: 'insensitive' },
+                  OR: [
+                    { title: { contains: 'assigned you to', mode: 'insensitive' } },
+                    { title: { contains: 'on Task Map', mode: 'insensitive' } },
+                    { title: { contains: 'on Auditor Map', mode: 'insensitive' } },
+                    { title: { contains: 'on CRM Map', mode: 'insensitive' } },
+                  ],
+                },
+                {
+                  type: { equals: 'CHECKLIST_ITEM_ASSIGNED', mode: 'insensitive' },
+                },
+                {
+                  type: { equals: 'CRM_FOLLOW_UP_ALERT', mode: 'insensitive' },
+                },
+                {
+                  title: { contains: 'on Auditor Map', mode: 'insensitive' },
+                },
+                {
+                  title: { contains: 'on CRM Map', mode: 'insensitive' },
+                },
               ],
             },
+          ],
+          NOT: [
+            { type: { equals: 'UNASSIGNMENT', mode: 'insensitive' } },
+            { type: { equals: 'TASK_MAP_HANDOVER_REMINDER', mode: 'insensitive' } },
+            { title: { contains: 'unassigned you', mode: 'insensitive' } },
+            { title: { contains: 'was moved to Hand-over', mode: 'insensitive' } },
           ],
         },
       }),
@@ -379,3 +417,34 @@ export async function clearAll(req: Request, res: Response) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+// PATCH /api/notifications/read-task-map
+export async function markTaskMapAsRead(req: Request, res: Response) {
+  try {
+    const authReq = req as any;
+    if (!authReq.user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    await prisma.taskNotification.updateMany({
+      where: {
+        userId: authReq.user.id,
+        isRead: false,
+        OR: [
+          { type: { in: ['ASSIGNMENT', 'CHECKLIST_ITEM_ASSIGNED', 'CRM_FOLLOW_UP_ALERT', 'TASK_MAP_HANDOVER_REMINDER'] } },
+          { title: { contains: 'on Task Map', mode: 'insensitive' } },
+          { title: { contains: 'on Auditor Map', mode: 'insensitive' } },
+          { title: { contains: 'on CRM Map', mode: 'insensitive' } },
+        ],
+      },
+      data: { isRead: true },
+    });
+
+    io.to(`user:${authReq.user.id}`).emit('task_map_notifications_read');
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+

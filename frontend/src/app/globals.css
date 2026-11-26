@@ -848,12 +848,16 @@ input:disabled,
 
 /* Badge mark (editor "Badges"): a solid pill; its colours come inline from the editor. Clone the
    padding/radius onto every line when a badge wraps. */
-span[data-badge] {
+span[data-badge],
+span[databadge] {
   border-radius: 4px;
   padding: 1px 6px;
   font-weight: 600;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+  display: inline-block;
+  line-height: 1.4;
+  vertical-align: baseline;
 }
 
 @keyframes shake {

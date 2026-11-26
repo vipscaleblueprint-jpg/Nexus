@@ -1730,16 +1730,29 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // If this task was already completed or handed over today, reject the ghost row from resurrecting the task!
     let isGhostTrailingRow = false;
     if (incomingIsLive && (isHandedOverTask || isWorkflowOrReviewTask || isResumableFromSheet)) {
-      const recentCompletedLog = await prisma.dailySheetLog.findFirst({
-        where: {
-          dateKey: sessionDateStr,
-          maKey,
-          taskId: target.taskId,
-          isLive: false,
-          timeOut: { not: null },
-        },
-        orderBy: { submittedAt: 'desc' },
-      });
+      const existingOpenForRow = sheet_row
+        ? await prisma.dailySheetLog.findFirst({
+            where: {
+              dateKey: sessionDateStr,
+              maKey,
+              sheetRow: Number(sheet_row),
+              timeOut: null,
+            },
+            select: { id: true },
+          })
+        : null;
+      const recentCompletedLog = !existingOpenForRow
+        ? await prisma.dailySheetLog.findFirst({
+            where: {
+              dateKey: sessionDateStr,
+              maKey,
+              taskId: target.taskId,
+              isLive: false,
+              timeOut: { not: null },
+            },
+            orderBy: { submittedAt: 'desc' },
+          })
+        : null;
       if (recentCompletedLog?.timeOut) {
         const prevTimeOutNorm = cleanTimeString(recentCompletedLog.timeOut);
         const hasNewDeliverables = Boolean(

@@ -38,6 +38,7 @@ import { UserMentionChip } from '../ui/UserMentionChip';
 import { triggerMentionConfetti, preloadMentionConfettiImage } from '../ui/MentionConfetti';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { LinkWithPreview } from '../ui/LinkHoverPreview';
+import { CommentLinkChip } from '@/components/ui/CommentLinkChip';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl, matchMentionTrigger, matchSlashCommandTrigger } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { CrmTaskFollowUpModal } from './CrmTaskFollowUpModal';
@@ -1714,6 +1715,7 @@ export function TaskDetailModalContent({
         return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
+      if (nexus?.commentId) return <CommentLinkChip commentId={nexus.commentId} href={normalizeHref(href)} />;
       if (nexus) {
         return (
           <TaskMentionChip
@@ -7285,6 +7287,7 @@ export function SubtaskDetailView({
         return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
+      if (nexus?.commentId) return <CommentLinkChip commentId={nexus.commentId} href={normalizeHref(href)} />;
       if (nexus) {
         return (
           <TaskMentionChip

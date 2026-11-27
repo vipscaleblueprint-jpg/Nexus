@@ -437,6 +437,7 @@ export interface NexusTaskLinkInfo {
   subtaskId?: string;
   listId?: string;
   isSubtask: boolean;
+  commentId?: string;
   originalUrl: string;
 }
 
@@ -515,6 +516,7 @@ export function parseNexusTaskLink(input: string | null | undefined): NexusTaskL
     subtaskId: subtaskId || undefined,
     listId,
     isSubtask,
+    commentId: url.searchParams.get('comment') || undefined,
     originalUrl: trimmed,
   };
 }

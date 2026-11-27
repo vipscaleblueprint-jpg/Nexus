@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Clock, FileCheck, Send, ArrowRight, Sparkles, AlertCircle } from 'lucide-react';
+import { X, Clock, FileCheck, Send, Sparkles, AlertCircle } from 'lucide-react';
 import { formatManilaTime } from '@/api/taskMap';
 import { NexusFullScreenLoader } from '@/components/ui/NexusLogo';
 import { evaluateDeliverableDescription } from '@/lib/deliverablesQuality';
@@ -117,19 +117,13 @@ export function TaskDeliverablesModal({
   if (!isOpen) return null;
 
   const compactTarget = targetStatus.toLowerCase().replace(/[\s_-]+/g, '');
-  const isAvailableTask = compactTarget === 'availabletask';
-  const isHandover = compactTarget === 'handover';
+  const isHandover =
+    compactTarget === 'handover' ||
+    compactTarget === 'handoverout' ||
+    compactTarget === 'handoverin';
   const isPaused = compactTarget === 'paused';
   const isToReview = compactTarget === 'toreview' || compactTarget === 'inreview';
-  const hasUpdateSectionInput = useMemo(
-    () => hasFilledUpdateSection(updateAndDeliverables),
-    [updateAndDeliverables]
-  );
-  const activeError =
-    quality.blockReason ||
-    (!hasUpdateSectionInput
-      ? 'Fill at least 1 section (Action Done / Resources / Still To Do)'
-      : null);
+  const activeError = quality.blockReason || null;
   const statusBadgeColor = isHandover
     ? 'bg-sky-500/15 border-sky-500/35 text-sky-300'
     : isPaused
@@ -154,11 +148,9 @@ export function TaskDeliverablesModal({
     : isHandover
       ? 'Submitting handover deliverables...'
       : 'Submitting deliverables & clocking out...';
-  const targetBadgeLabel = isPaused ? 'Paused → Queue' : targetStatus;
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting || !quality.isSubmittable || !hasUpdateSectionInput) return;
+    if (isSubmitting || !quality.isSubmittable) return;
 
     try {
       setIsSubmitting(true);
@@ -199,12 +191,6 @@ export function TaskDeliverablesModal({
                   <Clock className="size-3 text-amber-400 shrink-0" />
                   <span>{timeIn ? `${timeIn} - ${currentTimeOut}` : currentTimeOut}</span>
                 </p>
-                {!isAvailableTask && (
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${statusBadgeColor}`}>
-                    <ArrowRight className="size-2.5 shrink-0" />
-                    {targetBadgeLabel}
-                  </span>
-                )}
               </div>
             </div>
           </div>
@@ -264,10 +250,9 @@ export function TaskDeliverablesModal({
               <label className="block text-xs font-semibold text-zinc-200">
                 Task Update and Deliverables:
               </label>
-              <span className="text-[10px] text-zinc-500">Required</span>
+              <span className="text-[10px] text-zinc-500">Optional</span>
             </div>
             <textarea
-              required
               rows={10}
               value={updateAndDeliverables}
               onChange={(e) => setUpdateAndDeliverables(e.target.value)}
@@ -288,12 +273,8 @@ export function TaskDeliverablesModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !deliverablesDescription.trim() || !updateAndDeliverables.trim() || !quality.isSubmittable || !hasUpdateSectionInput}
-              title={
-                !hasUpdateSectionInput
-                  ? 'Fill in at least 1 section (Action Done, Resources, or Still To Do)'
-                  : quality.blockReason || undefined
-              }
+              disabled={isSubmitting || !deliverablesDescription.trim() || !quality.isSubmittable}
+              title={quality.blockReason || undefined}
               className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${submitButtonClass}`}
             >
               <Send className="size-3.5" />

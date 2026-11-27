@@ -122,10 +122,7 @@ export async function revokeInvitation(req: AuthRequest, res: Response) {
       return res.status(404).json({ error: 'Invitation not found' });
     }
 
-    await prisma.invitation.update({
-      where: { id },
-      data: { status: 'REVOKED' },
-    });
+    await prisma.invitation.delete({ where: { id } });
 
     return res.json({ message: 'Invitation revoked successfully' });
   } catch (err: any) {

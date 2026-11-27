@@ -2810,6 +2810,19 @@ async function executeTaskMapAssignment(
     });
     const actorName = actorUser?.name || user.name || user.email || 'Team Member';
 
+    // MAs must start their To Do in hierarchy order (hand-over urgent, urgent, hand-over high, high, ...)
+    if (!isPm && mode === 'IN_PROGRESS') {
+      const { findHigherPriorityQueued } = await import('../services/autoQueue/autoQueueService');
+      const blocker = await findHigherPriorityQueued(user.id, id);
+      if (blocker) {
+        return res.status(409).json({
+          error: `Start "${blocker.title}" (${blocker.tier}) first. Tasks must be worked in priority order.`,
+          code: 'PRIORITY_ORDER',
+          blockingTaskId: blocker.id,
+        });
+      }
+    }
+
     const target = parseTaskMapTargetId(id);
 
     if (target.isSubtask) {

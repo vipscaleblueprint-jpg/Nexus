@@ -32,13 +32,6 @@ async function resolveGalaxyActor(req: AuthRequest, res: Response) {
     return null;
   }
 
-  if (user.employmentType === 'INTERN' && user.systemRole !== 'ADMIN') {
-    res.status(403).json({
-      error: "You don't have permission to create Galaxy tasks (tasks.manage).",
-    });
-    return null;
-  }
-
   return {
     ...user,
     listedBy: user.name?.trim() || user.email,

@@ -52,6 +52,7 @@ import {
   AUTO_QUEUE_3PM_JOB,
   AUTO_QUEUE_5PM_JOB,
   AUTO_QUEUE_8PM_JOB,
+  AUTO_QUEUE_10PM_JOB,
 } from './workers/autoQueue.worker';
 import { checkAndRunRecurringTasks } from './services/recurringTaskService';
 
@@ -183,6 +184,13 @@ const server = http.createServer(app);
     attempts: 5,
     backoff: { type: 'fixed', delay: 2 * 60 * 1000 },
   });
+  // 10:00 PM Manila: second night queue fill.
+  await autoQueueQueue.add(AUTO_QUEUE_10PM_JOB, {}, {
+    repeat: { pattern: '0 22 * * *', tz: 'Asia/Manila' },
+    jobId: 'task-map-auto-queue-10pm',
+    attempts: 5,
+    backoff: { type: 'fixed', delay: 2 * 60 * 1000 },
+  });
 
   // Safety net for the journal auto-append (appendMissingTasksToJournal), every 5 minutes. Kept in Redis, so a
   // server restart doesn't lose it.
@@ -193,36 +201,35 @@ const server = http.createServer(app);
     removeOnFail: 50,
   });
 
-  // Shift audit assignments (Manila UTC+8):
-  // 8:00 AM Morning Shift Auto-Assign Sweep
-  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'AM' }, {
-    repeat: {
-      pattern: '0 8 * * *',
-      tz: 'Asia/Manila',
-    },
-    jobId: 'shift-audit-am',
-    removeOnFail: 50,
-  });
-
-  // 12:00 PM Afternoon Shift Add & Update Sweep (Cherilyn, Gie, etc.)
-  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'PM_AFTERNOON' }, {
-    repeat: {
-      pattern: '0 12 * * *',
-      tz: 'Asia/Manila',
-    },
-    jobId: 'shift-audit-pm-afternoon',
-    removeOnFail: 50,
-  });
-
-  // 5:00 PM Night Shift Add & Update Sweep
-  await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: 'PM_NIGHT' }, {
-    repeat: {
-      pattern: '0 17 * * *',
-      tz: 'Asia/Manila',
-    },
-    jobId: 'shift-audit-pm-night',
-    removeOnFail: 50,
-  });
+  // Shift audit assignments (Manila UTC+8), same triggers as the Task Map auto-queue:
+  // 5 AM, 10 AM, 1 PM, 3 PM, 5 PM, 8 PM, 10 PM. Each sweep runs for the shift working at that time.
+  const SHIFT_AUDIT_TRIGGERS: Array<{ hour: number; shift: string; jobId: string }> = [
+    { hour: 5, shift: 'AM', jobId: 'shift-audit-5am' },
+    { hour: 10, shift: 'AM', jobId: 'shift-audit-10am' },
+    { hour: 13, shift: 'PM_AFTERNOON', jobId: 'shift-audit-1pm' },
+    { hour: 15, shift: 'PM_AFTERNOON', jobId: 'shift-audit-3pm' },
+    { hour: 17, shift: 'PM_NIGHT', jobId: 'shift-audit-pm-night' },
+    { hour: 20, shift: 'PM_NIGHT', jobId: 'shift-audit-8pm' },
+    { hour: 22, shift: 'PM_NIGHT', jobId: 'shift-audit-pm-night-10pm' },
+  ];
+  try {
+    // Re-register the fixed-time sweeps from scratch each startup (drops retired times like 8 AM / 12 PM
+    // and any duplicates); the 5-minute catch-up (no pattern) is kept.
+    for (const job of await dailyRolloverQueue.getRepeatableJobs()) {
+      if (job.name === SHIFT_AUDIT_JOB && job.pattern) {
+        await dailyRolloverQueue.removeRepeatableByKey(job.key);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to clean up retired shift audit repeatable jobs');
+  }
+  for (const t of SHIFT_AUDIT_TRIGGERS) {
+    await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, { shift: t.shift }, {
+      repeat: { pattern: `0 ${t.hour} * * *`, tz: 'Asia/Manila' },
+      jobId: t.jobId,
+      removeOnFail: 50,
+    });
+  }
 
   // Catch-up sweep every 5 minutes for tasks currently IN REVIEW
   await dailyRolloverQueue.add(SHIFT_AUDIT_JOB, {}, {

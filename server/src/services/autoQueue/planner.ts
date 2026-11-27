@@ -62,7 +62,20 @@ const clientOf = (it: BoardItem) => (it.list?.name || '').trim();
 const clientIdOf = (it: BoardItem) => it.listId || it.list?.id || '';
 
 /** userId -> client (list id) -> how many of that client's tasks the person has commented on before. */
+/** Also holds `taskHistoryKey(taskId)` entries: tasks the person has commented on (worked on) before. */
 export type ClientHistory = Map<string, Map<string, number>>;
+
+export const taskHistoryKey = (taskId: string) => `task:${taskId}`;
+
+/** The Task row a board item belongs to (a subtask's parent task). */
+const taskRowIdOf = (it: BoardItem) => (it.isSubtask ? it.parentTaskId || '' : it.id);
+
+/** Worked on this task before: its original MA, or commented on it (or its parent task). */
+function isCollaborator(userId: string, task: BoardItem, history?: ClientHistory): boolean {
+  if (userId === originalMaId(task)) return true;
+  const rowId = taskRowIdOf(task);
+  return Boolean(rowId && history?.get(userId)?.has(taskHistoryKey(rowId)));
+}
 
 function originalMaId(task: BoardItem): string | null {
   const reviews = Array.isArray(task.taskMap?.pmReviews) ? task.taskMap!.pmReviews : [];
@@ -222,6 +235,11 @@ export interface DailyPlanInput {
   clientHistory?: ClientHistory;
   /** When true, only workers who currently have at least one task In Progress receive work. */
   requireInProgress?: boolean;
+  /**
+   * Handovers: prefer collaborators (people who worked on this task before) over people who only
+   * worked the client before. Role match still applies (canUserTakeTask) and the task must fit their time.
+   */
+  preferCollaborators?: boolean;
 }
 
 export interface MaDaySummary {
@@ -312,7 +330,12 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
     // as long as it fits their day; only fall back to everyone else when none of them has room.
     const doneBefore = (c: Candidate) => input.clientHistory?.get(c.user.id)?.get(clientIdOf(task)) || 0;
     const familiar = fits.filter((c) => doneBefore(c) > 0);
-    const pickable = familiar.length > 0 ? familiar : fits.length > 0 ? fits : ranked.slice(0, 3);
+    const collaborators = input.preferCollaborators
+      ? fits.filter((c) => isCollaborator(c.user.id, task, input.clientHistory))
+      : [];
+    const pickable =
+      collaborators.length > 0 ? collaborators : familiar.length > 0 ? familiar : fits.length > 0 ? fits : ranked.slice(0, 3);
+    const chosenIsCollaborator = (c: Candidate) => collaborators.includes(c);
 
     const ai = await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
     const chosen = ai?.candidate || pickable[0];
@@ -325,7 +348,9 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       method: ai ? 'ai' : 'rules',
       reason: ai
         ? ai.reason
-        : doneBefore(chosen) > 0
+        : chosenIsCollaborator(chosen)
+          ? `Collaborator: worked on this task before; ${lightest}`
+          : doneBefore(chosen) > 0
           ? `Worked ${clientOf(task) || 'this client'} before (commented on ${doneBefore(chosen)} task${doneBefore(chosen) === 1 ? '' : 's'}); ${lightest}`
           : `${familiar.length === 0 && fits.length > 0 && input.clientHistory ? 'No one free has worked this client before; ' : ''}${lightest[0].toUpperCase()}${lightest.slice(1)}`,
       hours,
@@ -428,7 +453,8 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
       if (!item || isBoardItemStarted(item)) continue;
       const isAuto = autoQueuedTo(item, input.botId) === user.id;
       const isHo = isHandedOver(item);
-      if (isAuto || isHo) {
+      const isSigningOut = Boolean(input.morningSigningOut) && (userGroup === 'morning' || remHours === 0);
+      if (isSigningOut || isAuto || isHo) {
         candidates.push(item);
         candidateFrom.set(item.id, user.id);
       } else {
@@ -448,7 +474,12 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
 
   const toCandidates = usersInGroup(input.users, input.shifts, input.to);
   const toUsers = input.requireInProgress
-    ? toCandidates.filter((u) => hasTaskInProgress(u, input.boardItems))
+    ? toCandidates.filter((u) => {
+        // At 5 PM turnover, incoming night workers are just starting their shift, so
+        // they may not have an in-progress task yet; noon workers (midway) must be active.
+        if (input.morningSigningOut && shiftGroupOf(u, input.shifts) === 'night') return true;
+        return hasTaskInProgress(u, input.boardItems);
+      })
     : toCandidates;
   const candidateIds = new Set(candidates.map((c) => c.id));
   const dist = await planDailyDistribution({
@@ -461,7 +492,8 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
     requireRoom: true,
     capacityHours: (u) => remainingShiftHours(u, input.shifts, input.minuteOfDay),
     clientHistory: input.clientHistory,
-    requireInProgress: input.requireInProgress,
+    requireInProgress: false,
+    preferCollaborators: true,
   });
 
   const handovers: Decision[] = dist.decisions.map((d) => ({

@@ -167,12 +167,6 @@ export function getFolderColor(folder?: { id?: string; name?: string; color?: st
 
 const VIPSCALE_BASE = 'https://tools.vipscaleph.com';
 
-// Lazy-loaded on demand when the user clicks "+ Add Task" — never preloaded on mount.
-const GalaxyTaskModal = dynamic(
-  () => import('@/components/modals/GalaxyTaskModal').then((m) => m.GalaxyTaskModal),
-  { ssr: false }
-);
-
 // ─── Tree preferences (kept in this browser) ─────────────────────────────────
 // Which folders/spaces are open and how each one is sorted survive a reload.
 
@@ -948,7 +942,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
   const searchParams = useSearchParams();
   const filterParam = searchParams?.get('filter');
 
-  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, isMobileSidebarOpen, setMobileSidebarOpen, unreadNotifications, taskMapUnreadCount, activeDashboardTab } = useAppStore();
+  const { currentUser, spaces: globalSpaces, allDocs, loadSpaces: globalLoadSpaces, isSidebarCollapsed: collapsed, isMobileSidebarOpen, setMobileSidebarOpen, unreadNotifications, taskMapUnreadCount, activeDashboardTab, openGalaxyModal } = useAppStore();
   const spaces = globalSpaces.length > 0 ? globalSpaces : initialSpaces;
 
   // ── Resizable & Collapsible Nexus sub-sidebar (persisted per user) ──
@@ -1360,7 +1354,6 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
 
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [isGalaxyTaskModalOpen, setIsGalaxyTaskModalOpen] = useState(false);
   const [isAddInvitationOpen, setIsAddInvitationOpen] = useState(false);
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
@@ -1617,7 +1610,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
               <div className="flex-1 overflow-y-auto px-1.5 py-2 flex flex-col items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setIsGalaxyTaskModalOpen(true)}
+                  onClick={() => openGalaxyModal({ mode: 'task' })}
                   title="Add Task via Galaxy"
                   className="flex items-center justify-center size-8 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-sm transition-all cursor-pointer"
                 >
@@ -1693,7 +1686,7 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
             <div className="flex-1 overflow-y-auto px-2 py-2 space-y-px">
             <button
               type="button"
-              onClick={() => setIsGalaxyTaskModalOpen(true)}
+              onClick={() => openGalaxyModal({ mode: 'task' })}
               className="flex items-center justify-center w-full py-2 px-3 mb-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-medium text-xs sm:text-sm shadow-sm hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer group select-none"
               title="Add Task via Galaxy"
             >
@@ -1876,12 +1869,6 @@ export function Sidebar({ spaces: initialSpaces = [], userRoster = [] }: Sidebar
       })()}
       
       {/* Modals */}
-      {isGalaxyTaskModalOpen && (
-        <GalaxyTaskModal
-          isOpen={isGalaxyTaskModalOpen}
-          onClose={() => setIsGalaxyTaskModalOpen(false)}
-        />
-      )}
       <InviteModal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} />
       <AddInvitationModal isOpen={isAddInvitationOpen} onClose={() => setIsAddInvitationOpen(false)} onSuccess={() => {}} />
       <CreateSpaceModal isOpen={isCreateSpaceOpen} onClose={() => setIsCreateSpaceOpen(false)} onSuccess={loadSpaces} />

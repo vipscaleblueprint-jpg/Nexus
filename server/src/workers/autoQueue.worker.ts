@@ -17,6 +17,8 @@ export const AUTO_QUEUE_3PM_JOB = 'taskMapAutoQueue3pm';
 export const AUTO_QUEUE_5PM_JOB = 'taskMapAutoQueue5pm';
 /** 8:00 PM Manila: night active/late workers queue fill. */
 export const AUTO_QUEUE_8PM_JOB = 'taskMapAutoQueue8pm';
+/** 10:00 PM Manila: second night active/late workers queue fill. */
+export const AUTO_QUEUE_10PM_JOB = 'taskMapAutoQueue10pm';
 
 // Active by default unless AUTO_QUEUE_MODE=off (see services/autoQueue/config.ts).
 export const autoQueueWorker = new Worker(
@@ -32,9 +34,15 @@ export const autoQueueWorker = new Worker(
         leftInPool: result.skippedTasks.length,
       };
     }
-    if (job.name === AUTO_QUEUE_10AM_JOB || job.name === AUTO_QUEUE_3PM_JOB || job.name === AUTO_QUEUE_8PM_JOB) {
+    if (
+      job.name === AUTO_QUEUE_10AM_JOB ||
+      job.name === AUTO_QUEUE_3PM_JOB ||
+      job.name === AUTO_QUEUE_8PM_JOB ||
+      job.name === AUTO_QUEUE_10PM_JOB
+    ) {
       const group = job.name === AUTO_QUEUE_10AM_JOB ? 'morning' : job.name === AUTO_QUEUE_3PM_JOB ? 'noon' : 'night';
-      const label = job.name === AUTO_QUEUE_10AM_JOB ? '10am' : job.name === AUTO_QUEUE_3PM_JOB ? '3pm' : '8pm';
+      const label =
+        job.name === AUTO_QUEUE_10AM_JOB ? '10am' : job.name === AUTO_QUEUE_3PM_JOB ? '3pm' : job.name === AUTO_QUEUE_10PM_JOB ? '10pm' : '8pm';
       const result = await runActiveShiftQueue(group, label);
       return {
         mode: result.mode,

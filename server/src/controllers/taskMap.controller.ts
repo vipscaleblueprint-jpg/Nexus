@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
@@ -773,6 +774,68 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
+    const kycPinboardExclusion = ['KYC', 'PIN BOARD', 'PINBOARD'].map((s) => ({
+      status: { equals: s, mode: 'insensitive' as const },
+    }));
+    const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
+      status: { equals: s, mode: 'insensitive' as const },
+    }));
+    const taskInclude = {
+      list: {
+        select: {
+          id: true,
+          name: true,
+          folder: { select: { id: true, name: true } },
+          // statuses are attached below from one per-list query: loading them per task repeated each
+          // list's statuses for every task and was most of this query's time.
+        },
+      },
+      assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+      assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+      creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      subtasks: {
+        where: { completed: false },
+        include: {
+          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          checklists: {
+            where: { name: { equals: 'Audit', mode: 'insensitive' as const } },
+            include: { items: true },
+          },
+        },
+        orderBy: { createdAt: 'asc' as const },
+      },
+      checklists: {
+        // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
+        where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' as const } },
+        include: { items: true },
+      },
+      _count: {
+        select: {
+          subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' as const } } } },
+        },
+      },
+    } satisfies Prisma.TaskInclude;
+    const taskOrderBy: Prisma.TaskOrderByWithRelationInput[] = [{ position: 'asc' }, { createdAt: 'desc' }];
+
+    // Open tasks don't depend on the records query, so start them right away (they're the slowest query).
+    const openTasksPromise = prisma.task.findMany({
+      where: { AND: [{ NOT: { OR: kycPinboardExclusion } }, { NOT: { OR: closedOrExcludedFilters } }] },
+      include: taskInclude,
+      orderBy: taskOrderBy,
+    });
+    openTasksPromise.catch(() => {}); // awaited below; avoid an unhandled rejection if an earlier query fails first
+    const listStatusesPromise = prisma.list.findMany({
+      select: {
+        id: true,
+        statuses: {
+          select: { name: true, color: true, groupName: true, order: true },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+    listStatusesPromise.catch(() => {});
+
     // Fetch TaskMap records (active/open tasks + at most 60 most recently updated closed CRM records)
     // in parallel with metadata (options, shifts, users, roles, teams, today's daily sheet index)
     const [
@@ -842,71 +905,38 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    const kycPinboardExclusion = ['KYC', 'PIN BOARD', 'PINBOARD'].map((s) => ({
-      status: { equals: s, mode: 'insensitive' as const },
-    }));
-    const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
-      status: { equals: s, mode: 'insensitive' as const },
-    }));
-
-    // Fetch open tasks (plus bounded recent closed CRM-tagged tasks) and resolve shift users in parallel
-    const [tasks, shiftUsers] = await Promise.all([
-      prisma.task.findMany({
-        where: {
-          AND: [
-            { NOT: { OR: kycPinboardExclusion } },
-            closedCrmCandidateTaskIds.length > 0
-              ? {
-                  OR: [
-                    { NOT: { OR: closedOrExcludedFilters } },
-                    { id: { in: closedCrmCandidateTaskIds } },
-                  ],
-                }
-              : { NOT: { OR: closedOrExcludedFilters } },
-          ],
-        },
-        include: {
-          list: {
-            select: {
-              id: true,
-              name: true,
-              folder: { select: { id: true, name: true } },
-              statuses: {
-                select: { name: true, color: true, groupName: true, order: true },
-                orderBy: { order: 'asc' },
-              },
+    // Open tasks (started above) plus the bounded recent closed CRM-tagged tasks, and shift users, in parallel
+    const [openTaskRows, closedCrmTasks, listStatuses, shiftUsers] = await Promise.all([
+      openTasksPromise,
+      closedCrmCandidateTaskIds.length > 0
+        ? prisma.task.findMany({
+            where: {
+              AND: [
+                { NOT: { OR: kycPinboardExclusion } },
+                { OR: closedOrExcludedFilters },
+                { id: { in: closedCrmCandidateTaskIds } },
+              ],
             },
-          },
-          assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
-          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
-          creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
-          subtasks: {
-            where: { completed: false },
-            include: {
-              User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-              assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-              checklists: {
-                where: { name: { equals: 'Audit', mode: 'insensitive' } },
-                include: { items: true },
-              },
-            },
-            orderBy: { createdAt: 'asc' },
-          },
-          checklists: {
-            // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
-            where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
-            include: { items: true },
-          },
-          _count: {
-            select: {
-              subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' } } } },
-            },
-          },
-        },
-        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
-      }),
+            include: taskInclude,
+          })
+        : Promise.resolve([]),
+      listStatusesPromise,
       resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts),
     ]);
+
+    const statusesByList = new Map(listStatuses.map((l) => [l.id, l.statuses]));
+    const tasks = closedCrmTasks.length > 0 ? [...openTaskRows, ...closedCrmTasks] : openTaskRows;
+    if (closedCrmTasks.length > 0) {
+      // Same order the single query used: position asc, then newest first
+      tasks.sort(
+        (a, b) =>
+          (a.position === b.position ? 0 : (a.position ?? Infinity) - (b.position ?? Infinity)) ||
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    }
+    for (const task of tasks as any[]) {
+      if (task.list) task.list.statuses = statusesByList.get(task.list.id) || [];
+    }
 
     // Options: filter out obsolete static Upwork options & internal client tags
     const options = rawOptions.filter((opt) => {

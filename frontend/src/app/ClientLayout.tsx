@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname, useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
@@ -23,6 +24,11 @@ import { applyTheme, getStoredTheme } from '@/lib/theme';
 import { playNotificationSound, preloadCustomSound } from '@/lib/soundNotification';
 import { initGlobalTaskNewTabListeners } from '@/lib/taskNavigation';
 import { normalizeAuditName, isNexusAuditChecklist } from '@/lib/auditChecklist';
+
+const GalaxyTaskModal = dynamic(
+  () => import('@/components/modals/GalaxyTaskModal').then((mod) => mod.GalaxyTaskModal),
+  { ssr: false },
+);
 
 // Global guard for browsers/Next.js devtools releasing inactive pointer capture
 if (typeof window !== 'undefined' && typeof Element !== 'undefined' && Element.prototype.releasePointerCapture) {
@@ -98,7 +104,18 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     loadDrafts,
     isMobileSidebarOpen,
     setMobileSidebarOpen,
+    isGalaxyModalOpen,
+    galaxyModalData,
+    closeGalaxyModal,
   } = useAppStore();
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      useAppStore.getState().openGalaxyModal(e?.detail);
+    };
+    window.addEventListener('nexus:open-galaxy-task', handler);
+    return () => window.removeEventListener('nexus:open-galaxy-task', handler);
+  }, []);
 
   // Track when spaces were last fetched so we don't refetch on every navigation.
   // Spaces are considered stale after 5 minutes.
@@ -777,6 +794,13 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <MobileBottomNav />
+      {isGalaxyModalOpen && (
+        <GalaxyTaskModal
+          isOpen={isGalaxyModalOpen}
+          onClose={closeGalaxyModal}
+          initialData={galaxyModalData}
+        />
+      )}
       <ToastContainer />
       <MentionConfetti />
       <DraftBeggingReminder />

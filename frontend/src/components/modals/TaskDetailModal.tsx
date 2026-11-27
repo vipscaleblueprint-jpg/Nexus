@@ -28,6 +28,7 @@ import { usersApi, tasksApi } from '@/api';
 import { draftsApi, TaskDraft } from '@/api/drafts';
 import { fetchListStatuses } from '@/lib/listStatusCache';
 import { SubtasksSection } from './SubtasksSection';
+import { openGalaxySubtaskForTask } from '@/lib/galaxyTask';
 import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
@@ -464,6 +465,23 @@ const renderTitleChangeActivity = (act: any, currentUserName?: string) => {
  * Normalizes comment text or HTML preview for reliable substring matching
  * regardless of HTML entities, mentions, image markdown tags, or surrounding whitespace.
  */
+function readCommentIdFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  return new URL(window.location.href).searchParams.get('comment');
+}
+
+function copyCommentLink(commentId: string, taskId?: string | null, subtaskId?: string | null) {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (taskId) url.searchParams.set('task', taskId);
+  if (subtaskId) url.searchParams.set('subtask', subtaskId);
+  else if (subtaskId === null) url.searchParams.delete('subtask');
+  url.searchParams.set('comment', commentId);
+  navigator.clipboard.writeText(url.toString())
+    .then(() => toast.success('Comment link copied'))
+    .catch(() => toast.error('Failed to copy link'));
+}
+
 export function normalizeCommentSearchText(str: string): string {
   if (!str) return '';
   return str
@@ -714,11 +732,13 @@ export function TaskDetailModalContent({
   listStatuses = [],
   workspaceRoles = [],
   mode = 'modal',
-  targetCommentId,
+  targetCommentId: targetCommentIdProp,
   targetCommentText,
   targetSubtaskId,
   scrollToComments,
 }: Props) {
+  const [urlCommentId] = useState<string | null>(() => (targetCommentIdProp ? null : readCommentIdFromUrl()));
+  const targetCommentId = targetCommentIdProp || urlCommentId;
   const router = useRouter();
 
   const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
@@ -5136,7 +5156,7 @@ export function TaskDetailModalContent({
 
               {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
                 <div className="my-1">
-                  <button onClick={() => setAddingSubtask(true)} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 px-2 py-1 hover:bg-zinc-800/50 rounded-md transition-colors text-xs font-medium cursor-pointer">
+                  <button onClick={() => openGalaxySubtaskForTask(task, allLists)} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 px-2 py-1 hover:bg-zinc-800/50 rounded-md transition-colors text-xs font-medium cursor-pointer">
                     <Plus className="w-3.5 h-3.5 shrink-0" /> Add subtask
                   </button>
                 </div>
@@ -5428,7 +5448,7 @@ export function TaskDetailModalContent({
                               >
                                 <Maximize2 className="w-3.5 h-3.5" />
                               </button>
-                              {comment.user?.id === currentUser?.id && (
+                              {(
                                 <Popover.Root>
                                   <Popover.Trigger asChild>
                                     <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
@@ -5444,6 +5464,12 @@ export function TaskDetailModalContent({
                                       }}
                                     >
                                       <Popover.Close asChild>
+                                        <button onClick={(e) => { copyCommentLink(comment.id, task?.id, null); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                          <Link2 className="w-3.5 h-3.5" /> Copy link
+                                        </button>
+                                      </Popover.Close>
+                                      {comment.user?.id === currentUser?.id && (<>
+                                      <Popover.Close asChild>
                                         <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
                                           <Pencil className="w-3.5 h-3.5" /> Edit
                                         </button>
@@ -5453,6 +5479,7 @@ export function TaskDetailModalContent({
                                           <Trash2 className="w-3.5 h-3.5" /> Delete
                                         </button>
                                       </Popover.Close>
+                                      </>)}
                                     </Popover.Content>
                                   </Popover.Portal>
                                 </Popover.Root>
@@ -6552,7 +6579,7 @@ export function SubtaskDetailView({
   listStatuses,
   workspaceTeams = [],
   mode = 'modal',
-  targetCommentId,
+  targetCommentId: targetCommentIdProp,
   targetCommentText,
   scrollToComments,
   initialReplyCommentId,
@@ -6582,6 +6609,8 @@ export function SubtaskDetailView({
   activityWidth?: number;
   onActivityWidthChange?: (width: number) => void;
 }) {
+  const [urlCommentId] = useState<string | null>(() => (targetCommentIdProp ? null : readCommentIdFromUrl()));
+  const targetCommentId = targetCommentIdProp || urlCommentId;
   const router = useRouter();
 
   const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
@@ -10166,7 +10195,7 @@ export function SubtaskDetailView({
                             >
                               <Maximize2 className="w-3.5 h-3.5" />
                             </button>
-                            {c.user?.id === currentUser?.id && (
+                            {(
                               <Popover.Root>
                                 <Popover.Trigger asChild>
                                   <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
@@ -10182,6 +10211,12 @@ export function SubtaskDetailView({
                                     }}
                                   >
                                     <Popover.Close asChild>
+                                      <button onClick={(e) => { e.stopPropagation(); copyCommentLink(c.id, parentTask?.id, subtask?.id); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                        <Link2 className="w-3.5 h-3.5" /> Copy link
+                                      </button>
+                                    </Popover.Close>
+                                    {c.user?.id === currentUser?.id && (<>
+                                    <Popover.Close asChild>
                                       <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
                                         <Pencil className="w-3.5 h-3.5" /> Edit
                                       </button>
@@ -10191,6 +10226,7 @@ export function SubtaskDetailView({
                                         <Trash2 className="w-3.5 h-3.5" /> Delete
                                       </button>
                                     </Popover.Close>
+                                    </>)}
                                   </Popover.Content>
                                 </Popover.Portal>
                               </Popover.Root>

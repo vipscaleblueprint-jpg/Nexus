@@ -186,6 +186,9 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
     if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
   });
 
+  // Video editing gets Production Audit, asset creation gets Design Audit: never both.
+  if (audits.has('Production Audit')) audits.delete('Design Audit');
+
   return Array.from(audits);
 };
 

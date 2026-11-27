@@ -21,6 +21,7 @@ import {
 import { RecurrencePausePreset } from '@/lib/types';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+import { openGalaxySubtaskForTask } from '@/lib/galaxyTask';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
@@ -1746,7 +1747,10 @@ export const KanbanCard = memo(function KanbanCard({
                 style={{ top: '1.25rem', width: 10 }}
               />
               <button
-                onClick={() => setIsAddingSubtask(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openGalaxySubtaskForTask(task, useAppStore.getState().allLists);
+                }}
                 className="ml-3 mt-1.5 flex items-center gap-2 text-zinc-500 dark:text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 hover:bg-zinc-800/30 rounded text-xs font-medium"
               >
                 <Plus className="w-3 h-3" /> Add Subtask

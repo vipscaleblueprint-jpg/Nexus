@@ -5,6 +5,7 @@ import { getRoles } from '@/api/roles';
 import { usersApi } from '@/api/users';
 import { draftsApi, TaskDraft } from '@/api/drafts';
 import { clearTaskMapApiCache, UpworkSession } from '@/api/taskMap';
+import type { GalaxyModalInitialData } from './galaxyTask';
 
 const SPACES_CACHE_KEY = 'nexus_spaces_cache';
 const TASKS_CACHE_KEY = 'nexus_tasks_cache';
@@ -237,6 +238,10 @@ interface AppState {
   setMobileActiveTab: (tab: 'my_tasks' | 'inbox' | 'home') => void;
   isMobileCreateOpen: boolean;
   setIsMobileCreateOpen: (open: boolean) => void;
+  isGalaxyModalOpen: boolean;
+  galaxyModalData: GalaxyModalInitialData | null;
+  openGalaxyModal: (data?: GalaxyModalInitialData) => void;
+  closeGalaxyModal: () => void;
 
   // Upwork Live Tracking & Clients
   activeUpworkSessions: UpworkSession[];
@@ -599,6 +604,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMobileActiveTab: (mobileActiveTab) => set({ mobileActiveTab }),
   isMobileCreateOpen: false,
   setIsMobileCreateOpen: (isMobileCreateOpen) => set({ isMobileCreateOpen }),
+  isGalaxyModalOpen: false,
+  galaxyModalData: null,
+  openGalaxyModal: (galaxyModalData) => set({ isGalaxyModalOpen: true, galaxyModalData: galaxyModalData || null }),
+  closeGalaxyModal: () => set({ isGalaxyModalOpen: false, galaxyModalData: null }),
   activeUpworkSessions: [],
   setActiveUpworkSessions: (sessions) =>
     set((state) => ({

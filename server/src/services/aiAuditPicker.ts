@@ -81,6 +81,8 @@ export function fallbackAudits(title: string): string[] {
     audits.add('Funnel Audit');
   }
   if (migration) audits.delete('Design Audit');
+  // Video editing gets Production Audit, asset creation gets Design Audit: never both.
+  if (audits.has('Production Audit')) audits.delete('Design Audit');
   return toAuditItems([...audits]);
 }
 

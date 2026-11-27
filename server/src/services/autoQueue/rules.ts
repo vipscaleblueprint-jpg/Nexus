@@ -370,19 +370,23 @@ export function orderPoolForQueue(pool: BoardItem[]): BoardItem[] {
     // Already started (e.g. handed over mid-work): queueing would reset it to Pending, so PMs place these
     .filter((t) => !isStarted(t))
     .slice()
-    .sort((a, b) => {
-      const pa = queueTier(a);
-      const pb = queueTier(b);
-      if (pa !== pb) return pa - pb;
-      const da = time(a.dueDate);
-      const db = time(b.dueDate);
-      if (!isNaN(da) || !isNaN(db)) {
-        if (isNaN(da)) return 1;
-        if (isNaN(db)) return -1;
-        if (da !== db) return da - db;
-      }
-      return (time(a.createdAt) || 0) - (time(b.createdAt) || 0);
-    });
+    .sort((a, b) => compareQueuePriority(a, b) || (time(a.createdAt) || 0) - (time(b.createdAt) || 0));
+}
+
+/**
+ * Which of two tasks comes first in a queue: higher tier first; within the same tier (e.g. all
+ * Urgent) the nearer due date first, and tasks with no due date last. 0 = equal priority.
+ */
+export function compareQueuePriority(a: BoardItem, b: BoardItem): number {
+  const pa = queueTier(a);
+  const pb = queueTier(b);
+  if (pa !== pb) return pa - pb;
+  const da = time(a.dueDate);
+  const db = time(b.dueDate);
+  if (isNaN(da) && isNaN(db)) return 0;
+  if (isNaN(da)) return 1;
+  if (isNaN(db)) return -1;
+  return da - db;
 }
 
 export interface Candidate {

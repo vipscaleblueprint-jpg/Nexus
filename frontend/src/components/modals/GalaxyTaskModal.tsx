@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -35,12 +35,14 @@ import {
   type GalaxyParentTaskOption,
   type GalaxyTaskPayload,
 } from '@/api/tasks';
+import type { GalaxyModalInitialData } from '@/lib/galaxyTask';
 
 type GalaxyMode = 'task' | 'subtask';
 
 interface GalaxyTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialData?: GalaxyModalInitialData | null;
 }
 
 const PRIORITY_OPTIONS = ['Urgent', 'High', 'Low'];
@@ -100,10 +102,10 @@ function isClientMatch(clientName: string, selectedClientName: string): boolean 
  * On-demand Galaxy Task & Subtask creation modal connected to VIPScale's Galaxy API.
  * Only fetches clients when opened, and only fetches parent tasks when switching to Subtask mode.
  */
-export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
+export function GalaxyTaskModal({ isOpen, onClose, initialData }: GalaxyTaskModalProps) {
   const router = useRouter();
 
-  const [mode, setMode] = useState<GalaxyMode>('task');
+  const [mode, setMode] = useState<GalaxyMode>(initialData?.mode || 'task');
 
   // On-demand remote options
   const [clients, setClients] = useState<GalaxyClientOption[]>([]);
@@ -123,15 +125,19 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
   const [complexityOpen, setComplexityOpen] = useState(false);
 
   // Form fields
-  const [clientName, setClientName] = useState('');
-  const [title, setTitle] = useState('');
-  const [taskLink, setTaskLink] = useState('');
+  const [clientName, setClientName] = useState(initialData?.clientName || '');
+  const [title, setTitle] = useState(initialData?.title || '');
+  const [taskLink, setTaskLink] = useState(initialData?.taskLink || '');
+  const [parentTaskName, setParentTaskName] = useState(initialData?.parentTaskName || '');
   const [link, setLink] = useState('');
-  const [priority, setPriority] = useState('');
-  const [complexity, setComplexity] = useState('');
-  const [goal, setGoal] = useState('');
-  const [prompt, setPrompt] = useState('');
+  const [priority, setPriority] = useState(initialData?.priority || '');
+  const [complexity, setComplexity] = useState(initialData?.complexity || '');
+  const [goal, setGoal] = useState(initialData?.goal || '');
+  const [prompt, setPrompt] = useState(initialData?.prompt || '');
   const [launchDate, setLaunchDate] = useState('');
+
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
+  const parentTasksRequestedRef = useRef(false);
 
   // Validation & submission state
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -246,6 +252,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
   const handleReset = useCallback(() => {
     setTitle('');
     setTaskLink('');
+    setParentTaskName('');
     setLink('');
     setPriority('');
     setComplexity('');
@@ -256,6 +263,85 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
     setFieldErrors({});
     setResultState({ status: 'idle' });
   }, []);
+
+  // Sync initialData when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const nextMode = initialData?.mode || 'task';
+      setMode(nextMode);
+      setClientName(initialData?.clientName || '');
+      setTitle(initialData?.title || '');
+      setTaskLink(initialData?.taskLink || '');
+      setParentTaskName(initialData?.parentTaskName || '');
+      setLink('');
+      setPriority(initialData?.priority || '');
+      setComplexity(initialData?.complexity || '');
+      setGoal(initialData?.goal || '');
+      setPrompt(initialData?.prompt || '');
+      setLaunchDate('');
+      setFieldErrors({});
+      setResultState({ status: 'idle' });
+
+      if (nextMode === 'subtask' && !parentTasksRequestedRef.current) {
+        parentTasksRequestedRef.current = true;
+        loadParentTasks();
+      }
+
+      // Auto-focus prompt input: "we just gonna put the prompt"
+      const t = setTimeout(() => {
+        promptInputRef.current?.focus();
+      }, 120);
+      return () => clearTimeout(t);
+    }
+  }, [isOpen, initialData, loadParentTasks]);
+
+  // When clients load, match prefilled client name
+  useEffect(() => {
+    if (clients.length > 0 && clientName) {
+      const exact = clients.find((c) => c.name.toLowerCase() === clientName.toLowerCase());
+      if (exact) {
+        if (clientName !== exact.name) setClientName(exact.name);
+      } else {
+        const fuzzy = clients.find((c) => isClientMatch(clientName, c.name));
+        if (fuzzy && fuzzy.name !== clientName) {
+          setClientName(fuzzy.name);
+        }
+      }
+    }
+  }, [clients, clientName]);
+
+  // When parent tasks load, match taskLink or parentTaskName
+  useEffect(() => {
+    if (!isOpen || parentTasks.length === 0) return;
+
+    const pastedTaskId = extractClickUpTaskId(taskLink.trim());
+    let matchedParent = pastedTaskId
+      ? parentTasks.find((t) => extractClickUpTaskId(t.clickup_task_link) === pastedTaskId)
+      : undefined;
+
+    if (!matchedParent && parentTaskName) {
+      matchedParent = parentTasks.find(
+        (t) => t.task_name && t.task_name.trim().toLowerCase() === parentTaskName.trim().toLowerCase(),
+      );
+      if (matchedParent?.clickup_task_link && !pastedTaskId) {
+        setTaskLink(matchedParent.clickup_task_link);
+      }
+    }
+
+    if (matchedParent) {
+      if (matchedParent.task_name && !parentTaskName) {
+        setParentTaskName(matchedParent.task_name);
+      }
+      if (matchedParent.client_name && clients.length > 0) {
+        const matchedClient = clients.find(
+          (c) => c.name && isClientMatch(matchedParent.client_name, c.name),
+        );
+        if (matchedClient?.name && matchedClient.name !== clientName) {
+          setClientName(matchedClient.name);
+        }
+      }
+    }
+  }, [isOpen, parentTasks, taskLink, parentTaskName, clients, clientName]);
 
   useEffect(() => {
     if (resultState.status !== 'success') return;
@@ -272,6 +358,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
     setFieldErrors({});
     setResultState({ status: 'idle' });
     if (nextMode === 'subtask' && !hasLoadedParentTasks && !loadingParentTasks) {
+      parentTasksRequestedRef.current = true;
       loadParentTasks();
     }
   };
@@ -315,7 +402,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
       ...(goal.trim() ? { goal: goal.trim() } : {}),
       ...(priority ? { priority } : {}),
       ...(complexity ? { complexity } : {}),
-      ...(launchDate ? { launch_date: launchDate } : {}),
+      ...(mode === 'task' && launchDate ? { launch_date: launchDate } : {}),
     };
 
     setSubmitting(true);
@@ -386,19 +473,19 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
           exit={{ opacity: 0, scale: 0.97, y: 8 }}
           transition={{ type: 'spring', stiffness: 320, damping: 28 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden text-zinc-200 my-auto max-h-[92vh] flex flex-col"
+          className="w-full max-w-2xl bg-zinc-950 border border-purple-500/20 rounded-2xl shadow-2xl shadow-purple-500/10 overflow-hidden text-zinc-200 my-auto max-h-[92vh] flex flex-col"
         >
           {/* Header */}
-          <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between shrink-0 bg-zinc-950/60">
+          <div className="px-5 py-4 border-b border-purple-500/15 flex items-center justify-between shrink-0 bg-gradient-to-r from-purple-500/10 via-transparent to-pink-500/10">
             <div className="flex items-center gap-2.5">
-              <div className="size-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-md">
+              <div className="size-8 rounded-lg bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
                 <Rocket className="size-4 text-white" />
               </div>
               <div>
-                <h2 className="text-base font-semibold text-zinc-100 leading-tight">
+                <h2 className="text-lg font-bold leading-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
                   {mode === 'task' ? 'Create Galaxy Task' : 'Create Galaxy Subtask'}
                 </h2>
-                <p className="text-[11px] text-zinc-400">
+                <p className="text-xs text-purple-200/70">
                   {mode === 'task'
                     ? 'Start a fresh task for a client via VIPScale Galaxy'
                     : 'Add a sub-item to an existing ClickUp / Nexus task'}
@@ -412,7 +499,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                 onClick={handleReset}
                 disabled={submitting}
                 title="Reset form"
-                className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-40"
+                className="p-1.5 rounded-md text-zinc-400 hover:text-purple-400 hover:bg-purple-500/10 transition-colors cursor-pointer disabled:opacity-40"
               >
                 <RotateCcw className="size-4" />
               </button>
@@ -421,7 +508,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                 onClick={onClose}
                 disabled={submitting}
                 title="Close"
-                className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-40"
+                className="p-1.5 rounded-md text-zinc-400 hover:text-purple-400 hover:bg-purple-500/10 transition-colors cursor-pointer disabled:opacity-40"
               >
                 <X className="size-4" />
               </button>
@@ -429,14 +516,14 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
           </div>
 
           {/* Mode Tabs */}
-          <div className="px-5 pt-3 pb-2 border-b border-zinc-800/60 flex items-center gap-2 shrink-0 bg-zinc-950/30">
+          <div className="px-5 pt-3 pb-2 border-b border-purple-500/15 flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => handleModeChange('task')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                 mode === 'task'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70'
+                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-500/25'
+                  : 'text-zinc-400 hover:text-purple-300 hover:bg-purple-500/10'
               }`}
             >
               <Rocket className="size-3.5" />
@@ -447,8 +534,8 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
               onClick={() => handleModeChange('subtask')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                 mode === 'subtask'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70'
+                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-500/25'
+                  : 'text-zinc-400 hover:text-purple-300 hover:bg-purple-500/10'
               }`}
             >
               <GitBranch className="size-3.5" />
@@ -492,7 +579,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         Your {mode === 'subtask' ? 'subtask' : 'task'} has been synced to ClickUp and Nexus.
                       </p>
                       {resultState.assignedTeam && (
-                        <p className="text-xs font-semibold text-indigo-400 pt-1">
+                        <p className="text-xs font-semibold text-purple-400 pt-1">
                           Assigned to: {resultState.assignedTeam}
                         </p>
                       )}
@@ -523,7 +610,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                       <button
                         type="button"
                         onClick={() => setResultState({ status: 'idle' })}
-                        className="flex-1 px-4 py-2 rounded-lg border border-zinc-700 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
+                        className="flex-1 px-4 py-2 rounded-lg border border-zinc-700 text-sm font-medium text-purple-200 hover:bg-zinc-800 transition-colors cursor-pointer"
                       >
                         Back to Form
                       </button>
@@ -550,7 +637,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                 )}
               </div>
             ) : (
-              <form id="galaxy-task-form" onSubmit={handleSubmit} className="space-y-3.5">
+              <form id="galaxy-task-form" onSubmit={handleSubmit} className="space-y-5">
                 {clientsError && (
                   <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400 flex items-center justify-between gap-2">
                     <span>{clientsError}</span>
@@ -565,9 +652,9 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                 )}
 
                 {/* Client */}
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-zinc-200">
+                    <label className="text-sm font-medium text-purple-200">
                       Client <span className="text-pink-500">*</span>
                     </label>
                     <button
@@ -586,7 +673,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                       <button
                         type="button"
                         disabled={loadingClients}
-                        className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-left text-zinc-200 hover:border-zinc-700 focus:outline-none focus:border-indigo-500/70 transition-colors cursor-pointer disabled:opacity-60"
+                        className="w-full flex items-center justify-between bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-left text-zinc-200 hover:border-purple-500/50 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer disabled:opacity-60"
                       >
                         <span className={`truncate ${clientName ? 'text-zinc-100' : 'text-zinc-500'}`}>
                           {loadingClients ? 'Loading clients...' : clientName || 'Select a client'}
@@ -598,7 +685,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                       <Popover.Content
                         align="start"
                         sideOffset={4}
-                        className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-popover border border-zinc-800 rounded-lg shadow-2xl overflow-hidden outline-none"
+                        className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-zinc-950 border border-purple-500/20 rounded-lg shadow-2xl overflow-hidden outline-none"
                       >
                         <Command className="w-full">
                           <div className="border-b border-zinc-800 px-2.5 py-2">
@@ -626,10 +713,10 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                                     });
                                     setClientPopoverOpen(false);
                                   }}
-                                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 cursor-pointer data-[selected=true]:bg-zinc-800 data-[selected=true]:text-white"
+                                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 cursor-pointer data-[selected=true]:bg-purple-500/20 data-[selected=true]:text-white"
                                 >
                                   <Check
-                                    className={`size-3.5 text-indigo-400 shrink-0 ${
+                                    className={`size-3.5 text-purple-400 shrink-0 ${
                                       selected ? 'opacity-100' : 'opacity-0'
                                     }`}
                                   />
@@ -649,7 +736,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
 
                 {/* Task Title */}
                 <div className="space-y-1.5">
-                  <label htmlFor="galaxy-task-title" className="text-xs font-semibold text-zinc-200 block">
+                  <label htmlFor="galaxy-task-title" className="text-sm font-medium text-purple-200 block">
                     Task Title <span className="text-zinc-500 font-normal">(Optional)</span>
                   </label>
                   <input
@@ -658,13 +745,13 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Enter task title..."
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+                    className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40"
                   />
                 </div>
 
                 {/* Parent Task & Task Link (Subtask mode only) */}
                 {mode === 'subtask' && (
-                  <div className="space-y-3 p-3.5 rounded-xl border border-zinc-800 bg-zinc-950/50">
+                  <div className="space-y-3 p-3.5 rounded-xl border border-purple-500/20 bg-purple-500/5">
                     {parentTasksError && (
                       <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400 flex items-center justify-between gap-2">
                         <span>{parentTasksError}</span>
@@ -680,7 +767,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
 
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold text-zinc-200">
+                        <label className="text-sm font-medium text-purple-200">
                           Parent Task
                         </label>
                         <button
@@ -699,13 +786,13 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                           <button
                             type="button"
                             disabled={loadingParentTasks}
-                            className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-left text-zinc-200 hover:border-zinc-700 focus:outline-none focus:border-indigo-500/70 transition-colors cursor-pointer disabled:opacity-60"
+                            className="w-full flex items-center justify-between bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-left text-zinc-200 hover:border-purple-500/50 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer disabled:opacity-60"
                           >
                             <span className="truncate text-zinc-300">
                               {loadingParentTasks
                                 ? 'Loading parent tasks...'
                                 : filteredParentTasks.find((t) => t.clickup_task_link === canonicalTaskLink)
-                                    ?.task_name || 'Search parent tasks...'}
+                                    ?.task_name || parentTaskName || 'Search parent tasks...'}
                             </span>
                             <ChevronsUpDown className="size-4 text-zinc-500 shrink-0 ml-2" />
                           </button>
@@ -714,7 +801,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                           <Popover.Content
                             align="start"
                             sideOffset={4}
-                            className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-popover border border-zinc-800 rounded-lg shadow-2xl overflow-hidden outline-none"
+                            className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-zinc-950 border border-purple-500/20 rounded-lg shadow-2xl overflow-hidden outline-none"
                           >
                             <Command className="w-full">
                               <div className="border-b border-zinc-800 px-2.5 py-2">
@@ -736,12 +823,13 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                                       value={label}
                                       onSelect={() => {
                                         handleTaskLinkChange(t.clickup_task_link);
+                                        setParentTaskName(t.task_name);
                                         setParentPopoverOpen(false);
                                       }}
-                                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 cursor-pointer data-[selected=true]:bg-zinc-800 data-[selected=true]:text-white"
+                                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 cursor-pointer data-[selected=true]:bg-purple-500/20 data-[selected=true]:text-white"
                                     >
                                       <Check
-                                        className={`size-3.5 text-indigo-400 shrink-0 ${
+                                        className={`size-3.5 text-purple-400 shrink-0 ${
                                           selected ? 'opacity-100' : 'opacity-0'
                                         }`}
                                       />
@@ -757,7 +845,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label htmlFor="galaxy-parent-link" className="text-xs font-semibold text-zinc-200 block">
+                      <label htmlFor="galaxy-parent-link" className="text-sm font-medium text-purple-200 block">
                         Task Link / ClickUp Link <span className="text-pink-500">*</span>
                       </label>
                       <input
@@ -766,7 +854,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         value={taskLink}
                         onChange={(e) => handleTaskLinkChange(e.target.value)}
                         placeholder="https://app.clickup.com/t/..."
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+                        className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40"
                       />
                       {fieldErrors.task_link && (
                         <p className="text-xs text-pink-400">{fieldErrors.task_link}</p>
@@ -776,9 +864,9 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                 )}
 
                 {/* Link / Channel */}
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <label htmlFor="galaxy-link" className="text-xs font-semibold text-zinc-200">
+                    <label htmlFor="galaxy-link" className="text-sm font-medium text-purple-200">
                       Link / Channel <span className="text-zinc-500 font-normal">(Optional)</span>
                     </label>
                     <Popover.Root open={channelsOpen} onOpenChange={setChannelsOpen}>
@@ -796,7 +884,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         <Popover.Content
                           align="end"
                           sideOffset={4}
-                          className="z-[100001] w-48 bg-popover border border-zinc-800 rounded-lg shadow-xl p-1 outline-none"
+                          className="z-[100001] w-48 bg-zinc-950 border border-purple-500/20 rounded-lg shadow-xl p-1 outline-none"
                         >
                           {CHANNEL_OPTIONS.map((opt) => (
                             <button
@@ -806,7 +894,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                                 setLink(opt.value);
                                 setChannelsOpen(false);
                               }}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer text-left"
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-purple-500/20 hover:text-white transition-colors cursor-pointer text-left"
                             >
                               <opt.icon className="size-3.5 text-zinc-400 shrink-0" />
                               <span>{opt.label}</span>
@@ -822,21 +910,21 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                     value={link}
                     onChange={(e) => setLink(e.target.value)}
                     placeholder="https://example.com or WhatsApp, Slack, Telegram…"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+                    className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40"
                   />
                 </div>
 
                 {/* Priority & Complexity */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-zinc-200 block">
+                    <label className="text-sm font-medium text-purple-200 block">
                       Priority <span className="text-zinc-500 font-normal">(Optional)</span>
                     </label>
                     <Popover.Root open={priorityOpen} onOpenChange={setPriorityOpen}>
                       <Popover.Trigger asChild>
                         <button
                           type="button"
-                          className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-left hover:border-zinc-700 focus:outline-none focus:border-indigo-500/70 transition-colors cursor-pointer"
+                          className="w-full flex items-center justify-between bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-left hover:border-purple-500/50 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
                         >
                           <span className={priority ? 'text-zinc-100' : 'text-zinc-500'}>
                             {priority || 'Select priority'}
@@ -848,7 +936,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         <Popover.Content
                           align="start"
                           sideOffset={4}
-                          className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-popover border border-zinc-800 rounded-lg shadow-xl p-1 outline-none"
+                          className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-zinc-950 border border-purple-500/20 rounded-lg shadow-xl p-1 outline-none"
                         >
                           {PRIORITY_OPTIONS.map((opt) => (
                             <button
@@ -858,10 +946,10 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                                 setPriority(opt);
                                 setPriorityOpen(false);
                               }}
-                              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer text-left"
+                              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-purple-500/20 hover:text-white transition-colors cursor-pointer text-left"
                             >
                               <span>{opt}</span>
-                              {priority === opt && <Check className="size-3.5 text-indigo-400" />}
+                              {priority === opt && <Check className="size-3.5 text-purple-400" />}
                             </button>
                           ))}
                         </Popover.Content>
@@ -870,14 +958,14 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-zinc-200 block">
+                    <label className="text-sm font-medium text-purple-200 block">
                       Complexity <span className="text-zinc-500 font-normal">(Optional)</span>
                     </label>
                     <Popover.Root open={complexityOpen} onOpenChange={setComplexityOpen}>
                       <Popover.Trigger asChild>
                         <button
                           type="button"
-                          className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-left hover:border-zinc-700 focus:outline-none focus:border-indigo-500/70 transition-colors cursor-pointer"
+                          className="w-full flex items-center justify-between bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-left hover:border-purple-500/50 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
                         >
                           <span className={complexity ? 'text-zinc-100' : 'text-zinc-500'}>
                             {complexity || 'Select complexity'}
@@ -889,7 +977,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         <Popover.Content
                           align="start"
                           sideOffset={4}
-                          className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-popover border border-zinc-800 rounded-lg shadow-xl p-1 outline-none"
+                          className="z-[100001] w-[var(--radix-popover-trigger-width)] bg-zinc-950 border border-purple-500/20 rounded-lg shadow-xl p-1 outline-none"
                         >
                           {COMPLEXITY_OPTIONS.map((opt) => (
                             <button
@@ -899,10 +987,10 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                                 setComplexity(opt);
                                 setComplexityOpen(false);
                               }}
-                              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer text-left"
+                              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-purple-500/20 hover:text-white transition-colors cursor-pointer text-left"
                             >
                               <span>{opt}</span>
-                              {complexity === opt && <Check className="size-3.5 text-indigo-400" />}
+                              {complexity === opt && <Check className="size-3.5 text-purple-400" />}
                             </button>
                           ))}
                         </Popover.Content>
@@ -913,7 +1001,7 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
 
                 {/* Goal */}
                 <div className="space-y-1.5">
-                  <label htmlFor="galaxy-goal" className="text-xs font-semibold text-zinc-200 block">
+                  <label htmlFor="galaxy-goal" className="text-sm font-medium text-purple-200 block">
                     Goal{' '}
                     {mode === 'task' ? (
                       <span className="text-pink-500">*</span>
@@ -936,16 +1024,17 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                       }
                     }}
                     placeholder="What is this for, and where will it be used? e.g. Facebook ad for the Nov 5 webinar"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20"
+                    className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40"
                   />
                   {fieldErrors.goal && (
                     <p className="text-xs text-pink-400">{fieldErrors.goal}</p>
                   )}
                 </div>
 
-                {/* Launch date */}
+                {/* Launch date (task mode only) */}
+                {mode === 'task' && (
                 <div className="space-y-1.5">
-                  <label htmlFor="galaxy-launch-date" className="text-xs font-semibold text-zinc-200 block">
+                  <label htmlFor="galaxy-launch-date" className="text-sm font-medium text-purple-200 block">
                     Launch date <span className="text-zinc-500 font-normal">(Optional — sets the due date)</span>
                   </label>
                   <input
@@ -953,16 +1042,18 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                     type="date"
                     value={launchDate}
                     onChange={(e) => setLaunchDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 [color-scheme:dark]"
+                    className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40 [color-scheme:dark]"
                   />
                 </div>
+                )}
 
                 {/* Prompt */}
                 <div className="space-y-1.5">
-                  <label htmlFor="galaxy-prompt" className="text-xs font-semibold text-zinc-200 block">
+                  <label htmlFor="galaxy-prompt" className="text-sm font-medium text-purple-200 block">
                     Prompt <span className="text-pink-500">*</span>
                   </label>
                   <textarea
+                    ref={promptInputRef}
                     id="galaxy-prompt"
                     value={prompt}
                     onChange={(e) => {
@@ -975,8 +1066,18 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
                         });
                       }
                     }}
-                    placeholder="Describe the task details and requirements..."
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/20 min-h-[96px] resize-y"
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        submitForm();
+                      }
+                    }}
+                    placeholder={
+                      mode === 'subtask'
+                        ? 'Describe the subtask details, requirements, or instructions...'
+                        : 'Describe the task details and requirements...'
+                    }
+                    className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40 min-h-[110px] resize-y"
                   />
                   {fieldErrors.prompt && (
                     <p className="text-xs text-pink-400">{fieldErrors.prompt}</p>
@@ -987,11 +1088,11 @@ export function GalaxyTaskModal({ isOpen, onClose }: GalaxyTaskModalProps) {
           </div>
 
           {!submitting && resultState.status === 'idle' && (
-            <div className="px-5 py-3.5 border-t border-zinc-800/80 bg-zinc-950/60 shrink-0">
+            <div className="px-5 py-3.5 border-t border-purple-500/15 shrink-0">
               <button
                 type="submit"
                 form="galaxy-task-form"
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-sm font-semibold shadow-md transition-all cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-base font-bold shadow-lg shadow-purple-500/25 transition-all cursor-pointer"
               >
                 <Sparkles className="size-4" />
                 <span>{mode === 'subtask' ? 'Create Subtask' : 'Create Task'}</span>

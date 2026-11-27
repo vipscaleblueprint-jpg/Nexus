@@ -25,6 +25,7 @@ import {
   planDailyDistribution,
   type CheckpointPlan,
   type ClientHistory,
+  taskHistoryKey,
   type Decision,
   type DailyPlan,
   type PickFn,
@@ -40,6 +41,7 @@ import {
   isMaWorkItem,
   isStillMovable,
   queueTier,
+  compareQueuePriority,
   remainingShiftHours,
   resolveTaskRoles,
   usersInGroup,
@@ -142,6 +144,7 @@ async function loadClientHistory(botId: string): Promise<ClientHistory> {
     seen.add(key);
     const byClient = history.get(r.userId) || new Map<string, number>();
     byClient.set(listId, (byClient.get(listId) || 0) + 1);
+    byClient.set(taskHistoryKey(r.taskId), 1); // worked on this exact task (or its subtasks) before
     history.set(r.userId, byClient);
   }
   return history;
@@ -430,7 +433,7 @@ async function runGroupDistribution(
     defaultHours: config.defaultHours,
     pick: aiPicker(),
     clientHistory,
-    requireInProgress: opts.requireInProgress ?? true,
+    requireInProgress: opts.requireInProgress ?? false,
   });
   const decisions = await applyDecisions({
     decisions: plan.decisions,
@@ -452,13 +455,13 @@ export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode; re
   if (mode === 'off') {
     return { mode, skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
   }
-  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', { ...opts, requireInProgress: opts.requireInProgress ?? true }));
+  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', { ...opts, requireInProgress: opts.requireInProgress ?? false }));
 }
 
 /** Active shift triggers (10am, 3pm, 8pm) in case there are late or newly clocked-in workers. */
 export async function runActiveShiftQueue(
   group: ShiftGroup | ShiftGroup[],
-  label: '10am' | '3pm' | '8pm'
+  label: '10am' | '3pm' | '8pm' | '10pm'
 ): Promise<DailyResult> {
   const config = getAutoQueueConfig();
   if (config.mode === 'off') {
@@ -544,7 +547,7 @@ export async function runCheckpoint(
       await addCheckpointComment(item, bot.id, kind, h.userName, h.reason);
     }
 
-    const { updateTaskStatuses } = await taskMapHandlers();
+    const { updateTaskStatuses, assignTaskMapTask } = await taskMapHandlers();
     const returned: CheckpointResult['returned'] = [];
     for (const r of plan.returned) {
       if (dryRun) {
@@ -559,6 +562,16 @@ export async function runCheckpoint(
           returned.push({ ...r, applied: false, error: 'Changed or started meanwhile' });
           continue;
         }
+        // First unassign from the signing-out MA so it leaves their Task Map column and returns to Available tasks
+        const assignRes = await invokeHandler(assignTaskMapTask, {
+          params: { id: r.taskId },
+          body: { assigneeId: null, mode: 'QUEUE' },
+          user: bot,
+        });
+        if (assignRes.status !== 200 || !assignRes.body?.success) {
+          logger.warn(`[AutoQueue][${kind}] failed unassigning returned task "${r.taskTitle}": ${assignRes.body?.error || `HTTP ${assignRes.status}`}`);
+        }
+        // Then set Hand-over status tag
         const res = await invokeHandler(updateTaskStatuses, {
           params: { id: r.taskId },
           body: { statuses: ['Hand-over'] },
@@ -595,7 +608,7 @@ export async function runCheckpoint(
 
     let nightFill: DailyResult | undefined;
     if (kind === '5pm') {
-      nightFill = await runGroupDistribution(['noon', 'night'], '5pm', { modeOverride: mode, requireInProgress: true });
+      nightFill = await runGroupDistribution(['noon', 'night'], '5pm', { modeOverride: mode, requireInProgress: false });
     }
 
     logger.info(
@@ -783,11 +796,17 @@ export async function findHigherPriorityQueued(
     );
     const target = mine.find((it) => it.id === targetId);
     if (!target) return null;
-    const targetTier = queueTier(target);
+    // Same tier (e.g. all Urgent): the one due soonest goes first.
     const blocker = mine
-      .filter((it) => it.id !== targetId && queueTier(it) < targetTier)
-      .sort((a, b) => queueTier(a) - queueTier(b))[0];
-    return blocker ? { id: blocker.id, title: blocker.title, tier: TIER_LABEL[queueTier(blocker)] } : null;
+      .filter((it) => it.id !== targetId && compareQueuePriority(it, target) < 0)
+      .sort(compareQueuePriority)[0];
+    if (!blocker) return null;
+    const label = TIER_LABEL[queueTier(blocker)];
+    return {
+      id: blocker.id,
+      title: blocker.title,
+      tier: queueTier(blocker) === queueTier(target) ? `${label}, due sooner` : label,
+    };
   } catch (err) {
     logger.warn(`[AutoQueue] Work-order check skipped: ${errMsg(err)}`);
     return null;

@@ -285,18 +285,10 @@ export const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   const q = query.trim().toLowerCase();
   const title = (task.title || '').toLowerCase();
   const parentTitle = (task.parentTaskTitle || '').toLowerCase();
-  const clientName = (task.list?.name || '').toLowerCase();
-  const folderName = (task.list?.folder?.name || '').toLowerCase();
-  const desc = (task.description || '').toLowerCase();
-  const statuses = (task.taskMap?.statuses || []).map((s: string) => (s || '').toLowerCase());
-  return (
-    title.includes(q) ||
-    parentTitle.includes(q) ||
-    clientName.includes(q) ||
-    folderName.includes(q) ||
-    desc.includes(q) ||
-    statuses.some((s: string) => s.includes(q))
-  );
+  const hasMatchingSubtask =
+    Array.isArray(task.subtasks) &&
+    task.subtasks.some((st: any) => (st?.title || '').toLowerCase().includes(q));
+  return title.includes(q) || parentTitle.includes(q) || hasMatchingSubtask;
 };
 
 export const getColumnPriorityCounts = (items: TaskMapItem[]) => {

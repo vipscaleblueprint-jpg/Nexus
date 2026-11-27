@@ -56,6 +56,8 @@ interface CommentEditorProps {
   compact?: boolean;
   /** Optional handler to open the CRM Follow-Up modal from a button next to Checklist. */
   onOpenCrmFollowUp?: () => void;
+  /** Temporarily disables the @ mention button in the toolbar. */
+  disableMention?: boolean;
 }
 
 /** An icon button for the comment toolbar. */
@@ -182,7 +184,7 @@ const fileNameFromSrc = (src: string, type: string) => {
   return `pasted-image-${Date.now()}.${ext}`;
 };
 
-export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown, compact = false, onOpenCrmFollowUp }, ref) => {
+export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorProps>(({ value, onChange, placeholder = 'Write a comment...', autoFocus, id = 'default', disabled, onSubmit, onPasteFiles, onDropFiles, onUploadImage, onUploadImageUrl, onUploadingChange, footer, footerEnd, onKeyDown, compact = false, onOpenCrmFollowUp, disableMention = false }, ref) => {
   const pendingUploads = React.useRef(0);
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const [isDraggingOver, setIsDraggingOver] = React.useState(false);
@@ -1085,14 +1087,16 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
       {(footer || footerEnd) && (
         <div className={`${compact ? '-mr-0.5 -mb-0.5 mt-1.5 flex items-center justify-between gap-1 pt-1 border-t border-zinc-800/60' : '-mr-1 -mb-1 mt-2 flex items-center justify-between gap-1.5 pt-1.5 min-w-0'}`}>
           <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto no-scrollbar py-0.5">
-            <ComposerToolButton
-              onClick={insertMentionTrigger}
-              disabled={disabled}
-              title="Mention someone (@)"
-              className={compact ? '!h-6 !w-6' : ''}
-            >
-              <AtSign className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-            </ComposerToolButton>
+            {!disableMention && (
+              <ComposerToolButton
+                onClick={insertMentionTrigger}
+                disabled={disabled}
+                title="Mention someone (@)"
+                className={compact ? '!h-6 !w-6' : ''}
+              >
+                <AtSign className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+              </ComposerToolButton>
+            )}
             {footer}
             <div className={`w-px h-3.5 bg-zinc-700/60 ${compact ? 'mx-0.5' : 'mx-1'} shrink-0`} />
             <ComposerToolButton

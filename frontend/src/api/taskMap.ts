@@ -3621,10 +3621,8 @@ export function findSearchedTaskLocations(
       matchesTaskLinkOrId(t, raw) ||
       (t.title || '').toLowerCase().includes(q) ||
       (t.parentTaskTitle || '').toLowerCase().includes(q) ||
-      (t.list?.name || '').toLowerCase().includes(q) ||
-      (t.list?.folder?.name || '').toLowerCase().includes(q) ||
-      (t.description || '').toLowerCase().includes(q) ||
-      (t.taskMap?.statuses || []).some((s) => (s || '').toLowerCase().includes(q));
+      (Array.isArray(t.subtasks) &&
+        t.subtasks.some((st: any) => (st?.title || '').toLowerCase().includes(q)));
 
     if (!isMatch) continue;
     seen.add(t.id);

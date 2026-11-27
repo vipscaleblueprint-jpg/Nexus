@@ -29,6 +29,7 @@ interface CommentReplyInputProps {
   onCancel: () => void;
   placeholder?: string;
   onOpenCrmFollowUp?: (parentCommentId?: string) => void;
+  disableMention?: boolean;
 }
 
 interface StagedReplyFile {
@@ -45,6 +46,7 @@ export function CommentReplyInput({
   onCancel,
   placeholder = 'Write a reply...',
   onOpenCrmFollowUp,
+  disableMention = false,
 }: CommentReplyInputProps) {
   const [replyHtml, setReplyHtml] = useState('');
   const [stagedFiles, setStagedFiles] = useState<StagedReplyFile[]>([]);
@@ -453,6 +455,7 @@ export function CommentReplyInput({
         autoFocus
         compact
         disabled={isSubmitting}
+        disableMention={disableMention}
         placeholder={isSubmitting ? 'Posting reply...' : placeholder}
         onChange={(html, text, cursorPosition, textBefore) => {
           setReplyHtml(html);
@@ -463,7 +466,7 @@ export function CommentReplyInput({
               : cursorPosition !== undefined && cursorPosition >= 0
                 ? textStr.substring(0, Math.min(textStr.length, cursorPosition))
                 : textStr;
-          const mentionMatch = matchMentionTrigger(textBeforeCursor);
+          const mentionMatch = disableMention ? null : matchMentionTrigger(textBeforeCursor);
           if (mentionMatch) {
             updateMenuPosition();
             setShowMentionMenu(true);

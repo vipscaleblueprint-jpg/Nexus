@@ -58,6 +58,7 @@ import { openTaskInNewTab, markPendingModalHistoryBack, isModalHistoryBackPendin
 export { isModalHistoryBackPending };
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
+const TEMPORARILY_DISABLE_MENTIONS = true;
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
 const keepUrl = (url: string) => url;
 const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);
@@ -5244,6 +5245,7 @@ export function TaskDetailModalContent({
                             commentId={comment.id}
                             workspaceUsers={workspaceUsers}
                             currentUser={currentUser}
+                            disableMention={TEMPORARILY_DISABLE_MENTIONS}
                             onOpenCrmFollowUp={canUseCrm ? (parentId) => setCrmFollowUpModal({ isOpen: true, parentCommentId: parentId || comment.id }) : undefined}
                             onSubmit={async (content, mentionIds) => {
                               await handleSubmitReply(comment.id, content, mentionIds);
@@ -5885,6 +5887,7 @@ export function TaskDetailModalContent({
                         ref={commentEditorRef}
                         id="main-task-comment"
                         value={comment}
+                        disableMention={TEMPORARILY_DISABLE_MENTIONS}
                         onChange={(html, text, cursorPosition, textBefore) => {
                           setComment(html);
                           if (task?.id) {
@@ -5942,7 +5945,7 @@ export function TaskDetailModalContent({
                           const textBeforeCursor = textBefore !== undefined
                             ? textBefore
                             : (text || "").substring(0, cursorPosition || 0);
-                          const mentionMatch = matchMentionTrigger(textBeforeCursor);
+                          const mentionMatch = TEMPORARILY_DISABLE_MENTIONS ? null : matchMentionTrigger(textBeforeCursor);
 
                           if (mentionMatch) {
                             setShowMentionMenu(true);
@@ -9922,6 +9925,7 @@ export function SubtaskDetailView({
                           commentId={c.id}
                           workspaceUsers={workspaceUsers}
                           currentUser={currentUser}
+                          disableMention={TEMPORARILY_DISABLE_MENTIONS}
                           onSubmit={async (content, mentionIds) => {
                             await handleSubmitReply(c.id, content, mentionIds);
                           }}
@@ -10085,12 +10089,6 @@ export function SubtaskDetailView({
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                     created subtask <span className="text-zinc-200 font-medium px-1">{act.subtaskTitle}</span>
                                   </div>
-                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
-                                    {timeStr}
-                                  </span>
-                                </div>
-                              );
-                            }
                             if (act.type === 'delete_subtask') {
                               const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
                               return (
@@ -10488,6 +10486,7 @@ export function SubtaskDetailView({
                       ref={commentEditorRef}
                       id="subtask-comment"
                       value={comment}
+                      disableMention={TEMPORARILY_DISABLE_MENTIONS}
                       onChange={(html, text, cursorPosition, textBefore) => {
                         setComment(html);
                         if (subtask?.id) {
@@ -10547,7 +10546,7 @@ export function SubtaskDetailView({
                         const textBeforeCursor = textBefore !== undefined
                           ? textBefore
                           : (text || "").substring(0, cursorPosition || 0);
-                        const mentionMatch = matchMentionTrigger(textBeforeCursor);
+                        const mentionMatch = TEMPORARILY_DISABLE_MENTIONS ? null : matchMentionTrigger(textBeforeCursor);
 
                         if (mentionMatch) {
                           setShowMentionMenu(true);

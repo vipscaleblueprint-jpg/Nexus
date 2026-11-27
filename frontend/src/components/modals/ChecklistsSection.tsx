@@ -3,7 +3,7 @@ import { Task, Checklist, ChecklistItem, User as UserModel } from '@/lib/types';
 import { tasksApi } from '@/api/tasks';
 import { Plus, ChevronDown, ChevronRight, User, Trash2, X, MoreHorizontal, Maximize2, Check, ListTodo, Pencil } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
-import { isNexusAuditChecklist } from '@/lib/auditChecklist';
+import { isNexusAuditChecklist, isNexusAuditItemText, HIDE_INSTRUCTIONS_AUDIT, normalizeAuditName } from '@/lib/auditChecklist';
 import { isSystemUser } from '@/lib/taskTokens';
 
 interface ChecklistsSectionProps {
@@ -26,16 +26,33 @@ export function ChecklistsSection({ task, subtaskId, users, checklists, onUpdate
   // Set on Escape so the blur that follows doesn't save the draft
   const cancelRenameRef = useRef(false);
 
-  const standardChecklists = checklists.filter(c => {
-    // Only Nexus's own Audit checklist lives in the Audit section; ClickUp checklists
-    // (even one named "Audit") show here as written in ClickUp.
-    if (isNexusAuditChecklist(c)) return false;
-    if (subtaskId) {
-      return c.subtaskId === subtaskId;
-    } else {
-      return !c.subtaskId;
-    }
-  });
+  const standardChecklists = checklists
+    .filter(c => {
+      // Only Nexus's own Audit checklist lives in the Audit section; ClickUp checklists
+      // (even one named "Audit") show here as written in ClickUp.
+      if (isNexusAuditChecklist(c)) return false;
+      if (subtaskId) {
+        return c.subtaskId === subtaskId;
+      } else {
+        return !c.subtaskId;
+      }
+    })
+    .map(c => {
+      const isNamedAudit = (c.name || '').trim().toLowerCase() === 'audit';
+      const filteredItems = (c.items || []).filter(i => {
+        if (HIDE_INSTRUCTIONS_AUDIT && normalizeAuditName((i.text || '').replace(/^!\s*/, '')) === 'instructions audit') {
+          return false;
+        }
+        // If a checklist named "Audit" has mixed audit + regular items, strip out Nexus audit items
+        // so they never leak into the regular Checklists section.
+        if (isNamedAudit && isNexusAuditItemText(i.text)) {
+          return false;
+        }
+        return true;
+      });
+      return { ...c, items: filteredItems };
+    })
+    .filter(c => (c.name || '').trim().toLowerCase() !== 'audit' || (c.items && c.items.length > 0));
 
   const completedCount = standardChecklists.reduce((acc, list) => {
     return acc + (list.items?.every(i => i.completed) && list.items.length > 0 ? 1 : 0);

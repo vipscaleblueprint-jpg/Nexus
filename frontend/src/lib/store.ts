@@ -618,6 +618,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       const key = (maName || '').trim().toLowerCase();
       if (!session) {
         delete copy[key];
+        const keyFirst = key.split(/\s+/)[0] || key;
+        if (keyFirst) {
+          for (const k of Object.keys(copy)) {
+            const kNorm = k.trim().toLowerCase();
+            const kFirst = kNorm.split(/\s+/)[0] || kNorm;
+            if (kNorm === key || kFirst === keyFirst) {
+              delete copy[k];
+            }
+          }
+        }
       } else {
         copy[key] = session;
       }

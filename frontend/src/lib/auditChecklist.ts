@@ -42,17 +42,20 @@ export interface ChecklistLike {
   subtaskId?: string | null;
 }
 
+export function isNexusAuditItemText(text: string): boolean {
+  const raw = (text || '').trim();
+  const clean = raw.startsWith('!') ? raw.slice(1).trim() : raw;
+  return NEXUS_AUDIT_ITEMS.has(normalizeAuditName(clean));
+}
+
 export function isNexusAuditChecklist(c: ChecklistLike): boolean {
   if (!c || !c.name) return false;
   if (c.name.trim().toLowerCase() !== 'audit') return false;
+  if (isAiAuditChecklist(c)) return true;
   const items = c.items ?? [];
   // Empty: Nexus's own Audit checklist (even if synced with ClickUp externalId).
   if (items.length === 0) return true;
-  return items.every((i) => {
-    const raw = (i.text || '').trim();
-    const clean = raw.startsWith('!') ? raw.slice(1).trim() : raw;
-    return NEXUS_AUDIT_ITEMS.has(normalizeAuditName(clean));
-  });
+  return items.every((i) => isNexusAuditItemText(i.text));
 }
 
 // Hides Design Audit on older tasks, whose audits still come from the title/role rules below.

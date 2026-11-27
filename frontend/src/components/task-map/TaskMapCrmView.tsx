@@ -403,12 +403,16 @@ export const TaskMapCrmView: React.FC<Props> = ({
       mapStatuses.includes('SENTBUTWAITING') ||
       mapStatuses.includes('OUTREACHSENT') ||
       mapStatuses.includes('CLIENTSENT') ||
-      mapStatuses.includes('FOLLOWUP');
+      mapStatuses.includes('FOLLOWUP') ||
+      mapStatuses.includes('CLOSED') ||
+      mapStatuses.includes('DONE');
 
     return (
       isCrmStatusName ||
       ((s === 'WAITING' || s === 'SENT') && isTaskInClientDashboard(t, clients)) ||
       (!(s === 'CLOSED' || s === 'DONE') && mapStatuses.includes('ASKCLIENT')) ||
+      mapStatuses.includes('CLOSED') ||
+      mapStatuses.includes('DONE') ||
       ((s === 'CLOSED' || s === 'DONE') && hasCrmMarker)
     );
   };
@@ -425,7 +429,15 @@ export const TaskMapCrmView: React.FC<Props> = ({
   // Check if task is CRM completed / closed
   const isCrmCompleted = (t: TaskMapItem) => {
     const s = (t.status || '').toUpperCase().trim();
-    return s === 'DONE' || s === 'CLOSED';
+    const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
+      x.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    return (
+      s === 'DONE' ||
+      s === 'CLOSED' ||
+      mapStatuses.includes('CLOSED') ||
+      mapStatuses.includes('DONE')
+    );
   };
 
   // Check if task is Sent (waiting for client response) - restricted strictly to active Client Dashboard clients
@@ -495,16 +507,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
   const poolTasks = filteredCrmTasks.filter(isGeneralCrmPool);
   const sentTasks = filteredCrmTasks.filter(isCrmSent);
-  const completedTasks = filteredCrmTasks.filter(
-    (t) =>
-      isCrmCompleted(t) &&
-      ((t.status || '').toUpperCase() === 'CLOSED' ||
-        (t.status || '').toUpperCase() === 'DONE' ||
-        (t.taskMap?.statuses || []).some((s) => {
-          const up = s.toUpperCase();
-          return up.includes('CRM') || up.includes('SENT') || up.includes('OUTREACH');
-        }))
-  );
+  const completedTasks = filteredCrmTasks.filter((t) => isCrmCompleted(t));
 
   // DnD Handlers
   const handleDragStart = (event: DragStartEvent) => {

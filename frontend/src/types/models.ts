@@ -171,13 +171,19 @@ export interface Favorite {
   createdAt: string;
 }
 
+export type RecurrencePausePreset = '1d' | '3d' | '1w' | '2w' | 'indefinite';
+
 export interface RecurringConfig {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
-  time: string; // "HH:mm" e.g. "21:00", "21:30"
+  time?: string; // "HH:mm" e.g. "21:00", "21:30"
   daysOfWeek?: number[]; // [1, 2, 3, 4, 5] for Mon-Fri
   dayOfMonth?: number; // 1 to 31
   lastRunAt?: string;
   timezone?: string;
+  paused?: boolean;
+  pausedUntil?: string | null;
+  pausedAt?: string | null;
+  pausePreset?: RecurrencePausePreset | null;
 }
 
 export interface Task {

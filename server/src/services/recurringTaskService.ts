@@ -8,13 +8,69 @@ import { taskInclude } from '../controllers/task.controller';
 import { aiAuditExternalId, isAiAuditChecklist, isNexusAuditChecklist } from '../utils/auditChecklist';
 import { queueAuditPick } from './aiAuditPicker';
 
+export type RecurrencePausePreset = '1d' | '3d' | '1w' | '2w' | 'indefinite';
+
 export interface RecurringConfig {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
-  time: string; // "HH:mm" (24h) e.g. "21:00", "21:30", "09:00"
+  time?: string; // "HH:mm" (24h) e.g. "21:00", "21:30", "09:00"
   daysOfWeek?: number[]; // [1, 2, 3, 4, 5] (1=Monday ... 7=Sunday or 0=Sunday)
   dayOfMonth?: number; // 1 to 31
   lastRunAt?: string; // ISO string of when it last created a duplicate
   timezone?: string; // default "Asia/Singapore"
+  paused?: boolean;
+  pausedUntil?: string | null; // ISO timestamp (UTC) when pause expires, or null for indefinite
+  pausedAt?: string | null;
+  pausePreset?: RecurrencePausePreset | null;
+}
+
+/**
+ * Evaluates whether a recurring task is currently paused as of `referenceDate`.
+ * - paused: true + pausedUntil: null -> paused indefinitely
+ * - paused: true + referenceDate < pausedUntil -> paused until that timestamp
+ * - paused: true + referenceDate >= pausedUntil -> pause has expired (active again)
+ */
+export function getRecurringPauseStatus(
+  config: RecurringConfig | null | undefined,
+  referenceDate: Date = new Date()
+): { isPaused: boolean; reason?: string; expired?: boolean } {
+  if (!config?.paused) {
+    return { isPaused: false };
+  }
+  if (!config.pausedUntil) {
+    return { isPaused: true, reason: 'Paused indefinitely' };
+  }
+  const until = new Date(config.pausedUntil);
+  if (isNaN(until.getTime())) {
+    return { isPaused: true, reason: 'Paused indefinitely' };
+  }
+  if (referenceDate.getTime() < until.getTime()) {
+    const untilDateStr = getCalendarDateParts(until, 'Asia/Manila').dateStr;
+    return { isPaused: true, reason: `Paused until ${untilDateStr}` };
+  }
+  return { isPaused: false, expired: true };
+}
+
+/**
+ * Computes the pause end timestamp (ISO string) for a given preset, or null for indefinite.
+ */
+export function computePausedUntil(
+  preset: RecurrencePausePreset,
+  fromDate: Date = new Date()
+): string | null {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  switch (preset) {
+    case '1d':
+      return new Date(fromDate.getTime() + 1 * DAY_MS).toISOString();
+    case '3d':
+      return new Date(fromDate.getTime() + 3 * DAY_MS).toISOString();
+    case '1w':
+      return new Date(fromDate.getTime() + 7 * DAY_MS).toISOString();
+    case '2w':
+      return new Date(fromDate.getTime() + 14 * DAY_MS).toISOString();
+    case 'indefinite':
+    default:
+      return null;
+  }
 }
 
 /**
@@ -333,14 +389,20 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
   }
 
   // 5. Update the source recurring task's lastRunAt only if it had a recurringConfig
+  //    (also auto-clear any expired pause metadata once the task resumes running)
   if (config) {
+    const pauseStatus = getRecurringPauseStatus(config, targetDate);
+    const cleanedConfig: RecurringConfig = {
+      ...config,
+      ...(pauseStatus.expired
+        ? { paused: false, pausedUntil: null, pausedAt: null, pausePreset: null }
+        : {}),
+      lastRunAt: new Date().toISOString(),
+    };
     await prisma.task.update({
       where: { id: sourceTaskId },
       data: {
-        recurringConfig: {
-          ...config,
-          lastRunAt: new Date().toISOString(),
-        } as any,
+        recurringConfig: cleanedConfig as any,
       },
     });
   }
@@ -395,6 +457,10 @@ export async function checkAndRunRecurringTasks() {
     for (const task of recurringTasks) {
       const config = task.recurringConfig as RecurringConfig | null;
       if (!config || !config.time) continue;
+
+      if (getRecurringPauseStatus(config, now).isPaused) {
+        continue;
+      }
 
       const timezone = config.timezone || 'Asia/Singapore';
 
@@ -551,6 +617,19 @@ export async function runRecurringDailyRollover(
       const timezone = config?.timezone || 'Asia/Singapore';
       const { dateStr } = formatRecurrenceDateTime(targetDate, timezone, config?.time);
 
+      // Pause check: skip paused tasks unless force is enabled
+      if (!options?.force) {
+        const pauseStatus = getRecurringPauseStatus(config, targetDate);
+        if (pauseStatus.isPaused) {
+          skipped.push({
+            taskId: task.id,
+            title: task.title,
+            reason: pauseStatus.reason || 'Paused',
+          });
+          continue;
+        }
+      }
+
       // Idempotency: Prevent duplicate pending task on the same date unless force is enabled
       if (!options?.force) {
         if (config?.lastRunAt) {
@@ -610,6 +689,389 @@ export async function runRecurringDailyRollover(
     };
   } catch (err: any) {
     console.error('[RecurringRollover] Critical failure running recurring rollover:', err);
+    throw err;
+  }
+}
+
+export interface CalendarDateParts {
+  year: number;
+  month: number; // 1..12
+  day: number; // 1..31
+  weekday: number; // 0 = Sun, 1 = Mon ... 6 = Sat
+  daysInMonth: number;
+  dateStr: string; // mm-dd-yyyy
+  yearMonthKey: string; // yyyy-mm
+  weekKey: string; // yyyy-mm-dd of that week's Monday
+}
+
+const WEEKDAY_MAP: Record<string, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+
+/**
+ * Extracts calendar date components in the given timezone (default: Asia/Manila, UTC+8).
+ */
+export function getCalendarDateParts(
+  date: Date,
+  timezone: string = 'Asia/Manila'
+): CalendarDateParts {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+  });
+
+  const parts = dtf.formatToParts(date);
+  const partMap: Record<string, string> = {};
+  for (const p of parts) {
+    partMap[p.type] = p.value;
+  }
+
+  const year = parseInt(partMap.year || `${date.getUTCFullYear()}`, 10);
+  const month = parseInt(partMap.month || '1', 10);
+  const day = parseInt(partMap.day || '1', 10);
+  const weekday = WEEKDAY_MAP[(partMap.weekday || '').toLowerCase()] ?? 0;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  const dateStr = `${mm}-${dd}-${year}`;
+  const yearMonthKey = `${year}-${mm}`;
+
+  // Monday-based week key (yyyy-mm-dd of the Monday of this week)
+  const offsetToMonday = weekday === 0 ? -6 : 1 - weekday;
+  const mondayDate = new Date(Date.UTC(year, month - 1, day + offsetToMonday));
+  const weekKey = `${mondayDate.getUTCFullYear()}-${String(mondayDate.getUTCMonth() + 1).padStart(2, '0')}-${String(mondayDate.getUTCDate()).padStart(2, '0')}`;
+
+  return {
+    year,
+    month,
+    day,
+    weekday,
+    daysInMonth,
+    dateStr,
+    yearMonthKey,
+    weekKey,
+  };
+}
+
+/**
+ * Resolves the effective scheduled day of the month for a MONTHLY task:
+ * - Respects requestedDay (recurringConfig.dayOfMonth), defaulting to 1 when unset.
+ * - Clamps to the last day of the target month (e.g. 31 -> 28/29 in Feb).
+ * - Monthly tasks only run Monday-Saturday: if the target day lands on Sunday,
+ *   rolls forward to Monday (+1), or backward to Saturday (-1) if it is the last day of the month.
+ */
+export function resolveMonthlyScheduledDay(
+  year: number,
+  month: number,
+  requestedDay?: number
+): number {
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const desired = requestedDay && requestedDay >= 1 ? Math.floor(requestedDay) : 1;
+  const clamped = Math.min(desired, daysInMonth);
+  const weekday = new Date(Date.UTC(year, month - 1, clamped)).getUTCDay();
+
+  if (weekday === 0) {
+    // Sunday -> skip Sunday; run Monday if still in the same month, else Saturday
+    return clamped < daysInMonth ? clamped + 1 : clamped - 1;
+  }
+  return clamped;
+}
+
+/**
+ * Weekly Rollover function for WEEKLY status tasks (runs inside 4:30 AM Manila DailyRollover):
+ * - Automatically gates to Mondays in Asia/Manila (UTC+8), unless force: true.
+ * - Queries all tasks whose status is WEEKLY (with or without recurringConfig).
+ * - Duplicates each WEEKLY task into the list's canonical PENDING status column with mm-dd-yyyy.
+ * - Handles deduplication per week and per date so repeated runs are safe (unless force: true).
+ */
+export async function runRecurringWeeklyRollover(
+  options?: RecurringRolloverOptions
+): Promise<RecurringRolloverResult> {
+  const targetDate = options?.dateOverride ? new Date(options.dateOverride) : new Date();
+  const manilaToday = getCalendarDateParts(targetDate, 'Asia/Manila');
+  const created: RecurringRolloverResult['created'] = [];
+  const skipped: RecurringRolloverResult['skipped'] = [];
+
+  try {
+    // Weekly tasks automatically run only on Mondays (Asia/Manila) unless forced
+    if (!options?.force && manilaToday.weekday !== 1) {
+      return {
+        success: true,
+        date: manilaToday.dateStr,
+        totalChecked: 0,
+        createdCount: 0,
+        skippedCount: 0,
+        created,
+        skipped,
+      };
+    }
+
+    // 1. Pull ONLY tasks with status = WEEKLY (case-insensitive)
+    const candidateTasks = await prisma.task.findMany({
+      where: {
+        status: { equals: 'WEEKLY', mode: 'insensitive' },
+      },
+      include: {
+        list: {
+          include: {
+            statuses: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // 2. Batch load existing pending tasks for today across all lists
+    const existingTodayPending = await prisma.task.findMany({
+      where: {
+        status: { in: ['PENDING', 'Pending'] },
+        title: { contains: manilaToday.dateStr },
+      },
+      select: { id: true, listId: true, title: true },
+    });
+    const existingPendingSet = new Set(
+      existingTodayPending.map(p => `${p.listId}:::${cleanTitleFromTimestamp(p.title).toLowerCase()}`)
+    );
+
+    for (const task of candidateTasks) {
+      const config = (task.recurringConfig as RecurringConfig | null) || null;
+      const frequency = 'WEEKLY';
+
+      // Pause check: skip paused tasks unless force is enabled
+      if (!options?.force) {
+        const pauseStatus = getRecurringPauseStatus(config, targetDate);
+        if (pauseStatus.isPaused) {
+          skipped.push({
+            taskId: task.id,
+            title: task.title,
+            reason: pauseStatus.reason || 'Paused',
+          });
+          continue;
+        }
+      }
+
+      // Idempotency: Prevent duplicate pending task in the same Manila week unless force is enabled
+      if (!options?.force) {
+        if (config?.lastRunAt) {
+          const lastRunParts = getCalendarDateParts(new Date(config.lastRunAt), 'Asia/Manila');
+          if (lastRunParts.weekKey === manilaToday.weekKey || lastRunParts.dateStr === manilaToday.dateStr) {
+            skipped.push({
+              taskId: task.id,
+              title: task.title,
+              reason: `Already ran this week (${manilaToday.weekKey})`,
+            });
+            continue;
+          }
+        }
+
+        const baseTitle = cleanTitleFromTimestamp(task.title);
+        const lookupKey = `${task.listId}:::${baseTitle.toLowerCase()}`;
+        if (existingPendingSet.has(lookupKey)) {
+          skipped.push({
+            taskId: task.id,
+            title: task.title,
+            reason: `Pending task already exists for ${manilaToday.dateStr}`,
+          });
+          continue;
+        }
+      }
+
+      // Execute duplication into PENDING
+      try {
+        const duplicated = await duplicateRecurringTask(task.id, targetDate);
+        created.push({
+          sourceTaskId: task.id,
+          newTaskId: duplicated?.id,
+          title: duplicated?.title,
+          frequency,
+        });
+        const baseTitle = cleanTitleFromTimestamp(task.title);
+        existingPendingSet.add(`${task.listId}:::${baseTitle.toLowerCase()}`);
+        console.log(`[RecurringWeeklyRollover] Duplicated "${task.title}" (${task.id}) -> "${duplicated?.title}" into PENDING.`);
+      } catch (dupErr: any) {
+        console.error(`[RecurringWeeklyRollover] Error duplicating "${task.title}":`, dupErr);
+        skipped.push({
+          taskId: task.id,
+          title: task.title,
+          reason: `Error during duplication: ${dupErr?.message || dupErr}`,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      date: manilaToday.dateStr,
+      totalChecked: candidateTasks.length,
+      createdCount: created.length,
+      skippedCount: skipped.length,
+      created,
+      skipped,
+    };
+  } catch (err: any) {
+    console.error('[RecurringWeeklyRollover] Critical failure running weekly rollover:', err);
+    throw err;
+  }
+}
+
+/**
+ * Monthly Rollover function for MONTHLY status tasks (runs inside 4:30 AM Manila DailyRollover):
+ * - Never runs on Sunday (Asia/Manila) unless force: true; only runs Monday-Saturday.
+ * - Respects recurringConfig.dayOfMonth (clamped to the last day of the month), defaulting to 1st.
+ * - If a task's target day falls on Sunday, its scheduled run day shifts to Monday (+1),
+ *   or Saturday (-1) if it is the last day of the month, so it is never dropped.
+ * - Queries all tasks whose status is MONTHLY (with or without recurringConfig).
+ * - Handles deduplication per month and per date so repeated runs are safe (unless force: true).
+ */
+export async function runRecurringMonthlyRollover(
+  options?: RecurringRolloverOptions
+): Promise<RecurringRolloverResult> {
+  const targetDate = options?.dateOverride ? new Date(options.dateOverride) : new Date();
+  const manilaToday = getCalendarDateParts(targetDate, 'Asia/Manila');
+  const created: RecurringRolloverResult['created'] = [];
+  const skipped: RecurringRolloverResult['skipped'] = [];
+
+  try {
+    // Monthly tasks run Monday-Saturday only; skip Sundays unless forced
+    if (!options?.force && manilaToday.weekday === 0) {
+      return {
+        success: true,
+        date: manilaToday.dateStr,
+        totalChecked: 0,
+        createdCount: 0,
+        skippedCount: 0,
+        created,
+        skipped,
+      };
+    }
+
+    // 1. Pull ONLY tasks with status = MONTHLY (case-insensitive)
+    const candidateTasks = await prisma.task.findMany({
+      where: {
+        status: { equals: 'MONTHLY', mode: 'insensitive' },
+      },
+      include: {
+        list: {
+          include: {
+            statuses: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // 2. Batch load existing pending tasks for today across all lists
+    const existingTodayPending = await prisma.task.findMany({
+      where: {
+        status: { in: ['PENDING', 'Pending'] },
+        title: { contains: manilaToday.dateStr },
+      },
+      select: { id: true, listId: true, title: true },
+    });
+    const existingPendingSet = new Set(
+      existingTodayPending.map(p => `${p.listId}:::${cleanTitleFromTimestamp(p.title).toLowerCase()}`)
+    );
+
+    for (const task of candidateTasks) {
+      const config = (task.recurringConfig as RecurringConfig | null) || null;
+      const frequency = 'MONTHLY';
+
+      // Pause check: skip paused tasks unless force is enabled
+      if (!options?.force) {
+        const pauseStatus = getRecurringPauseStatus(config, targetDate);
+        if (pauseStatus.isPaused) {
+          skipped.push({
+            taskId: task.id,
+            title: task.title,
+            reason: pauseStatus.reason || 'Paused',
+          });
+          continue;
+        }
+      }
+
+      const scheduledDay = resolveMonthlyScheduledDay(
+        manilaToday.year,
+        manilaToday.month,
+        config?.dayOfMonth
+      );
+
+      if (!options?.force && manilaToday.day !== scheduledDay) {
+        skipped.push({
+          taskId: task.id,
+          title: task.title,
+          reason: `Not scheduled for today (scheduled day: ${scheduledDay}, today: ${manilaToday.day})`,
+        });
+        continue;
+      }
+
+      // Idempotency: Prevent duplicate pending task in the same Manila month unless force is enabled
+      if (!options?.force) {
+        if (config?.lastRunAt) {
+          const lastRunParts = getCalendarDateParts(new Date(config.lastRunAt), 'Asia/Manila');
+          if (lastRunParts.yearMonthKey === manilaToday.yearMonthKey || lastRunParts.dateStr === manilaToday.dateStr) {
+            skipped.push({
+              taskId: task.id,
+              title: task.title,
+              reason: `Already ran this month (${manilaToday.yearMonthKey})`,
+            });
+            continue;
+          }
+        }
+
+        const baseTitle = cleanTitleFromTimestamp(task.title);
+        const lookupKey = `${task.listId}:::${baseTitle.toLowerCase()}`;
+        if (existingPendingSet.has(lookupKey)) {
+          skipped.push({
+            taskId: task.id,
+            title: task.title,
+            reason: `Pending task already exists for ${manilaToday.dateStr}`,
+          });
+          continue;
+        }
+      }
+
+      // Execute duplication into PENDING
+      try {
+        const duplicated = await duplicateRecurringTask(task.id, targetDate);
+        created.push({
+          sourceTaskId: task.id,
+          newTaskId: duplicated?.id,
+          title: duplicated?.title,
+          frequency,
+        });
+        const baseTitle = cleanTitleFromTimestamp(task.title);
+        existingPendingSet.add(`${task.listId}:::${baseTitle.toLowerCase()}`);
+        console.log(`[RecurringMonthlyRollover] Duplicated "${task.title}" (${task.id}) -> "${duplicated?.title}" into PENDING.`);
+      } catch (dupErr: any) {
+        console.error(`[RecurringMonthlyRollover] Error duplicating "${task.title}":`, dupErr);
+        skipped.push({
+          taskId: task.id,
+          title: task.title,
+          reason: `Error during duplication: ${dupErr?.message || dupErr}`,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      date: manilaToday.dateStr,
+      totalChecked: candidateTasks.length,
+      createdCount: created.length,
+      skippedCount: skipped.length,
+      created,
+      skipped,
+    };
+  } catch (err: any) {
+    console.error('[RecurringMonthlyRollover] Critical failure running monthly rollover:', err);
     throw err;
   }
 }

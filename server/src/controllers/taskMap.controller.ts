@@ -5887,12 +5887,42 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     }
 
     if (mode === 'STOP') {
+      const effectiveTargetId = subtaskId ? `subtask:${subtaskId}` : (cleanTaskId || null);
       const maSessionKey = actorDisplayName.trim().toLowerCase();
       await deleteMaActiveSession(maSessionKey).catch(() => {});
-      const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId || null };
+      if (cleanTaskId) {
+        await clearMaSessionsForTarget(cleanTaskId, subtaskId || null).catch(() => {});
+      }
+      const clearedPayload = {
+        maName: actorDisplayName,
+        cleared: true,
+        active: false,
+        taskId: effectiveTargetId,
+        subtaskId: subtaskId || null,
+        timeOut: effectiveTimeOut,
+      };
+      const stoppedProgressPayload = {
+        maName: actorDisplayName,
+        timeIn: resolvedTimeIn || targetRow?.timeIn || null,
+        timeOut: effectiveTimeOut,
+        isLive: false,
+        isMissingTime: false,
+        date: targetRow?.date || getManilaDateStr(),
+        client: targetRow?.client || 'General',
+        sheetRow: resolvedSheetRow || undefined,
+      };
       io.emit('ma:session_updated', clearedPayload);
       io.emit('task_map:ma_progress_changed', clearedPayload);
-      io.emit('task_map:updated', { maSession: clearedPayload, ...(cleanTaskId ? { taskId: cleanTaskId } : {}) });
+      io.emit('task_map:updated', {
+        maSession: clearedPayload,
+        ...(effectiveTargetId ? { taskId: effectiveTargetId, progress: stoppedProgressPayload } : {}),
+      });
+      if (effectiveTargetId) {
+        io.emit('task:progress_updated', {
+          taskId: effectiveTargetId,
+          progress: stoppedProgressPayload,
+        });
+      }
     }
 
     // Forward to n8n webhook to update the user's personal Google Spreadsheet (with STOP deduplication)

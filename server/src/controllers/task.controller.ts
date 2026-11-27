@@ -65,7 +65,15 @@ import {
   canonicalizeTaskStatus,
   areStatusesEqual,
 } from '../utils/roleNotification';
-import { duplicateRecurringTask, runRecurringDailyRollover } from '../services/recurringTaskService';
+import {
+  duplicateRecurringTask,
+  runRecurringDailyRollover,
+  runRecurringWeeklyRollover,
+  runRecurringMonthlyRollover,
+  computePausedUntil,
+  RecurrencePausePreset,
+  RecurringConfig,
+} from '../services/recurringTaskService';
 import { filterUsersByNotificationPreference, shouldUserReceiveNotification } from '../utils/notificationPreferences';
 import { resolveLatestAssigneeId, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, getOrCreateTaskMapRecord, updateTaskMapRecord } from '../services/taskMapService';
 import { isWaitingMainStatus, syncCrmWaitingMetaForTask } from '../services/crmFollowUpService';
@@ -4954,13 +4962,87 @@ export async function setTaskRecurrence(req: Request, res: Response) {
     io.emit('task:updated', task);
 
     let duplicatedTask = null;
-    if (triggerImmediate && recurringConfig && recurringConfig.time) {
+    if (triggerImmediate && recurringConfig && recurringConfig.time && !recurringConfig.paused) {
       duplicatedTask = await duplicateRecurringTask(id);
     }
 
     return res.json({ task, duplicatedTask });
   } catch (err: any) {
     console.error('setTaskRecurrence error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/:id/recurring/pause
+export async function pauseTaskRecurrence(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { preset } = req.body as { preset: RecurrencePausePreset | null };
+
+    const validPresets: Array<RecurrencePausePreset | null> = ['1d', '3d', '1w', '2w', 'indefinite', null];
+    if (!validPresets.includes(preset ?? null)) {
+      return res.status(400).json({ error: 'Invalid pause preset. Use 1d, 3d, 1w, 2w, indefinite, or null to resume.' });
+    }
+
+    const current = await prisma.task.findUnique({
+      where: { id },
+      select: { id: true, status: true, recurringConfig: true },
+    });
+
+    if (!current) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const existing = (current.recurringConfig as RecurringConfig | null) || null;
+    const statusUpper = (current.status || '').toUpperCase().trim();
+    const effectiveFrequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' =
+      statusUpper === 'DAILY' || statusUpper === 'WEEKLY' || statusUpper === 'MONTHLY'
+        ? statusUpper
+        : existing?.frequency || 'DAILY';
+
+    let nextConfig: RecurringConfig | null;
+    if (preset === null || preset === undefined) {
+      // Resume recurrence: clear pause fields; if no custom schedule was set, return to null
+      if (!existing || (!existing.time && !existing.daysOfWeek?.length && !existing.dayOfMonth)) {
+        nextConfig = null;
+      } else {
+        const { paused, pausedUntil, pausedAt, pausePreset, ...rest } = existing;
+        nextConfig = {
+          ...rest,
+          frequency: effectiveFrequency,
+          paused: false,
+          pausedUntil: null,
+          pausedAt: null,
+          pausePreset: null,
+        };
+      }
+    } else {
+      const now = new Date();
+      nextConfig = {
+        ...(existing || {}),
+        frequency: effectiveFrequency,
+        timezone: existing?.timezone || 'Asia/Manila',
+        paused: true,
+        pausedAt: now.toISOString(),
+        pausedUntil: computePausedUntil(preset, now),
+        pausePreset: preset,
+      };
+    }
+
+    const task = await prisma.task.update({
+      where: { id },
+      data: {
+        recurringConfig: nextConfig as any,
+      },
+      include: taskInclude,
+    });
+
+    await invalidateCache('tasks:all', 'spaces:all', 'dashboard:all', 'lists:all');
+    io.emit('task:updated', task);
+
+    return res.json({ task });
+  } catch (err: any) {
+    console.error('pauseTaskRecurrence error:', err);
     return res.status(500).json({ error: err.message });
   }
 }
@@ -4985,6 +5067,30 @@ export async function triggerRecurringRollover(req: Request, res: Response) {
     return res.json({ success: true, result });
   } catch (err: any) {
     console.error('triggerRecurringRollover error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/recurring/rollover/weekly
+export async function triggerRecurringWeeklyRollover(req: Request, res: Response) {
+  try {
+    const { dateOverride, force } = req.body || {};
+    const result = await runRecurringWeeklyRollover({ dateOverride, force });
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('triggerRecurringWeeklyRollover error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// POST /api/tasks/recurring/rollover/monthly
+export async function triggerRecurringMonthlyRollover(req: Request, res: Response) {
+  try {
+    const { dateOverride, force } = req.body || {};
+    const result = await runRecurringMonthlyRollover({ dateOverride, force });
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('triggerRecurringMonthlyRollover error:', err);
     return res.status(500).json({ error: err.message });
   }
 }

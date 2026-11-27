@@ -27,7 +27,7 @@ import { resolveClickUpListId } from '../services/clickupService';
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
-import { invalidateCache, redis, isRedisReady, getMaActiveSession, setMaActiveSession, deleteMaActiveSession } from '../services/redisService';
+import { invalidateCache, redis, isRedisReady, getMaActiveSession, getMaActiveSessionsMap, setMaActiveSession, deleteMaActiveSession } from '../services/redisService';
 import { requireApiKey, getOrCreateVipScaleUser } from './webhook.controller';
 import { plainTextToCommentHtml } from '../utils/commentHtml';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
@@ -2608,10 +2608,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     await invalidateCache(`task:${target.taskId}`, 'task_map:*', 'tasks:all');
 
     // Keep MA's latest active session in Redis with matched taskId so frontend always reflects the latest input
+    const effectiveTargetId = target.subtaskId ? `subtask:${target.subtaskId}` : target.taskId;
+    let emittedClearedPayload: any = null;
     if (maNameStr && !isClosedIncoming && !isHandedOverTask && !cleanTimeOut && !nextHandedOver) {
       const maSession = {
         maName: maNameStr,
-        taskId: target.taskId,
+        taskId: effectiveTargetId,
+        subtaskId: target.subtaskId || null,
         listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
         taskStatus: nextTaskStatus || targetTaskMeta?.status || null,
         priority: targetTaskMeta?.priority || null,
@@ -2635,21 +2638,49 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       io.emit('task_map:ma_progress_changed', maSession);
     } else if (maNameStr && (isHandedOverTask || Boolean(cleanTimeOut) || Boolean(nextHandedOver))) {
       const maKey = maNameStr.toLowerCase().trim();
-      const currentActive = await getMaActiveSession(maKey).catch(() => null);
-      const effectiveTargetId = target.subtaskId ? `subtask:${target.subtaskId}` : target.taskId;
-      if (!currentActive || currentActive.taskId === target.taskId || currentActive.taskId === effectiveTargetId) {
-        await deleteMaActiveSession(maKey).catch(() => {});
-        const clearedPayload = { maName: maNameStr, cleared: true, taskId: effectiveTargetId, timeOut: cleanTimeOut || null };
+      const maFirstName = maKey.split(/\s+/)[0] || maKey;
+      const allSessions = await getMaActiveSessionsMap().catch(() => ({} as Record<string, any>));
+      const keysToClear = new Set<string>();
+      for (const [k, s] of Object.entries(allSessions)) {
+        if (!s || s.cleared) continue;
+        const kNorm = k.toLowerCase().trim();
+        const kFirst = kNorm.split(/\s+/)[0] || kNorm;
+        const matchesMa = kNorm === maKey || kFirst === maFirstName;
+        const matchesTask =
+          !s.taskId ||
+          s.taskId === target.taskId ||
+          s.taskId === effectiveTargetId ||
+          (target.subtaskId && s.subtaskId === target.subtaskId) ||
+          (sheet_row && s.rowNumber && Number(s.rowNumber) === Number(sheet_row));
+        if ((matchesMa && matchesTask) || (s.taskId && (s.taskId === target.taskId || s.taskId === effectiveTargetId))) {
+          keysToClear.add(kNorm);
+        }
+      }
+      if (keysToClear.size === 0) {
+        keysToClear.add(maKey);
+      }
+      for (const k of keysToClear) {
+        await deleteMaActiveSession(k).catch(() => {});
+        const clearedPayload = {
+          maName: k === maKey ? maNameStr : k,
+          cleared: true,
+          active: false,
+          taskId: effectiveTargetId,
+          subtaskId: target.subtaskId || null,
+          timeOut: cleanTimeOut || null,
+        };
+        if (k === maKey) emittedClearedPayload = clearedPayload;
         io.emit('ma:session_updated', clearedPayload);
         io.emit('task_map:ma_progress_changed', clearedPayload);
-        io.emit('task_map:updated', { maSession: clearedPayload, taskId: effectiveTargetId });
       }
     }
 
     // Emit Realtime WebSockets so TaskMapContainer and BoardView update immediately
     io.emit('task_map:updated', {
-      taskId: target.taskId,
+      taskId: effectiveTargetId,
+      subtaskId: target.subtaskId || null,
       status: nextTaskStatus || undefined,
+      ...(emittedClearedPayload ? { maSession: emittedClearedPayload } : {}),
       taskMap: {
         statuses: nextRecordStatuses,
         ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
@@ -2659,7 +2690,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       progress: progressObj,
     });
     io.emit('task:progress_updated', {
-      taskId: target.taskId,
+      taskId: effectiveTargetId,
       progress: progressObj,
     });
 

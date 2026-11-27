@@ -811,18 +811,21 @@ export const TaskMapContainer: React.FC = () => {
       } = data;
 
       // If this client is actively debouncing a local status change or saving a drag/assign for this task, ignore older broadcast
+      // (NEVER ignore explicit clock-out / cleared-session realtime updates so live progress never sticks)
+      const isClockOutBroadcast = Boolean(data.maSession?.cleared || (data.progress?.timeOut && !data.progress?.isMissingTime));
       const pending = pendingUpdatesRef.current.get(taskId);
       const pendingAssign = pendingAssignRef.current.get(taskId);
       if (
-        pending?.timer ||
-        isTaskSavingToDb(taskId) ||
-        (pendingAssign && Date.now() - pendingAssign.timestamp < 3500)
+        !isClockOutBroadcast &&
+        (pending?.timer ||
+          isTaskSavingToDb(taskId) ||
+          (pendingAssign && Date.now() - pendingAssign.timestamp < 3500))
       ) {
         return;
       }
 
-      // If an assignment or handover occurred and a full re-bucket may be needed, trigger a silent sync
-      if (data.assigneeId !== undefined || data.handedOver !== undefined) {
+      // If an assignment, handover, or clock-out occurred and a full re-bucket may be needed, trigger a silent sync
+      if (data.assigneeId !== undefined || data.handedOver !== undefined || isClockOutBroadcast) {
         scheduleReload();
       }
 
@@ -859,7 +862,7 @@ export const TaskMapContainer: React.FC = () => {
               : t.taskMap.statuses;
         return applyLiveWorkingTaskStatus({
           ...t,
-          status: nextTaskObj?.status ?? t.status,
+          status: data.status ?? nextTaskObj?.status ?? t.status,
           assigneeId: data.assigneeId !== undefined ? data.assigneeId : (nextTaskObj?.assigneeId !== undefined ? nextTaskObj.assigneeId : t.assigneeId),
           assignee: nextAssignee !== undefined ? nextAssignee : t.assignee,
           assignees: nextAssignees !== undefined ? nextAssignees : t.assignees,
@@ -927,21 +930,27 @@ export const TaskMapContainer: React.FC = () => {
       const log = data?.log;
       const targetItemId = log?.subtaskId ? `subtask:${log.subtaskId}` : (log?.taskId || null);
       if (log?.maName) {
-        useAppStore.getState().updateMaActiveSession(log.maName, {
-          maName: log.maName,
-          client: log.client || null,
-          taskName: log.taskName || null,
-          taskId: targetItemId,
-          subtaskId: log.subtaskId || null,
-          timeIn: log.timeIn || null,
-          timeOut: log.timeOut || null,
-          date: log.dateKey || currentDate,
-          status: log.status || (log.timeOut ? 'CLOSED' : 'IN PROGRESS'),
-          isUpwork: Boolean(log.isUpwork),
-          rowNumber: log.sheetRow || null,
-          updatedAt: log.submittedAt || log.updatedAt || new Date().toISOString(),
-          active: Boolean(log.timeIn && !log.timeOut && !log.isMissingTime),
-        });
+        const isLogTimedOut = Boolean(log.timeOut && !log.isMissingTime);
+        useAppStore.getState().updateMaActiveSession(
+          log.maName,
+          isLogTimedOut
+            ? null
+            : {
+                maName: log.maName,
+                client: log.client || null,
+                taskName: log.taskName || null,
+                taskId: targetItemId,
+                subtaskId: log.subtaskId || null,
+                timeIn: log.timeIn || null,
+                timeOut: log.timeOut || null,
+                date: log.dateKey || currentDate,
+                status: log.status || (log.timeOut ? 'CLOSED' : 'IN PROGRESS'),
+                isUpwork: Boolean(log.isUpwork),
+                rowNumber: log.sheetRow || null,
+                updatedAt: log.submittedAt || log.updatedAt || new Date().toISOString(),
+                active: Boolean(log.timeIn && !log.timeOut && !log.isMissingTime),
+              }
+        );
       }
       if (targetItemId) {
         const nextProgress = {
@@ -1015,15 +1024,17 @@ export const TaskMapContainer: React.FC = () => {
         const targetId = data?.subtaskId ? `subtask:${data.subtaskId}` : data?.taskId;
         const resolvedTimeOut = data?.timeOut || formatManilaTime(new Date());
         const maKey = (data?.maName || '').trim().toLowerCase();
+        const maFirst = maKey.split(/\s+/)[0] || maKey;
         const patchTimedOut = (t: TaskMapItem): TaskMapItem => {
           const matchesId = Boolean(targetId && t.id === targetId);
+          const progMa = (t.progress?.maName || '').trim().toLowerCase();
+          const progFirst = progMa.split(/\s+/)[0] || progMa;
           const matchesMa = Boolean(
-            !targetId &&
             maKey &&
-            t.progress?.maName &&
-            t.progress.maName.trim().toLowerCase() === maKey &&
-            t.progress.timeIn &&
-            !t.progress.timeOut
+            progMa &&
+            (progMa === maKey || progFirst === maFirst) &&
+            t.progress?.timeIn &&
+            !t.progress?.timeOut
           );
           if (!matchesId && !matchesMa) return t;
           if (t.progress?.timeOut) return t;
@@ -1038,6 +1049,7 @@ export const TaskMapContainer: React.FC = () => {
         };
         setTasks((prev) => prev.map(patchTimedOut));
         setAvailablePool((prev) => prev.map(patchTimedOut));
+        scheduleReload();
       }
     };
 

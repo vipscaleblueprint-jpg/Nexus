@@ -243,6 +243,13 @@ export const tasksApi = {
     });
   },
 
+  async pauseRecurring(id: string, preset: '1d' | '3d' | '1w' | '2w' | 'indefinite' | null): Promise<{ task: Task }> {
+    return apiClient<{ task: Task }>(`/api/tasks/${id}/recurring/pause`, {
+      method: 'POST',
+      body: JSON.stringify({ preset }),
+    });
+  },
+
   async duplicateToPending(id: string): Promise<{ task: Task }> {
     return apiClient<{ task: Task }>(`/api/tasks/${id}/duplicate-pending`, {
       method: 'POST',

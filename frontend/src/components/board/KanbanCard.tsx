@@ -6,11 +6,19 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CSS } from '@dnd-kit/utilities';
 import { Task, Subtask } from '@/lib/types';
-import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck, Link2 } from 'lucide-react';
+import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck, Link2, PauseCircle } from 'lucide-react';
 import { getNexusTaskUrl } from '@/lib/links';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
-import { RecurrencePicker, formatTimeDisplay } from '@/components/modals/RecurrencePicker';
+import {
+  RecurrencePicker,
+  formatTimeDisplay,
+  PAUSE_PRESET_OPTIONS,
+  isTaskRecurrencePaused,
+  formatPausedLabel,
+  formatPausedShortLabel,
+} from '@/components/modals/RecurrencePicker';
+import { RecurrencePausePreset } from '@/lib/types';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -353,6 +361,27 @@ const CardContent = memo(({
       }
     } catch (e: any) {
       toast.error(e.message || 'Failed to duplicate task');
+    }
+  };
+
+  const handlePauseRecurrence = async (preset: RecurrencePausePreset | null) => {
+    if (!currentUser || isSubtask) return;
+    closeDropdown();
+    try {
+      const res = await tasksApi.pauseRecurring(task.id, preset);
+      const updated = { ...task, recurringConfig: res.task?.recurringConfig ?? null } as Task;
+      setTask(updated);
+      useAppStore.getState().updateTask(updated);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
+      if (preset === null) {
+        toast.success('Recurrence resumed');
+      } else {
+        const optionLabel = PAUSE_PRESET_OPTIONS.find((o) => o.value === preset)?.label || 'Paused';
+        toast.success(`Recurrence: ${optionLabel}`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update pause state');
+      setTask(initialTask);
     }
   };
 
@@ -1073,21 +1102,40 @@ const CardContent = memo(({
           {/* Recurrence (Right side) - ONLY if in recurring group! */}
           {isInRecurringGroup && (
             <div className="relative">
-              <div
-                ref={recurrenceTriggerRef}
-                className={`${fieldHoverClass} text-zinc-500 dark:text-zinc-400`}
-                onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'recurrence' ? null : 'recurrence'); }}
-                title="Set Recurrence"
-              >
-                <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                <span className={(task as any).recurringConfig?.time ? 'text-purple-700 dark:text-purple-300 font-medium' : ''}>
-                  {(task as any).recurringConfig?.time
-                    ? formatTimeDisplay((task as any).recurringConfig.time)
-                    : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
-                      ? `Set ${(task as any).status} Time`
-                      : 'Set Time'}
-                </span>
-              </div>
+              {(() => {
+                const recConfig = (task as any).recurringConfig;
+                const paused = isTaskRecurrencePaused(recConfig);
+                return (
+                  <div
+                    ref={recurrenceTriggerRef}
+                    className={`${fieldHoverClass} ${
+                      paused
+                        ? 'text-amber-700 dark:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded px-1.5'
+                        : 'text-zinc-500 dark:text-zinc-400'
+                    }`}
+                    onClick={(e) => { e.stopPropagation(); setOpenDropdown(openDropdown === 'recurrence' ? null : 'recurrence'); }}
+                    title={paused ? formatPausedLabel(recConfig) : 'Set Recurrence or Pause'}
+                  >
+                    {paused ? (
+                      <>
+                        <PauseCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <span className="font-semibold">{formatPausedShortLabel(recConfig)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                        <span className={recConfig?.time ? 'text-purple-700 dark:text-purple-300 font-medium' : ''}>
+                          {recConfig?.time
+                            ? formatTimeDisplay(recConfig.time)
+                            : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
+                              ? `Set ${(task as any).status} Time`
+                              : 'Set Time'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
               {openDropdown === 'recurrence' && (
                 <PortalDropdown triggerRef={recurrenceTriggerRef} onClose={closeDropdown}>
                   <RecurrencePicker
@@ -1098,6 +1146,7 @@ const CardContent = memo(({
                         : 'DAILY'
                     }
                     onSave={handleSaveRecurrence}
+                    onPauseRecurrence={handlePauseRecurrence}
                     onDuplicateNow={handleDuplicateNow}
                     onClose={closeDropdown}
                   />

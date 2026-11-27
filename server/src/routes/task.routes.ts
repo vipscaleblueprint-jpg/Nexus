@@ -28,8 +28,11 @@ import {
   createTaskAttachment,
   deleteTaskAttachment,
   setTaskRecurrence,
+  pauseTaskRecurrence,
   duplicateTaskToPending,
   triggerRecurringRollover,
+  triggerRecurringWeeklyRollover,
+  triggerRecurringMonthlyRollover,
 } from '../controllers/task.controller';
 import {
   getGalaxyClients,
@@ -63,6 +66,8 @@ taskRouter.post('/batch', validate({ body: batchGetTasksSchema }), batchGetTasks
 
 // Specific paths before '/:id' so they are not swallowed by the param route.
 taskRouter.post('/recurring/rollover', optionalAuthenticateToken, triggerRecurringRollover);
+taskRouter.post('/recurring/rollover/weekly', optionalAuthenticateToken, triggerRecurringWeeklyRollover);
+taskRouter.post('/recurring/rollover/monthly', optionalAuthenticateToken, triggerRecurringMonthlyRollover);
 taskRouter.patch('/:id/move', optionalAuthenticateToken, validate({ params: idParams, body: moveTaskSchema }), moveTask);
 taskRouter.post(
   '/:id/attachments/r2-url',
@@ -79,6 +84,7 @@ taskRouter.post('/:id/comments/:commentId/reactions', toggleCommentReaction);
 taskRouter.get('/:id/activities', validate({ params: idParams }), getTaskActivities);
 
 taskRouter.post('/:id/recurring', optionalAuthenticateToken, validate({ params: idParams }), setTaskRecurrence);
+taskRouter.post('/:id/recurring/pause', optionalAuthenticateToken, validate({ params: idParams }), pauseTaskRecurrence);
 taskRouter.post('/:id/duplicate-pending', optionalAuthenticateToken, validate({ params: idParams }), duplicateTaskToPending);
 
 taskRouter.post('/:id/subtasks', optionalAuthenticateToken, validate({ params: idParams }), createSubtask);

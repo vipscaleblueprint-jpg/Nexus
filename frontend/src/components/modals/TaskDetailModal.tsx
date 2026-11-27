@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info } from 'lucide-react';
+import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info, PauseCircle, Play } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -51,8 +51,14 @@ import { TaskInfoDrawer } from './TaskInfoDrawer';
 import { BlurUpImage } from '../ui/BlurUpImage';
 import { CommentAttachmentCard, isAttachmentUrl, getFileExtension } from '../ui/CommentAttachmentCard';
 import { extractImagesFromComments } from '@/lib/commentImages';
-import { RecurrencePicker, formatTimeDisplay } from './RecurrencePicker';
-import { RecurringConfig } from '@/lib/types';
+import {
+  RecurrencePicker,
+  formatTimeDisplay,
+  PAUSE_PRESET_OPTIONS,
+  isTaskRecurrencePaused,
+  formatPausedLabel,
+} from './RecurrencePicker';
+import { RecurringConfig, RecurrencePausePreset } from '@/lib/types';
 import { ActivityDayDivider, getDayKey, isTodayDate } from '../ui/ActivityDayDivider';
 import { openTaskInNewTab, markPendingModalHistoryBack, isModalHistoryBackPending, clearPendingModalHistoryBack } from '@/lib/taskNavigation';
 export { isModalHistoryBackPending };
@@ -2341,7 +2347,7 @@ export function TaskDetailModalContent({
         const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
         const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(itemNorm);
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
+          const isAudit = isAuditItem && isNexusAuditChecklist(c);
           if (c.id === payload.checklistId || isAudit) {
             const hasItem = (c.items || []).some((i: any) =>
               i.id === payload.item.id ||
@@ -2372,7 +2378,7 @@ export function TaskDetailModalContent({
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
-              const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
+              const isAudit = isAuditItem && isNexusAuditChecklist(c);
               if (c.id === payload.checklistId || isAudit) {
                 const hasItem = (c.items || []).some((i: any) =>
                   i.id === payload.item.id ||
@@ -2670,6 +2676,8 @@ export function TaskDetailModalContent({
   const [isPriorityOpen, setIsPriorityOpen] = useState(false);
   const [isDateOpen, setIsDateOpen] = useState(false);
   const [isRecurrenceOpen, setIsRecurrenceOpen] = useState(false);
+  const [isPausePopoverOpen, setIsPausePopoverOpen] = useState(false);
+  const [isPausingRecurrence, setIsPausingRecurrence] = useState(false);
   const [internalListStatuses, setinternalListStatuses] = useState<any[]>(listStatuses || []);
 
   const isInRecurringGroup = useMemo(() => {
@@ -3387,6 +3395,29 @@ export function TaskDetailModalContent({
       }
     } catch (err: any) {
       toast.error(err.message || 'Failed to duplicate task');
+    }
+  };
+
+  const handlePauseRecurrence = async (preset: RecurrencePausePreset | null) => {
+    if (!task) return;
+    try {
+      setIsPausingRecurrence(true);
+      const res = await tasksApi.pauseRecurring(task.id, preset);
+      const updated = { ...task, recurringConfig: res.task?.recurringConfig ?? null };
+      if (onUpdateTask) onUpdateTask(updated);
+      useAppStore.getState().updateTask(updated);
+      window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updated } }));
+      setIsPausePopoverOpen(false);
+      if (preset === null) {
+        toast.success('Recurrence resumed');
+      } else {
+        const optionLabel = PAUSE_PRESET_OPTIONS.find((o) => o.value === preset)?.label || 'Paused';
+        toast.success(`Recurrence: ${optionLabel}`);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update pause state');
+    } finally {
+      setIsPausingRecurrence(false);
     }
   };
 
@@ -4505,56 +4536,126 @@ export function TaskDetailModalContent({
                       </Popover.Portal>
                     </Popover.Root>
 
-                    {/* Right: Recurrence - ONLY if in recurring group! */}
+                    {/* Right: Recurrence & Pause - ONLY if in recurring group! */}
                     {isInRecurringGroup && (
-                      <Popover.Root open={isRecurrenceOpen && canEditTask} onOpenChange={setIsRecurrenceOpen}>
-                        <Popover.Trigger asChild>
-                          <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800/50 dark:hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
-                            {task.recurringConfig ? (
-                              <>
-                                <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                                <span className="font-semibold text-purple-700 dark:text-purple-300">
-                                  {(() => {
-                                    const statusUpper = (localStatus || '').toUpperCase().trim();
-                                    const effectiveFreq = ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)
-                                      ? statusUpper
-                                      : (task.recurringConfig.frequency || 'DAILY');
-                                    return effectiveFreq === 'DAILY'
-                                      ? `Daily at ${formatTimeDisplay(task.recurringConfig.time)}`
-                                      : effectiveFreq === 'WEEKLY'
-                                      ? `Weekly Mon-Fri at ${formatTimeDisplay(task.recurringConfig.time)}`
-                                      : `Monthly on ${task.recurringConfig.dayOfMonth || 1} at ${formatTimeDisplay(task.recurringConfig.time)}`;
-                                  })()}
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <Repeat className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                                <span className="text-zinc-500 hover:text-zinc-300">
-                                  {['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
-                                    ? `Set ${(localStatus || '').toUpperCase()} Time`
-                                    : 'Set Recurrence'}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </Popover.Trigger>
-                        <Popover.Portal>
-                          <Popover.Content className="z-[100000] p-0 border-none bg-transparent outline-none" side="bottom" align="start" sideOffset={4}>
-                            <RecurrencePicker
-                              task={task}
-                              defaultFrequency={
-                                ['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
-                                  ? ((localStatus || '').toUpperCase() as any)
-                                  : 'DAILY'
-                              }
-                              onSave={handleSaveRecurrence}
-                              onDuplicateNow={handleDuplicateNow}
-                              onClose={() => setIsRecurrenceOpen(false)}
-                            />
-                          </Popover.Content>
-                        </Popover.Portal>
-                      </Popover.Root>
+                      <>
+                        <Popover.Root open={isRecurrenceOpen && canEditTask} onOpenChange={setIsRecurrenceOpen}>
+                          <Popover.Trigger asChild>
+                            <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800/50 dark:hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit">
+                              {task.recurringConfig?.time ? (
+                                <>
+                                  <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                                  <span className="font-semibold text-purple-700 dark:text-purple-300">
+                                    {(() => {
+                                      const statusUpper = (localStatus || '').toUpperCase().trim();
+                                      const effectiveFreq = ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper)
+                                        ? statusUpper
+                                        : (task.recurringConfig.frequency || 'DAILY');
+                                      return effectiveFreq === 'DAILY'
+                                        ? `Daily at ${formatTimeDisplay(task.recurringConfig.time)}`
+                                        : effectiveFreq === 'WEEKLY'
+                                        ? `Weekly Mon-Fri at ${formatTimeDisplay(task.recurringConfig.time)}`
+                                        : `Monthly on ${task.recurringConfig.dayOfMonth || 1} at ${formatTimeDisplay(task.recurringConfig.time)}`;
+                                    })()}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <Repeat className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                                  <span className="text-zinc-500 hover:text-zinc-300">
+                                    {['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
+                                      ? `Set ${(localStatus || '').toUpperCase()} Time`
+                                      : 'Set Recurrence'}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </Popover.Trigger>
+                          <Popover.Portal>
+                            <Popover.Content className="z-[100000] p-0 border-none bg-transparent outline-none" side="bottom" align="start" sideOffset={4}>
+                              <RecurrencePicker
+                                task={task}
+                                defaultFrequency={
+                                  ['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
+                                    ? ((localStatus || '').toUpperCase() as any)
+                                    : 'DAILY'
+                                }
+                                onSave={handleSaveRecurrence}
+                                onPauseRecurrence={handlePauseRecurrence}
+                                onDuplicateNow={handleDuplicateNow}
+                                onClose={() => setIsRecurrenceOpen(false)}
+                              />
+                            </Popover.Content>
+                          </Popover.Portal>
+                        </Popover.Root>
+
+                        {/* Dedicated Pause / Resume Recurrence Popover */}
+                        <Popover.Root open={isPausePopoverOpen && canEditTask} onOpenChange={setIsPausePopoverOpen}>
+                          <Popover.Trigger asChild>
+                            {(() => {
+                              const paused = isTaskRecurrencePaused(task.recurringConfig);
+                              return (
+                                <button
+                                  type="button"
+                                  className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md transition-colors text-[11px] select-none w-fit cursor-pointer ${
+                                    paused
+                                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-semibold'
+                                      : 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800/50 dark:hover:bg-zinc-700/50 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                                  }`}
+                                  title={paused ? formatPausedLabel(task.recurringConfig) : 'Pause recurring task'}
+                                >
+                                  <PauseCircle className={`w-3.5 h-3.5 shrink-0 ${paused ? 'text-amber-500' : 'text-zinc-500'}`} />
+                                  <span>{paused ? formatPausedLabel(task.recurringConfig) : 'Pause'}</span>
+                                </button>
+                              );
+                            })()}
+                          </Popover.Trigger>
+                          <Popover.Portal>
+                            <Popover.Content className="z-[100000] p-0 border-none bg-transparent outline-none" side="bottom" align="start" sideOffset={4}>
+                              <div className="w-[220px] p-2 bg-card border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl text-foreground flex flex-col gap-1 font-sans">
+                                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center justify-between">
+                                  <span>Pause Recurrence</span>
+                                  {isTaskRecurrencePaused(task.recurringConfig) && (
+                                    <span className="text-amber-600 dark:text-amber-400">Paused</span>
+                                  )}
+                                </div>
+                                {isTaskRecurrencePaused(task.recurringConfig) && (
+                                  <button
+                                    type="button"
+                                    disabled={isPausingRecurrence}
+                                    onClick={() => handlePauseRecurrence(null)}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-300 transition-colors cursor-pointer disabled:opacity-50 mb-1"
+                                  >
+                                    <Play className="w-3.5 h-3.5 fill-current shrink-0" />
+                                    <span>Resume Recurrence</span>
+                                  </button>
+                                )}
+                                {PAUSE_PRESET_OPTIONS.map((opt) => {
+                                  const isActive =
+                                    isTaskRecurrencePaused(task.recurringConfig) &&
+                                    task.recurringConfig?.pausePreset === opt.value;
+                                  return (
+                                    <button
+                                      key={opt.value}
+                                      type="button"
+                                      disabled={isPausingRecurrence}
+                                      onClick={() => handlePauseRecurrence(opt.value)}
+                                      className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                                        isActive
+                                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold'
+                                          : 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                                      }`}
+                                    >
+                                      <span>{opt.label}</span>
+                                      {isActive && <Check className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </Popover.Content>
+                          </Popover.Portal>
+                        </Popover.Root>
+                      </>
                     )}
                   </div>
                 </div>

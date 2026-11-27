@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight, User, Check, Plus, Trash2, Lock } from 'luci
 import * as Popover from '@radix-ui/react-popover';
 import {
   isNexusAuditChecklist,
+  isNexusAuditItemText,
   getRequiredAudits,
   getAiPickedAudits,
   ALL_AUDIT_OPTIONS,
@@ -476,8 +477,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
 
   // Read items from audit checklists for this task or subtask
   const auditChecklists = useMemo(() => localChecklists.filter(c => {
-    const isAudit = isNexusAuditChecklist(c) || (c.name || '').trim().toLowerCase() === 'audit';
-    if (!isAudit) return false;
+    if (!isNexusAuditChecklist(c)) return false;
     if (subtaskId) {
       return c.subtaskId === subtaskId;
     } else {
@@ -502,7 +502,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
   ), [auditChecklists]);
 
   const activeChecklistItems = useMemo(() => auditChecklists.flatMap(c => c.items || [])
-    .filter(i => !(i.text || '').startsWith('!'))
+    .filter(i => !(i.text || '').startsWith('!') && isNexusAuditItemText(i.text))
     .map(i => i.text), [auditChecklists]);
 
   // Audits the AI picked (for this task, or this subtask) replace the role/title rules.

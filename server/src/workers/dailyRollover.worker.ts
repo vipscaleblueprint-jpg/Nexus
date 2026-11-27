@@ -14,7 +14,11 @@ import {
   taskMentionIds,
   NEW_TASK_BADGE,
 } from '../utils/pageBlocks';
-import { runRecurringDailyRollover } from '../services/recurringTaskService';
+import {
+  runRecurringDailyRollover,
+  runRecurringWeeklyRollover,
+  runRecurringMonthlyRollover,
+} from '../services/recurringTaskService';
 import { sweepInReviewTasksForShiftAudits } from '../services/auditAutoAssign';
 import { executeTaskMapShiftRollover } from './taskMapRollover.worker';
 import { executeTaskMapDailyRollover } from '../services/taskMapService';
@@ -460,6 +464,22 @@ export const dailyRolloverWorker = new Worker(
       logger.info(`Finished Recurring Tasks Rollover: created ${recurringRes.createdCount}, skipped ${recurringRes.skippedCount}`);
     } catch (recErr) {
       logger.error(`Recurring Tasks Rollover failed: ${errMsg(recErr)}`);
+    }
+
+    logger.info('Running Weekly Recurring Tasks Rollover...');
+    try {
+      const weeklyRes = await runRecurringWeeklyRollover(job.data);
+      logger.info(`Finished Weekly Recurring Tasks Rollover: created ${weeklyRes.createdCount}, skipped ${weeklyRes.skippedCount}`);
+    } catch (weeklyErr) {
+      logger.error(`Weekly Recurring Tasks Rollover failed: ${errMsg(weeklyErr)}`);
+    }
+
+    logger.info('Running Monthly Recurring Tasks Rollover...');
+    try {
+      const monthlyRes = await runRecurringMonthlyRollover(job.data);
+      logger.info(`Finished Monthly Recurring Tasks Rollover: created ${monthlyRes.createdCount}, skipped ${monthlyRes.skippedCount}`);
+    } catch (monthlyErr) {
+      logger.error(`Monthly Recurring Tasks Rollover failed: ${errMsg(monthlyErr)}`);
     }
 
 

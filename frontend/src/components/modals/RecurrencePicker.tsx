@@ -1,11 +1,46 @@
 import React, { useState, useMemo } from 'react';
-import { Task, RecurringConfig } from '@/lib/types';
-import { Clock, Calendar, Repeat, Sparkles, Check, Trash2, Copy, AlertCircle } from 'lucide-react';
+import { Task, RecurringConfig, RecurrencePausePreset } from '@/lib/types';
+import { Clock, Calendar, Repeat, Sparkles, Check, Trash2, Copy, AlertCircle, PauseCircle, Play } from 'lucide-react';
+
+export const PAUSE_PRESET_OPTIONS: Array<{ value: RecurrencePausePreset; label: string; shortLabel: string }> = [
+  { value: '1d', label: 'Pause for 1 day', shortLabel: '1 day' },
+  { value: '3d', label: 'Pause for 3 days', shortLabel: '3 days' },
+  { value: '1w', label: 'Pause for 1 week', shortLabel: '1 week' },
+  { value: '2w', label: 'Pause for 2 weeks', shortLabel: '2 weeks' },
+  { value: 'indefinite', label: 'Pause indefinitely', shortLabel: 'Indefinitely' },
+];
+
+export function isTaskRecurrencePaused(config?: RecurringConfig | null): boolean {
+  if (!config?.paused) return false;
+  if (!config.pausedUntil) return true;
+  const until = new Date(config.pausedUntil).getTime();
+  if (isNaN(until)) return true;
+  return Date.now() < until;
+}
+
+export function formatPausedLabel(config?: RecurringConfig | null): string {
+  if (!isTaskRecurrencePaused(config)) return '';
+  if (!config?.pausedUntil) return 'Paused indefinitely';
+  const until = new Date(config.pausedUntil);
+  if (isNaN(until.getTime())) return 'Paused indefinitely';
+  const formatted = until.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `Paused until ${formatted}`;
+}
+
+export function formatPausedShortLabel(config?: RecurringConfig | null): string {
+  if (!isTaskRecurrencePaused(config)) return '';
+  if (!config?.pausedUntil) return 'Paused';
+  const until = new Date(config.pausedUntil);
+  if (isNaN(until.getTime())) return 'Paused';
+  const formatted = until.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `Paused · ${formatted}`;
+}
 
 interface RecurrencePickerProps {
   task: Task;
   defaultFrequency?: 'DAILY' | 'WEEKLY' | 'MONTHLY';
   onSave: (config: RecurringConfig | null, triggerImmediate: boolean) => Promise<void>;
+  onPauseRecurrence?: (preset: RecurrencePausePreset | null) => Promise<void>;
   onDuplicateNow?: () => Promise<void>;
   onClose?: () => void;
 }
@@ -53,10 +88,14 @@ export function RecurrencePicker({
   task,
   defaultFrequency,
   onSave,
+  onPauseRecurrence,
   onDuplicateNow,
   onClose,
 }: RecurrencePickerProps) {
   const existingConfig = task.recurringConfig;
+  const isPaused = isTaskRecurrencePaused(existingConfig);
+  const pausedLabel = formatPausedLabel(existingConfig);
+  const [isPausing, setIsPausing] = useState(false);
 
   // Frequency is based directly on task status for DAILY, WEEKLY, MONTHLY
   const statusUpper = ((task as any).status || '').toUpperCase().trim();
@@ -119,6 +158,14 @@ export function RecurrencePicker({
         dayOfMonth: frequency === 'MONTHLY' ? dayOfMonth : undefined,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Singapore',
         lastRunAt: triggerImmediate ? new Date().toISOString() : existingConfig?.lastRunAt,
+        ...(existingConfig?.paused
+          ? {
+              paused: existingConfig.paused,
+              pausedUntil: existingConfig.pausedUntil ?? null,
+              pausedAt: existingConfig.pausedAt ?? null,
+              pausePreset: existingConfig.pausePreset ?? null,
+            }
+          : {}),
       };
       await onSave(config, triggerImmediate);
       if (onClose) onClose();
@@ -154,6 +201,19 @@ export function RecurrencePicker({
     }
   };
 
+  const handlePauseSelect = async (preset: RecurrencePausePreset | null) => {
+    if (!onPauseRecurrence) return;
+    try {
+      setIsPausing(true);
+      await onPauseRecurrence(preset);
+      if (onClose) onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsPausing(false);
+    }
+  };
+
   return (
     <div className="w-[320px] p-3.5 bg-card border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl text-foreground select-none flex flex-col gap-3 font-sans">
       {/* Header */}
@@ -165,8 +225,14 @@ export function RecurrencePicker({
           </span>
         </div>
         {existingConfig && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 font-medium">
-            Active
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+              isPaused
+                ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                : 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300'
+            }`}
+          >
+            {isPaused ? 'Paused' : 'Active'}
           </span>
         )}
       </div>
@@ -356,6 +422,49 @@ export function RecurrencePicker({
           {previewTitle}
         </p>
       </div>
+
+      {/* Pause Recurrence Section */}
+      {onPauseRecurrence && (
+        <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800/80">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
+              <PauseCircle className={`w-3.5 h-3.5 shrink-0 ${isPaused ? 'text-amber-500' : 'text-zinc-500 dark:text-zinc-400'}`} />
+              {isPaused ? pausedLabel : 'Pause Recurrence'}
+            </span>
+            {isPaused && (
+              <button
+                type="button"
+                disabled={isPausing}
+                onClick={() => handlePauseSelect(null)}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Play className="w-2.5 h-2.5 fill-current" />
+                Resume
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {PAUSE_PRESET_OPTIONS.map((opt) => {
+              const isSelected = isPaused && existingConfig?.pausePreset === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={isPausing}
+                  onClick={() => handlePauseSelect(opt.value)}
+                  className={`text-[10px] px-2 py-0.5 rounded transition-colors cursor-pointer disabled:opacity-50 ${
+                    isSelected
+                      ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold ring-1 ring-amber-500/50'
+                      : 'bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-400 hover:bg-amber-500/15 hover:text-amber-700 dark:hover:text-amber-300'
+                  }`}
+                >
+                  {opt.shortLabel}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex flex-col gap-2 pt-1 border-t border-zinc-200 dark:border-zinc-800/80">

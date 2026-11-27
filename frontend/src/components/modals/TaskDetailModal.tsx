@@ -10089,6 +10089,12 @@ export function SubtaskDetailView({
                                     <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium text-[11px] mr-1 mb-1">{act.author || 'Someone'}</span>
                                     created subtask <span className="text-zinc-200 font-medium px-1">{act.subtaskTitle}</span>
                                   </div>
+                                  <span className="text-xs text-zinc-500 shrink-0 whitespace-nowrap">
+                                    {timeStr}
+                                  </span>
+                                </div>
+                              );
+                            }
                             if (act.type === 'delete_subtask') {
                               const actorName = act.author === currentUser?.name ? 'You' : (act.author || 'Someone');
                               return (

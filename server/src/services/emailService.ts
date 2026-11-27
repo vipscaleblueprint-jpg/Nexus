@@ -56,6 +56,53 @@ export async function sendOTPEmail(toEmail: string, otpCode: string): Promise<bo
   }
 }
 
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+
+export async function sendInvitationEmail(
+  toEmail: string,
+  inviterName: string,
+  loginUrl: string,
+  expiresAt: Date
+): Promise<boolean> {
+  try {
+    const inviter = escapeHtml(inviterName || 'An admin');
+    const url = escapeHtml(loginUrl);
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; background-color: #131316; color: #e4e4e7; padding: 32px;">
+        <div style="max-width: 480px; margin: 0 auto; background-color: #18181c; border: 1px solid #27272a; padding: 28px; border-radius: 16px;">
+          <h2 style="color: #ffffff; margin-top: 0; font-size: 20px;">You're invited to Nexus</h2>
+          <p style="color: #a1a1aa; font-size: 14px; line-height: 1.5;">
+            <strong>${inviter}</strong> invited you to join the Nexus workspace.
+          </p>
+          <p style="color: #a1a1aa; font-size: 14px; line-height: 1.5;">
+            Click below and choose <strong>Sign in with Google</strong> using this email address (${escapeHtml(toEmail)}).
+          </p>
+          <div style="text-align: center; margin: 24px 0;">
+            <a href="${url}" style="display: inline-block; background-color: #7c3aed; color: #ffffff; text-decoration: none; font-weight: 700; padding: 12px 24px; border-radius: 10px;">Join Nexus</a>
+          </div>
+          <p style="color: #71717a; font-size: 12px; margin-bottom: 0;">
+            This invitation expires on ${expiresAt.toUTCString()}.
+          </p>
+        </div>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: SMTP_FROM,
+      to: toEmail,
+      subject: `[Nexus] ${inviterName || 'An admin'} invited you to join Nexus`,
+      html: htmlContent,
+    });
+
+    log.info({ to: toEmail }, 'Invitation email sent');
+    return true;
+  } catch (error: any) {
+    log.error({ err: error, to: toEmail }, `Failed to send invitation email to ${toEmail}: ${errMsg(error)}`);
+    return false;
+  }
+}
+
 export async function sendPasswordChangeEmail(toEmail: string, userName: string): Promise<boolean> {
   try {
     const htmlContent = `

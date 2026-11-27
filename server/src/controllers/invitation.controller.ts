@@ -1,6 +1,13 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { sendInvitationEmail } from '../services/emailService';
+
+const LOGIN_URL = `${(process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'https://nexus.vipscaleph.com').replace(/\/+$/, '')}/login`;
+
+async function emailInvite(inv: { email: string; expiresAt: Date; invitedBy?: { name: string | null } | null }) {
+  return sendInvitationEmail(inv.email, inv.invitedBy?.name || 'An admin', LOGIN_URL, inv.expiresAt);
+}
 
 // GET /api/invitations - Admin Only
 export async function listInvitations(req: AuthRequest, res: Response) {
@@ -95,7 +102,8 @@ export async function createInvitation(req: AuthRequest, res: Response) {
       });
     }
 
-    return res.status(201).json({ invitation });
+    const emailSent = await emailInvite(invitation);
+    return res.status(201).json({ invitation, emailSent });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -144,7 +152,8 @@ export async function resendInvitation(req: AuthRequest, res: Response) {
       },
     });
 
-    return res.json({ invitation });
+    const emailSent = await emailInvite(invitation);
+    return res.json({ invitation, emailSent });
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Invitation not found' });
     return res.status(500).json({ error: err.message });

@@ -2849,10 +2849,11 @@ export const TaskMapBoardView: React.FC<Props> = ({
           } catch (_) {}
         }
 
-        if (hasActiveTimeIn || isHandover || isToReview) {
-          // Persist sheet clock-out FIRST so any subsequent loadData(true) sees timeOut populated
+        if (hasActiveTimeIn || isHandover || isToReview || isAvailableTask || isPaused) {
+          // Persist sheet clock-out FIRST so any subsequent loadData(true) sees timeOut populated.
+          // Never pass synthetic `general-slot-*` IDs as taskId (server would fail FK lookup).
           await taskMapApi.syncScheduleToSpreadsheet({
-            taskId: linkedId || task.id,
+            taskId: linkedId || null,
             subtaskId: task.subtaskId || null,
             sheetRow: task.progress?.sheetRow,
             taskTitle: task.title,
@@ -3111,10 +3112,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
         }
         toast.info(
           hasActiveTimeIn
-            ? `Returned to Available Tasks — clocked out at ${nowTimeOut}`
+            ? `Returned to Available Tasks — timed out at ${nowTimeOut}`
             : 'Returned to Available Tasks'
         );
-        toast.info(`Task returned to Available Tasks — timed out at ${nowTimeOut}`);
       } else if (isAskClient) {
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Ask Client'], statusPayloadExtra).catch(console.error);
         if (isPmUser && onTaskUpdate) {

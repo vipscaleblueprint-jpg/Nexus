@@ -24,6 +24,50 @@ export interface TaskDeliverablesModalProps {
   timeIn?: string;
 }
 
+const DEFAULT_UPDATE_TEMPLATE = [
+  '📍 Action Done:',
+  ' ┊➤ ',
+  ' ┊➤ ',
+  '',
+  '📎 Resources:',
+  ' ┊➤ ',
+  ' ┊➤ ',
+  '',
+  '⏭️ Still To Do:',
+  ' ┊➤ ',
+  ' ┊➤ ',
+].join('\n');
+
+function hasFilledUpdateSection(text: string): boolean {
+  const lines = (text || '').split(/\r?\n/);
+  let currentSection: 'action' | 'resources' | 'todo' | null = null;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+
+    const sectionMatch = trimmed.match(/^(?:📍|📎|⏭️?|📌)?\s*(Action Done|Resources|Still To Do)\s*:\s*(.*)$/i);
+    if (sectionMatch) {
+      const label = sectionMatch[1].toLowerCase();
+      currentSection = label.includes('action')
+        ? 'action'
+        : label.includes('resources')
+          ? 'resources'
+          : 'todo';
+      const inlineRemainder = (sectionMatch[2] || '').replace(/^[\s┊➤\-*•]+/, '').trim();
+      if (inlineRemainder.length > 0) return true;
+      continue;
+    }
+
+    if (currentSection) {
+      const cleaned = trimmed.replace(/^[\s┊➤\-*•]+/, '').trim();
+      if (cleaned.length > 0) return true;
+    }
+  }
+
+  return false;
+}
+
 export function TaskDeliverablesModal({
   isOpen,
   onClose,
@@ -37,7 +81,7 @@ export function TaskDeliverablesModal({
   timeIn = '',
 }: TaskDeliverablesModalProps) {
   const [deliverablesDescription, setDeliverablesDescription] = useState(initialDeliverables || taskTitle || '');
-  const [updateAndDeliverables, setUpdateAndDeliverables] = useState(initialUpdate || '');
+  const [updateAndDeliverables, setUpdateAndDeliverables] = useState(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
   const [currentTimeOut, setCurrentTimeOut] = useState(() => formatManilaTime(new Date()));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -55,7 +99,7 @@ export function TaskDeliverablesModal({
   useEffect(() => {
     if (isOpen) {
       setDeliverablesDescription(initialDeliverables || taskTitle || '');
-      setUpdateAndDeliverables(initialUpdate || '');
+      setUpdateAndDeliverables(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
     }
   }, [isOpen, taskTitle, initialDeliverables, initialUpdate]);
 
@@ -73,9 +117,14 @@ export function TaskDeliverablesModal({
   if (!isOpen) return null;
 
   const compactTarget = targetStatus.toLowerCase().replace(/[\s_-]+/g, '');
+  const isAvailableTask = compactTarget === 'availabletask';
   const isHandover = compactTarget === 'handover';
   const isPaused = compactTarget === 'paused';
   const isToReview = compactTarget === 'toreview' || compactTarget === 'inreview';
+  const hasUpdateSectionInput = useMemo(
+    () => hasFilledUpdateSection(updateAndDeliverables),
+    [updateAndDeliverables]
+  );
   const statusBadgeColor = isHandover
     ? 'bg-sky-500/15 border-sky-500/35 text-sky-300'
     : isPaused
@@ -104,7 +153,7 @@ export function TaskDeliverablesModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting || !quality.isSubmittable) return;
+    if (isSubmitting || !quality.isSubmittable || !hasUpdateSectionInput) return;
 
     try {
       setIsSubmitting(true);
@@ -145,10 +194,12 @@ export function TaskDeliverablesModal({
                   <Clock className="size-3 text-amber-400 shrink-0" />
                   <span>{timeIn ? `${timeIn} - ${currentTimeOut}` : currentTimeOut}</span>
                 </p>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${statusBadgeColor}`}>
-                  <ArrowRight className="size-2.5 shrink-0" />
-                  {targetBadgeLabel}
-                </span>
+                {!isAvailableTask && (
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${statusBadgeColor}`}>
+                    <ArrowRight className="size-2.5 shrink-0" />
+                    {targetBadgeLabel}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -172,7 +223,12 @@ export function TaskDeliverablesModal({
                 Task Deliverables Description:
               </label>
               <div className="flex items-center gap-2">
-                {quality.isClientTask ? (
+                {!hasUpdateSectionInput ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
+                    <AlertCircle className="size-3 text-amber-400 shrink-0" />
+                    <span>Fill at least 1 section (Action Done / Resources / Still To Do)</span>
+                  </span>
+                ) : quality.isClientTask ? (
                   <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300">
                     Client Deliverable Check
                   </span>
@@ -215,17 +271,6 @@ export function TaskDeliverablesModal({
                     </span>
                   ))}
                 </div>
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
-                    quality.level === 'strong'
-                      ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                      : quality.level === 'fair'
-                        ? 'bg-amber-500/15 border-amber-500/35 text-amber-300'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-400'
-                  }`}
-                >
-                  {quality.score}%
-                </span>
               </div>
 
               {quality.isClientTask && quality.blockReason && (
@@ -258,17 +303,11 @@ export function TaskDeliverablesModal({
             </div>
             <textarea
               required
-              rows={4}
+              rows={10}
               value={updateAndDeliverables}
               onChange={(e) => setUpdateAndDeliverables(e.target.value)}
-              placeholder={
-                isPaused
-                  ? "Describe what you completed so far, any blockers, or why this task is being paused..."
-                  : isHandover
-                    ? "Provide a detailed update of what you completed, deliverables links, and any handover instructions..."
-                    : "Provide a detailed update of what you completed, deliverables links, what was tested, and any notes..."
-              }
-              className="w-full px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors resize-y leading-relaxed"
+              placeholder={DEFAULT_UPDATE_TEMPLATE}
+              className="w-full min-h-[210px] px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors resize-y leading-relaxed"
             />
           </div>
 
@@ -284,8 +323,12 @@ export function TaskDeliverablesModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !deliverablesDescription.trim() || !updateAndDeliverables.trim() || !quality.isSubmittable}
-              title={quality.blockReason || undefined}
+              disabled={isSubmitting || !deliverablesDescription.trim() || !updateAndDeliverables.trim() || !quality.isSubmittable || !hasUpdateSectionInput}
+              title={
+                !hasUpdateSectionInput
+                  ? 'Fill in at least 1 section (Action Done, Resources, or Still To Do)'
+                  : quality.blockReason || undefined
+              }
               className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${submitButtonClass}`}
             >
               <Send className="size-3.5" />

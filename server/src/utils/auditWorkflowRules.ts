@@ -115,7 +115,9 @@ export function resolveHandOverAvailablePoolVisibility(task: {
 
   const s = normalizeWorkflowStatusToken(task.status);
   const mapStatuses = (task.taskMap?.statuses || []).map(normalizeWorkflowStatusToken);
-  const isHandedOver = Boolean(task.taskMap?.handedOver) || mapStatuses.includes('HANDOVER');
+  const isHandedOver =
+    Boolean(task.taskMap?.handedOver) ||
+    mapStatuses.some((st) => st === 'HANDOVER' || st === 'HANDOVEROUT' || st === 'HANDOVERIN');
 
   const isExcluded =
     s === 'WAITING' ||

@@ -689,9 +689,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
         return;
       }
 
-      if (!updatedStatuses.includes('Outreach Sent')) updatedStatuses.push('Outreach Sent');
       toast.success('Task marked CLOSED');
-      onStatusChange(taskId, updatedStatuses);
+      onStatusChange(taskId, ['Closed']);
       if (onTaskUpdate) {
         await onTaskUpdate(taskId, { status: 'CLOSED' });
       } else {
@@ -914,6 +913,15 @@ export const TaskMapCrmView: React.FC<Props> = ({
                     return;
                   }
 
+                  const nextNorm = (newStatus || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+                  if (['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes(nextNorm)) {
+                    onStatusChange(task.id, ['Closed']);
+                  } else {
+                    const normalizedSub = normalizeTaskMapSubStatuses(newStatus, task.taskMap?.statuses);
+                    if (normalizedSub.length > 0) {
+                      onStatusChange(task.id, normalizedSub);
+                    }
+                  }
                   if (onTaskUpdate) {
                     await onTaskUpdate(task.id, { status: newStatus });
                   } else {
@@ -1143,7 +1151,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                       }
                     } else if (label === 'Closed') {
                       if (isSelecting) {
-                        onStatusChange(task.id, cleanNext);
+                        onStatusChange(task.id, ['Closed']);
                         if (onTaskUpdate) {
                           await onTaskUpdate(task.id, { status: 'CLOSED' });
                         } else {

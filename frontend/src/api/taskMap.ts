@@ -461,6 +461,10 @@ export function getPmAssignedUserId(task?: TaskMapItem | null): string | null {
   return pmAssign?.assignedTo || null;
 }
 
+export function isHandoverSubStatusKey(norm: string): boolean {
+  return norm === 'HANDOVER' || norm === 'HAND_OVER' || norm === 'HANDOVEROUT' || norm === 'HANDOVERIN';
+}
+
 export function isTaskHandedOver(task?: TaskMapItem | null): boolean {
   if (!task) return false;
   if (task.taskMap?.handedOver) return true;
@@ -469,7 +473,7 @@ export function isTaskHandedOver(task?: TaskMapItem | null): boolean {
   const statuses = task.taskMap?.statuses || [];
   return statuses.some((s) => {
     const norm = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-    return norm === 'HANDOVER' || norm === 'AVAILABLETASK';
+    return isHandoverSubStatusKey(norm) || norm === 'AVAILABLETASK';
   });
 }
 
@@ -685,7 +689,12 @@ export function applyOptimisticTaskMapAssignment(
   const existingStatuses = Array.isArray(task.taskMap?.statuses) ? [...task.taskMap.statuses] : [];
 
   if (!targetUser) {
-    // Unassign / return to Available Tasks pool (preserve status & mark Available Task to match backend)
+    // Unassign / return to Available Tasks pool (preserve status & mark Available Task or Hand-over In to match backend)
+    const hadHandover =
+      Boolean(preserveHandover) ||
+      Boolean(task.taskMap?.handedOver) ||
+      existingStatuses.some((st) => isHandoverSubStatusKey(st.trim().toUpperCase().replace(/[\s_-]+/g, '')));
+    const poolStatuses = hadHandover ? ['Hand-over In'] : ['Available Task'];
     return {
       ...task,
       assigneeId: null,
@@ -703,13 +712,13 @@ export function applyOptimisticTaskMapAssignment(
       taskMap: {
         ...(task.taskMap || {
           taskId: task.id,
-          statuses: ['Available Task'],
+          statuses: poolStatuses,
           shift: 'DAY',
           stepOrder: 0,
           dontRollover: false,
         }),
-        handedOver: true,
-        statuses: ['Available Task'],
+        handedOver: hadHandover,
+        statuses: poolStatuses,
         pmReviews: filteredReviews,
       },
     };
@@ -733,7 +742,7 @@ export function applyOptimisticTaskMapAssignment(
   );
   const hadHandover =
     Boolean(task.taskMap?.handedOver) ||
-    existingStatuses.some((st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+    existingStatuses.some((st) => isHandoverSubStatusKey(st.trim().toUpperCase().replace(/[\s_-]+/g, '')));
   const previousOwnerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || null;
   const isCrossUserTransfer = Boolean(previousOwnerId && previousOwnerId !== targetUser.id);
   const shouldSetHandover =
@@ -743,7 +752,7 @@ export function applyOptimisticTaskMapAssignment(
 
   let cleanedStatuses = existingStatuses.filter((st) => {
     const norm = st.trim().toUpperCase().replace(/[\s_-]+/g, '');
-    if (norm === 'HANDOVER' || norm === 'AVAILABLETASK' || norm === 'REVISION' || norm === 'REVISIONS') return false;
+    if (isHandoverSubStatusKey(norm) || norm === 'AVAILABLETASK' || norm === 'REVISION' || norm === 'REVISIONS') return false;
     if (mode === 'QUEUE' && norm === 'INPROGRESS') return false;
     return true;
   });
@@ -752,6 +761,8 @@ export function applyOptimisticTaskMapAssignment(
     cleanedStatuses = ['Hand-over'];
   } else if (mode === 'IN_PROGRESS' && !cleanedStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
     cleanedStatuses.push('In progress');
+  } else if (mode === 'QUEUE' && cleanedStatuses.length === 0) {
+    cleanedStatuses = ['Available Task'];
   }
 
   const curStatusNorm = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
@@ -2537,8 +2548,8 @@ export function getTaskMapSubStatusStyle(
     };
   }
 
-  // 1. Hand-over / Handover is explicitly grey
-  if (norm === 'HANDOVER' || norm === 'HAND_OVER') {
+  // 1. Hand-over / Hand-over Out / Hand-over In is explicitly grey
+  if (isHandoverSubStatusKey(norm)) {
     return {
       color: TASK_MAP_STATUS_COLORS.HAND_OVER,
       textColor: '#ffffff',
@@ -2560,6 +2571,8 @@ export function getTaskMapSubStatusStyle(
   const canonicalColors: Record<string, { color: string; textColor: string }> = {
     AVAILABLETASK: { color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff' },
     HANDOVER: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
+    HANDOVEROUT: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
+    HANDOVERIN: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
     PAUSED: { color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12' },
     ASKCLIENT: { color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75' },
     TOREVIEW: { color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff' },
@@ -2647,6 +2660,37 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
       'Keeps Hand-over tag when dragged into another MA’s Queue.',
     ],
     requiresDeliverablesClockOut: true,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.HAND_OVER,
+  },
+  HANDOVEROUT: {
+    key: 'HANDOVEROUT',
+    label: 'Hand-over Out',
+    title: 'Hand-over Out & Clock Out',
+    summary: 'Clocks out active work with deliverables/notes and hands the task over out of this MA column to Available Tasks.',
+    destination: 'Task Map -> Available Tasks (Hand-over In)',
+    mainStatusChange: null,
+    sideEffects: [
+      'Requires Task Deliverables Description & Task Update before clock-out.',
+      'Stamps Time Out in DailySheetLog & Google Daily Schedule.',
+      'Moves task out to Available Tasks as Hand-over In for PM reassignment.',
+    ],
+    requiresDeliverablesClockOut: true,
+    requiresConfirmModal: true,
+    accentColor: TASK_MAP_STATUS_COLORS.HAND_OVER,
+  },
+  HANDOVERIN: {
+    key: 'HANDOVERIN',
+    label: 'Hand-over In',
+    title: 'Mark as Hand-over In',
+    summary: 'Marks this task in the Available Tasks pool as a Hand-over In task ready for MA assignment.',
+    destination: 'Task Map -> Available Tasks (Hand-over In)',
+    mainStatusChange: null,
+    sideEffects: [
+      'Keeps the task in Available Tasks tagged as Hand-over In.',
+      'Preserves Hand-over tag when dragged into an MA’s Queue.',
+    ],
+    requiresDeliverablesClockOut: false,
     requiresConfirmModal: true,
     accentColor: TASK_MAP_STATUS_COLORS.HAND_OVER,
   },
@@ -3061,31 +3105,31 @@ export function toCanonicalTaskStatus(status?: string | null): string {
 
 /**
  * Returns innate default sub-statuses when a task has no explicit Task Map sub-status.
- * Unassigned active Task Map pool tasks default to ['Available Task'], while assigned column tasks,
- * Auditor queue (IN REVIEW / CHECKING), and closed tasks stay clean unless explicitly tagged.
+ * Ensures there are never empty sub-statuses on Task Map cards:
+ * - IN REVIEW / CHECKING -> ['To Review']
+ * - REVISION -> ['Revision']
+ * - CLOSED / DONE / COMPLETED / RESOLVED / CANCELLED -> ['Closed']
+ * - Active/Queued/Unassigned tasks -> ['Available Task']
  */
 export function getDefaultTaskMapSubStatuses(
   taskStatus?: string | null,
-  options?: { isAssigned?: boolean }
+  _options?: { isAssigned?: boolean }
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
   if (canonical === 'CRM Needed to Send' || canonical === 'CRM') return ['To send'];
   if (canonical === 'CRM Needed to Follow Up') return ['Follow up'];
   if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
+  if (canonical === 'REVISION') return ['Revision'];
+  if (canonical === 'IN REVIEW' || canonical === 'CHECKING') return ['To Review'];
   if (
-    canonical === 'IN REVIEW' ||
-    canonical === 'CHECKING' ||
     canonical === 'CLOSED' ||
     canonical === 'COMPLETE' ||
     canonical === 'COMPLETED' ||
     canonical === 'RESOLVED' ||
     canonical === 'CANCELLED'
   ) {
-    return [];
-  }
-  if (options?.isAssigned) {
-    return [];
+    return ['Closed'];
   }
   return ['Available Task'];
 }
@@ -3100,6 +3144,8 @@ const STALE_WAITING_SUBSTATUS_KEYS = new Set([
   'INPROGRESS',
   'PENDING',
   'HANDOVER',
+  'HANDOVEROUT',
+  'HANDOVERIN',
   'ONHOLD',
   'TOREVIEW',
   'REVISION',
@@ -3115,14 +3161,35 @@ const STALE_CRM_SUBSTATUS_KEYS = new Set([
   'INPROGRESS',
   'PENDING',
   'HANDOVER',
+  'HANDOVEROUT',
+  'HANDOVERIN',
   'ONHOLD',
   'TOREVIEW',
 ]);
 
+const STALE_REVIEW_SUBSTATUS_KEYS = new Set([
+  'AVAILABLETASK',
+  'HANDOVER',
+  'HANDOVEROUT',
+  'HANDOVERIN',
+  'PAUSED',
+  'INPROGRESS',
+  'PENDING',
+  'REVISION',
+  'REVISIONS',
+  'WAITING',
+  'SENT',
+  'SENTBUTWAITING',
+  'TOSEND',
+  'FOLLOWUP',
+  'ONHOLD',
+]);
+
 /**
  * Uniformly resolves/normalizes Task Map sub-statuses for a task's main status,
- * ensuring stale pool/workflow tags (e.g. "Available Task") are converted into
- * "Sent but Waiting" for WAITING tasks and "To send" for CRM Pool tasks.
+ * ensuring stale pool/workflow tags (e.g. "Available Task", "Hand-over", "Revision")
+ * are converted into the appropriate sub-status ("To Review" for IN REVIEW,
+ * "Sent but Waiting" for WAITING, "To send" for CRM Pool, etc.) and never empty.
  */
 export function normalizeTaskMapSubStatuses(
   taskStatus?: string | null,
@@ -3133,6 +3200,30 @@ export function normalizeTaskMapSubStatuses(
     (s) => Boolean(s) && s.toUpperCase().trim() !== 'CRM'
   );
   const canonical = toCanonicalTaskStatus(taskStatus);
+
+  if (canonical === 'CLOSED' || canonical === 'DONE') {
+    return ['Closed'];
+  }
+
+  if (canonical === 'IN REVIEW' || canonical === 'CHECKING') {
+    if (
+      clean.length === 0 ||
+      clean.every((s) => STALE_REVIEW_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
+    ) {
+      return ['To Review'];
+    }
+    return clean.slice(0, 1);
+  }
+
+  if (canonical === 'REVISION') {
+    if (
+      clean.length === 0 ||
+      clean.every((s) => STALE_REVIEW_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)) || normalizeSubStatusKey(s) === 'TOREVIEW')
+    ) {
+      return ['Revision'];
+    }
+    return clean.slice(0, 1);
+  }
 
   if (canonical === 'WAITING') {
     if (

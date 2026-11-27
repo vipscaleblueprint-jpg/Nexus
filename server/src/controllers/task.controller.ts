@@ -76,31 +76,62 @@ import { scheduleLaunchPlan } from '../services/launchPlanner';
 
 const STALE_WAITING_SUBSTATUSES = new Set([
   'AVAILABLETASK', 'TOSEND', 'READYTOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
-  'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
+  'INPROGRESS', 'PENDING', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
 ]);
 
 const STALE_CRM_SUBSTATUSES = new Set([
   'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
-  'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+  'INPROGRESS', 'PENDING', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'ONHOLD', 'TOREVIEW',
+]);
+
+const STALE_REVIEW_SUBSTATUSES = new Set([
+  'AVAILABLETASK', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'PAUSED',
+  'INPROGRESS', 'PENDING', 'REVISION', 'REVISIONS', 'WAITING', 'SENT', 'SENTBUTWAITING',
+  'TOSEND', 'FOLLOWUP', 'ONHOLD',
 ]);
 
 /**
- * Syncs TaskMapRecord.statuses when a task's main status moves to WAITING/SENT or CRM
- * so stale pool tags (e.g. "Available Task") are replaced with "Sent but Waiting" or "To send".
+ * Syncs TaskMapRecord.statuses when a task's main status moves to WAITING/SENT, CRM, IN REVIEW, REVISION, or ON-HOLD
+ * so stale pool/workflow tags (e.g. "Available Task", "Hand-over", "Revision") are replaced with the matching sub-status.
  */
 async function syncTaskMapSubStatusesOnStatusChange(taskId: string, nextStatus: string, io?: any): Promise<void> {
   const nextStatusNorm = (nextStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
   const isCrmStatus = nextStatusNorm === 'CRM' || nextStatusNorm === 'CRMNEEDEDTOSEND' || nextStatusNorm === 'CRMTOSEND';
   const isFollowUpStatus = nextStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || nextStatusNorm === 'CRMFOLLOWUP';
   const isWaitingStatus = nextStatusNorm === 'WAITING' || nextStatusNorm === 'SENT';
+  const isReviewStatus = nextStatusNorm === 'INREVIEW' || nextStatusNorm === 'TOREVIEW' || nextStatusNorm === 'REVIEW' || nextStatusNorm === 'CHECKING' || nextStatusNorm === 'INCHECKING';
+  const isRevisionStatus = nextStatusNorm === 'REVISION' || nextStatusNorm === 'REVISIONS';
+  const isOnHoldStatusNext = nextStatusNorm === 'ONHOLD';
+  const isClosedStatus = ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes(nextStatusNorm);
 
-  if (!isWaitingStatus && !isCrmStatus && !isFollowUpStatus) return;
+  if (!isWaitingStatus && !isCrmStatus && !isFollowUpStatus && !isReviewStatus && !isRevisionStatus && !isOnHoldStatusNext && !isClosedStatus) return;
 
-  const targetSubStatuses = isFollowUpStatus ? ['Follow up'] : isCrmStatus ? ['To send'] : ['Sent but Waiting'];
-  const staleSet = isFollowUpStatus || isCrmStatus ? STALE_CRM_SUBSTATUSES : STALE_WAITING_SUBSTATUSES;
+  const targetSubStatuses = isClosedStatus
+    ? ['Closed']
+    : isFollowUpStatus
+      ? ['Follow up']
+      : isCrmStatus
+        ? ['To send']
+        : isWaitingStatus
+          ? ['Sent but Waiting']
+          : isReviewStatus
+            ? ['To Review']
+            : isRevisionStatus
+              ? ['Revision']
+              : ['On-hold'];
+  const staleSet =
+    isFollowUpStatus || isCrmStatus
+      ? STALE_CRM_SUBSTATUSES
+      : isWaitingStatus
+        ? STALE_WAITING_SUBSTATUSES
+        : STALE_REVIEW_SUBSTATUSES;
   const existingRecord = await getOrCreateTaskMapRecord(taskId).catch(() => null);
   const curStatuses = Array.isArray(existingRecord?.statuses) ? existingRecord!.statuses : [];
-  if (curStatuses.length === 0 || curStatuses.every((s: string) => staleSet.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+  if (
+    isClosedStatus ||
+    curStatuses.length === 0 ||
+    curStatuses.every((s: string) => staleSet.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')) || (isRevisionStatus && (s || '').toUpperCase().replace(/[\s_-]+/g, '') === 'TOREVIEW'))
+  ) {
     await updateTaskMapRecord(taskId, { statuses: targetSubStatuses }).catch(() => {});
     io?.emit('task_map:updated', { taskId, statuses: targetSubStatuses });
   }

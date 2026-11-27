@@ -309,26 +309,51 @@ async function triggerN8nStartTaskWebhook(params: {
   insertEmptyRowBeforeStart?: boolean;
 }) {
   const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
-  try {
-    // Strip automation-managed sheet columns (Task Link, Task Status, Was Deliverables Submitted?, IsRecorded?)
-    // so Nexus never overwrites Google Sheet formulas / Apps Script automations.
-    const {
-      taskLink: _omitTaskLink,
-      status: _omitStatus,
-      ...safePayload
-    } = params;
-    // Default to "2025" because MA Daily Schedule spreadsheets use the "2025" tab
-    // (sending the calendar year like "2026" causes n8n "Sheet with name 2026 not found").
-    const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
-    const res = await fetch(n8nUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...safePayload, sheetName: resolvedSheetName }),
-      signal: AbortSignal.timeout(6000),
-    });
-    logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);
-  } catch (err: any) {
-    logger.warn(`[n8n Sync] Warning: failed to trigger n8n webhook: ${err.message}`);
+  // Strip automation-managed sheet columns (Task Link, Task Status, Was Deliverables Submitted?, IsRecorded?)
+  // so Nexus never overwrites Google Sheet formulas / Apps Script automations.
+  const {
+    taskLink: _omitTaskLink,
+    status: _omitStatus,
+    ...safePayload
+  } = params;
+  // Default to "2025" because MA Daily Schedule spreadsheets use the "2025" tab
+  // (sending the calendar year like "2026" causes n8n "Sheet with name 2026 not found").
+  const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
+  const payload = JSON.stringify({ ...safePayload, sheetName: resolvedSheetName });
+
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(n8nUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: AbortSignal.timeout(15000),
+      });
+      const bodyText = await res.text().catch(() => '');
+      let parsed: any = null;
+      try {
+        parsed = bodyText ? JSON.parse(bodyText) : null;
+      } catch {
+        parsed = null;
+      }
+      const n8nReportedFailure =
+        (Array.isArray(parsed) && parsed[0]?.ok === false) ||
+        (parsed && !Array.isArray(parsed) && parsed.ok === false);
+
+      if (res.ok && !n8nReportedFailure) {
+        logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}, attempt ${attempt}): HTTP ${res.status}`);
+        return;
+      }
+
+      logger.warn(`[n8n Sync] Attempt ${attempt} returned HTTP ${res.status}${n8nReportedFailure ? ' (n8n ok:false)' : ''} for ${params.userName}`);
+    } catch (err: any) {
+      logger.warn(`[n8n Sync] Attempt ${attempt} failed for ${params.userName}: ${err.message}`);
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, 1200));
+    }
   }
 }
 
@@ -893,12 +918,17 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (statusKey === 'CRMNEEDEDTOFOLLOWUP' || statusKey === 'CRMFOLLOWUP') return ['Follow up'];
       if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
+      if (statusKey === 'REVISION' || statusKey === 'REVISIONS') return ['Revision'];
       if (
         statusKey === 'INREVIEW' ||
         statusKey === 'TOREVIEW' ||
         statusKey === 'REVIEW' ||
         statusKey === 'CHECKING' ||
-        statusKey === 'INCHECKING' ||
+        statusKey === 'INCHECKING'
+      ) {
+        return ['To Review'];
+      }
+      if (
         statusKey === 'CLOSED' ||
         statusKey === 'DONE' ||
         statusKey === 'COMPLETE' ||
@@ -906,9 +936,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         statusKey === 'RESOLVED' ||
         statusKey === 'CANCELLED'
       ) {
-        return [];
+        return ['Closed'];
       }
-      return isAssignedToMember ? [] : ['Available Task'];
+      return ['Available Task'];
     };
 
     const isSubtaskExcludedFromBoard = (st: any) => {
@@ -1032,13 +1062,18 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         }
       }
 
-      // Normalize stale TaskMapRecord.statuses for WAITING / CRM tasks (e.g. 'Available Task' left over from TaskDetailModal status change)
+      // Normalize stale TaskMapRecord.statuses for WAITING / CRM / IN REVIEW / REVISION / empty tasks
       const taskStatusNorm = (task.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+      const staleForReview = new Set([
+        'AVAILABLETASK', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'PAUSED',
+        'INPROGRESS', 'PENDING', 'REVISION', 'REVISIONS', 'WAITING', 'SENT', 'SENTBUTWAITING',
+        'TOSEND', 'FOLLOWUP', 'ONHOLD',
+      ]);
       if (taskStatusNorm === 'WAITING' || taskStatusNorm === 'SENT') {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForWaiting = new Set([
           'AVAILABLETASK', 'TOSEND', 'READYTOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
-          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'ONHOLD', 'TOREVIEW', 'REVISION', 'REVISIONS',
         ]);
         if (cur.length === 0 || cur.every((s: string) => staleForWaiting.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['Sent but Waiting'] };
@@ -1047,7 +1082,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForCrm = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
-          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'ONHOLD', 'TOREVIEW',
         ]);
         if (cur.length === 0 || cur.every((s: string) => staleForCrm.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['To send'] };
@@ -1056,11 +1091,26 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForFollowUp = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
-          'INPROGRESS', 'PENDING', 'HANDOVER', 'ONHOLD', 'TOREVIEW',
+          'INPROGRESS', 'PENDING', 'HANDOVER', 'HANDOVEROUT', 'HANDOVERIN', 'ONHOLD', 'TOREVIEW',
         ]);
         if (cur.length === 0 || cur.every((s: string) => staleForFollowUp.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['Follow up'] };
         }
+      } else if (taskStatusNorm === 'INREVIEW' || taskStatusNorm === 'TOREVIEW' || taskStatusNorm === 'REVIEW' || taskStatusNorm === 'CHECKING' || taskStatusNorm === 'INCHECKING') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        if (cur.length === 0 || cur.every((s: string) => staleForReview.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+          mapRecord = { ...mapRecord, statuses: ['To Review'] };
+        }
+      } else if (taskStatusNorm === 'REVISION' || taskStatusNorm === 'REVISIONS') {
+        const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
+        if (cur.length === 0 || cur.every((s: string) => staleForReview.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')) || (s || '').toUpperCase().replace(/[\s_-]+/g, '') === 'TOREVIEW')) {
+          mapRecord = { ...mapRecord, statuses: ['Revision'] };
+        }
+      } else if (!Array.isArray(mapRecord.statuses) || mapRecord.statuses.length === 0) {
+        mapRecord = {
+          ...mapRecord,
+          statuses: deriveDefaultMapStatuses(task.status, taskHasAssignee),
+        };
       }
 
       const isAdminTask = isHiddenAdminOrInternalTask(task.list);
@@ -1116,13 +1166,26 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           );
           let subStatuses: string[] = parentIsOnHold
             ? ['On-hold']
-            : Array.isArray(subState?.statuses)
+            : Array.isArray(subState?.statuses) && subState.statuses.length > 0
               ? [...subState.statuses]
               : deriveDefaultMapStatuses(subStatus, subHasAssignee && !subState?.handedOver);
+          const subStatusKey = (subStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
+          if (subStatusKey === 'INREVIEW' || subStatusKey === 'TOREVIEW' || subStatusKey === 'REVIEW' || subStatusKey === 'CHECKING' || subStatusKey === 'INCHECKING') {
+            if (subStatuses.length === 0 || subStatuses.every((s: string) => staleForReview.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+              subStatuses = ['To Review'];
+            }
+          } else if (subStatusKey === 'REVISION' || subStatusKey === 'REVISIONS') {
+            if (subStatuses.length === 0 || subStatuses.every((s: string) => staleForReview.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')) || (s || '').toUpperCase().replace(/[\s_-]+/g, '') === 'TOREVIEW')) {
+              subStatuses = ['Revision'];
+            }
+          }
           if (subHasLiveWork && !subStatuses.some((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
             subStatuses.push('In progress');
           } else if (!subHasLiveWork && subStatuses.some((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
             subStatuses = subStatuses.filter((s: string) => s.toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS');
+          }
+          if (subStatuses.length === 0) {
+            subStatuses = deriveDefaultMapStatuses(subStatus, subHasAssignee && !subState?.handedOver);
           }
           const subAssignee =
             (subAssigneeId && st.User?.id === subAssigneeId ? st.User : null) ||
@@ -2051,7 +2114,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
     const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
     const isRevisionTransferOut = normSubStatuses.some((norm) => norm === 'REVISION' || norm === 'REVISIONS');
-    const isExplicitHandover = normSubStatuses.includes('HANDOVER');
+    const isExplicitHandover = normSubStatuses.some((norm) => norm === 'HANDOVER' || norm === 'HANDOVEROUT' || norm === 'HANDOVERIN');
     const isHandoverSubStatus = isExplicitHandover || isAvailableTaskStatus;
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
       ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'CRMNEEDEDTOSEND', 'CRMTOSEND', 'CRMNEEDEDTOFOLLOWUP', 'CRMFOLLOWUP', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'FOLLOWUP'].includes(norm)
@@ -2952,7 +3015,10 @@ async function executeTaskMapAssignment(
         );
         const hadSubHandover =
           subHandedOver ||
-          subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+          subStatuses.some((s) => {
+            const n = s.toUpperCase().replace(/[\s_-]+/g, '');
+            return n === 'HANDOVER' || n === 'HANDOVEROUT' || n === 'HANDOVERIN';
+          });
         const isSubTransferBetweenUsers =
           action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
         const shouldSetSubHandover =
@@ -2963,12 +3029,14 @@ async function executeTaskMapAssignment(
         subStatuses = subStatuses.filter((s) => {
           const up = s.toUpperCase().replace(/[\s_-]+/g, '');
           if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
-          return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
+          return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER' && up !== 'HANDOVEROUT' && up !== 'HANDOVERIN';
         });
         if (shouldSetSubHandover) {
           subStatuses = ['Hand-over'];
         } else if (mode === 'IN_PROGRESS' && !subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
           subStatuses.push('In progress');
+        } else if (mode === 'QUEUE' && subStatuses.length === 0) {
+          subStatuses = ['Available Task'];
         }
         subHandedOver = false;
         reviewsList = reviewsList.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === currentSubtask.id));
@@ -3565,7 +3633,10 @@ async function executeTaskMapAssignment(
       );
       const hadMainHandover =
         Boolean(record.handedOver) ||
-        newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
+        newStatuses.some((s) => {
+          const n = s.toUpperCase().replace(/[\s_-]+/g, '');
+          return n === 'HANDOVER' || n === 'HANDOVEROUT' || n === 'HANDOVERIN';
+        });
       const isMainTransferBetweenUsers =
         action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
       const shouldSetMainHandover =
@@ -3576,12 +3647,14 @@ async function executeTaskMapAssignment(
       newStatuses = newStatuses.filter((s) => {
         const up = s.toUpperCase().replace(/[\s_-]+/g, '');
         if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
-        return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER';
+        return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER' && up !== 'HANDOVEROUT' && up !== 'HANDOVERIN';
       });
       if (shouldSetMainHandover) {
         newStatuses = ['Hand-over'];
       } else if (mode === 'IN_PROGRESS' && !newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
         newStatuses.push('In progress');
+      } else if (mode === 'QUEUE' && newStatuses.length === 0) {
+        newStatuses = ['Available Task'];
       }
       handedOver = false;
 
@@ -3751,11 +3824,12 @@ async function executeTaskMapAssignment(
       }
     } else {
       // Unassigned back to available pool
-      const hadHandoverTag = newStatuses.some(
-        (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER'
-      );
+      const hadHandoverTag = newStatuses.some((s) => {
+        const n = s.toUpperCase().replace(/[\s_-]+/g, '');
+        return n === 'HANDOVER' || n === 'HANDOVEROUT' || n === 'HANDOVERIN';
+      });
       handedOver = hadHandoverTag;
-      newStatuses = hadHandoverTag ? ['Hand-over'] : ['Available Task'];
+      newStatuses = hadHandoverTag ? ['Hand-over In'] : ['Available Task'];
 
       // Clear PM assignment when returning to pool (preserve subtask assignments!)
       reviewsList = reviewsList.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));

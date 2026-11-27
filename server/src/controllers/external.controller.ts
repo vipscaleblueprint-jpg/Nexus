@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { queueUserPush } from '../services/toolsSync';
 import { scheduleLaunchPlan } from '../services/launchPlanner';
 import bcrypt from 'bcryptjs';
 import { timingSafeEqual, randomBytes } from 'crypto';
@@ -2075,6 +2076,9 @@ export async function updateExternalUserRoles(req: Request, res: Response) {
         isActive: true,
       }
     });
+
+    // Keep the tools' assistant row in step, or the next reconcile reverts this edit.
+    queueUserPush(updatedUser.email);
 
     return res.json({ user: updatedUser });
   } catch (err: any) {

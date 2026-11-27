@@ -418,6 +418,7 @@ export const TaskMapContainer: React.FC = () => {
 
       if (res.success) {
         hasLoadedOnceRef.current = true;
+        lastLoadedAtRef.current = Date.now();
         retryAttemptRef.current = 0;
         setLoadError(null);
         // Sanitize sub-statuses: strip CRM tag (CRM is main board routing status, not a substatus label)
@@ -711,25 +712,31 @@ export const TaskMapContainer: React.FC = () => {
     };
   }, []);
 
-  // Auto-refresh every 45 seconds silently (skipping hidden background tabs)
+  const lastLoadedAtRef = useRef<number>(initialCache ? Date.now() : 0);
+
+  // Auto-refresh every 2 minutes silently as a fallback (WebSockets deliver live updates in real time)
   useEffect(() => {
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return;
       }
       loadData(true);
-    }, 45000);
+    }, 120000);
     return () => clearInterval(timer);
   }, [loadData]);
 
   // Socket.io & Window events listeners for real-time synchronization
   useEffect(() => {
     let reloadTimer: NodeJS.Timeout | null = null;
-    const scheduleReload = () => {
+    const scheduleReload = (opts?: { fromDbWatcher?: boolean }) => {
+      // Skip redundant DB-watcher reloads if we just refreshed via direct socket event or initial load
+      if (opts?.fromDbWatcher && Date.now() - lastLoadedAtRef.current < 3500) {
+        return;
+      }
       if (reloadTimer) clearTimeout(reloadTimer);
       reloadTimer = setTimeout(() => {
         loadData(true);
-      }, 150);
+      }, 500);
     };
 
     const handleTaskUpdated = (e: any) => {
@@ -794,7 +801,7 @@ export const TaskMapContainer: React.FC = () => {
         );
       }
       if (!data?.taskId) {
-        scheduleReload();
+        scheduleReload({ fromDbWatcher: Boolean(data?.fromDbWatcher) });
         return;
       }
 
@@ -908,7 +915,7 @@ export const TaskMapContainer: React.FC = () => {
     const handleProgressUpdated = (e: any) => {
       const data = e?.detail || e;
       if (!data?.taskId) {
-        scheduleReload();
+        scheduleReload({ fromDbWatcher: Boolean(data?.fromDbWatcher) });
         return;
       }
       const { taskId, progress } = data;
@@ -979,7 +986,7 @@ export const TaskMapContainer: React.FC = () => {
         setTasks((prev) => prev.map(patchLog));
         setAvailablePool((prev) => prev.map(patchLog));
       }
-      scheduleReload();
+      scheduleReload({ fromDbWatcher: Boolean(data?.fromDbWatcher) });
     };
 
     const handleUpworkChanged = (e: any) => {
@@ -1054,7 +1061,7 @@ export const TaskMapContainer: React.FC = () => {
     };
 
     const handleShiftsUpdated = () => {
-      scheduleReload();
+      scheduleReload({ fromDbWatcher: Boolean(data?.fromDbWatcher) });
     };
 
     const handleDailyRollover = (e: any) => {
@@ -1068,7 +1075,7 @@ export const TaskMapContainer: React.FC = () => {
           setHistoryDates(res.dates);
         }
       }).catch(() => {});
-      scheduleReload();
+      scheduleReload({ fromDbWatcher: Boolean(data?.fromDbWatcher) });
     };
 
     const handleTaskMapReload = () => {
@@ -1146,7 +1153,10 @@ export const TaskMapContainer: React.FC = () => {
         setSelectedTaskModal(null);
         setSelectedSubtaskTargetId(undefined);
         setRestoringUrlTask(false);
-        void loadData(false);
+        // Only trigger a background refresh if data is older than 15s (avoid redundant fetches on tab switch)
+        if (Date.now() - lastLoadedAtRef.current > 15000) {
+          void loadData(true);
+        }
       }
     },
     [loadData]

@@ -773,99 +773,30 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Fetch TaskMap records first so we know which (rare) closed tasks have active CRM workflow tags
-    const records = await prisma.$queryRawUnsafe<TaskMapRecordData[]>(
-      `SELECT * FROM "TaskMapRecord"`
-    );
-    const recordsMap = new Map<string, TaskMapRecordData>();
-    const closedCrmCandidateTaskIds: string[] = [];
-    for (const r of records) {
-      recordsMap.set(r.taskId, r);
-      const hasCrmTag = Array.isArray(r.statuses) && r.statuses.some((st) => CRM_TAG_SET.has((st || '').toUpperCase().trim()));
-      if (hasCrmTag) {
-        closedCrmCandidateTaskIds.push(r.taskId);
-      }
-    }
-
-    const kycPinboardExclusion = ['KYC', 'PIN BOARD', 'PINBOARD'].map((s) => ({
-      status: { equals: s, mode: 'insensitive' as const },
-    }));
-    const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
-      status: { equals: s, mode: 'insensitive' as const },
-    }));
-
-    // Fetch open tasks (plus the small set of closed CRM-tagged tasks) from PostgreSQL, omitting historical closed archive bloat
-    const tasks = await prisma.task.findMany({
-      where: {
-        AND: [
-          { NOT: { OR: kycPinboardExclusion } },
-          closedCrmCandidateTaskIds.length > 0
-            ? {
-                OR: [
-                  { NOT: { OR: closedOrExcludedFilters } },
-                  { id: { in: closedCrmCandidateTaskIds } },
-                ],
-              }
-            : { NOT: { OR: closedOrExcludedFilters } },
-        ],
-      },
-      include: {
-        list: {
-          select: {
-            id: true,
-            name: true,
-            folder: { select: { id: true, name: true } },
-            statuses: {
-              select: { name: true, color: true, groupName: true, order: true },
-              orderBy: { order: 'asc' },
-            },
-          },
-        },
-        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
-        creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
-        subtasks: {
-          where: { completed: false },
-          include: {
-            User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-            checklists: {
-              where: { name: { equals: 'Audit', mode: 'insensitive' } },
-              include: { items: true },
-            },
-          },
-          orderBy: { createdAt: 'asc' },
-        },
-        checklists: {
-          // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
-          where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
-          include: { items: true },
-        },
-        _count: {
-          select: {
-            subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' } } } },
-          },
-        },
-      },
-      orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
-    });
-
-    // Options and Shift configs: filter out obsolete static Upwork options & internal client tags
-    const rawOptions = await getStatusOptions();
-    const options = rawOptions.filter((opt) => {
-      const up = opt.label.toUpperCase().trim();
-      return (
-        up !== 'UPWORK ACTIVE' &&
-        !up.startsWith('UPWORK |') &&
-        !up.startsWith('UPWORK|') &&
-        !up.startsWith('UPWORK_CLIENT:') &&
-        !up.startsWith('UPWORK_PROJECT_CLIENT:')
-      );
-    });
-    const shifts = await getShiftConfigs();
-
-    // PM Users for Review queue and tag matching + DB teams & workspace roles
-    const [allUsers, workspaceRoles, workspaceTeams] = await Promise.all([
+    // Fetch TaskMap records (active/open tasks + at most 60 most recently updated closed CRM records)
+    // in parallel with metadata (options, shifts, users, roles, teams, today's daily sheet index)
+    const [
+      records,
+      rawOptions,
+      shifts,
+      allUsers,
+      workspaceRoles,
+      workspaceTeams,
+      dailySheetIndex,
+    ] = await Promise.all([
+      prisma.$queryRawUnsafe<TaskMapRecordData[]>(
+        `SELECT r.*
+         FROM "TaskMapRecord" r
+         INNER JOIN "Task" t ON t."id" = r."taskId"
+         WHERE UPPER(TRIM(COALESCE(t."status", ''))) NOT IN ('KYC', 'PIN BOARD', 'PINBOARD')
+           AND (
+             UPPER(TRIM(COALESCE(t."status", ''))) NOT IN ('CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED', 'CANCELLED')
+             OR r."updatedAt" >= NOW() - INTERVAL '45 days'
+           )
+         ORDER BY r."updatedAt" DESC`
+      ),
+      getStatusOptions(),
+      getShiftConfigs(),
       prisma.user.findMany({
         where: { isActive: true },
         select: {
@@ -897,10 +828,97 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         },
         orderBy: { createdAt: 'asc' },
       }),
+      getDailySheetLogsIndexForDate(requestedDate),
     ]);
 
-    // Determine shift members (normal users + auditors) for the selected shift from AuditShiftConfig
-    const shiftUsers = await resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts);
+    const recordsMap = new Map<string, TaskMapRecordData>();
+    const closedCrmCandidateTaskIds: string[] = [];
+    const MAX_CLOSED_CRM_CANDIDATES = 60;
+    for (const r of records) {
+      recordsMap.set(r.taskId, r);
+      const hasCrmTag = Array.isArray(r.statuses) && r.statuses.some((st) => CRM_TAG_SET.has((st || '').toUpperCase().trim()));
+      if (hasCrmTag && closedCrmCandidateTaskIds.length < MAX_CLOSED_CRM_CANDIDATES) {
+        closedCrmCandidateTaskIds.push(r.taskId);
+      }
+    }
+
+    const kycPinboardExclusion = ['KYC', 'PIN BOARD', 'PINBOARD'].map((s) => ({
+      status: { equals: s, mode: 'insensitive' as const },
+    }));
+    const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
+      status: { equals: s, mode: 'insensitive' as const },
+    }));
+
+    // Fetch open tasks (plus bounded recent closed CRM-tagged tasks) and resolve shift users in parallel
+    const [tasks, shiftUsers] = await Promise.all([
+      prisma.task.findMany({
+        where: {
+          AND: [
+            { NOT: { OR: kycPinboardExclusion } },
+            closedCrmCandidateTaskIds.length > 0
+              ? {
+                  OR: [
+                    { NOT: { OR: closedOrExcludedFilters } },
+                    { id: { in: closedCrmCandidateTaskIds } },
+                  ],
+                }
+              : { NOT: { OR: closedOrExcludedFilters } },
+          ],
+        },
+        include: {
+          list: {
+            select: {
+              id: true,
+              name: true,
+              folder: { select: { id: true, name: true } },
+              statuses: {
+                select: { name: true, color: true, groupName: true, order: true },
+                orderBy: { order: 'asc' },
+              },
+            },
+          },
+          assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+          creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+          subtasks: {
+            where: { completed: false },
+            include: {
+              User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+              assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+              checklists: {
+                where: { name: { equals: 'Audit', mode: 'insensitive' } },
+                include: { items: true },
+              },
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+          checklists: {
+            // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
+            where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
+            include: { items: true },
+          },
+          _count: {
+            select: {
+              subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' } } } },
+            },
+          },
+        },
+        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+      }),
+      resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts),
+    ]);
+
+    // Options: filter out obsolete static Upwork options & internal client tags
+    const options = rawOptions.filter((opt) => {
+      const up = opt.label.toUpperCase().trim();
+      return (
+        up !== 'UPWORK ACTIVE' &&
+        !up.startsWith('UPWORK |') &&
+        !up.startsWith('UPWORK|') &&
+        !up.startsWith('UPWORK_CLIENT:') &&
+        !up.startsWith('UPWORK_PROJECT_CLIENT:')
+      );
+    });
 
     const isPmUser = (u: any) => {
       if (u.systemRole === 'ADMIN') return true;
@@ -949,9 +967,6 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const s = (st.status || (st.completed ? 'CLOSED' : 'PENDING')).toUpperCase().replace(/[\s_-]+/g, '');
       return st.completed || isClosedStatus(s);
     };
-
-    // Fetch today's DailySheetLog index so sorting and live state base from historical sheet submissions for that day
-    const dailySheetIndex = await getDailySheetLogsIndexForDate(requestedDate);
 
     // Build enriched task items + surface open subtasks as independent board items
     const enrichedTasks: any[] = [];
@@ -1257,21 +1272,57 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Enrich WAITING / Sent but Waiting tasks with CRM follow-up timing and tier metadata
+    // Enrich WAITING / Sent but Waiting tasks & multi-assignee AuditLog fallback in parallel
     const waitingItemsForMeta = enrichedTasks.filter(
       (item: any) => !item.isSubtask && !item.isClosed && isWaitingMainStatus(item.status)
     );
-    if (waitingItemsForMeta.length > 0) {
-      const waitingMetaMap = await resolveWaitingSinceMap(
-        waitingItemsForMeta.map((item: any) => ({
-          id: item.id,
-          status: item.status,
-          updatedAt: item.updatedAt,
-          createdAt: item.createdAt,
-          pmReviews: item.taskMap?.pmReviews,
-          recordUpdatedAt: item.taskMap?.updatedAt,
-        }))
+    const multiAssigneeItems = enrichedTasks.filter((item: any) => {
+      if (!item.assigneeId || !Array.isArray(item.assignees) || item.assignees.length <= 1) return false;
+      if (item.taskMap?.handedOver) return false;
+      const isLive = Boolean(item.progress?.maName && !item.progress?.timeOut && item.progress?.timeIn);
+      if (isLive) return false;
+      const revs = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap.pmReviews : [];
+      const hasPm = revs.some(
+        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo && (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
       );
+      return !hasPm;
+    });
+    const entityIds = multiAssigneeItems.length > 0
+      ? Array.from(
+          new Set(
+            multiAssigneeItems.flatMap((i: any) => (i.isSubtask ? [i.parentTaskId, i.subtaskId] : [i.id])).filter(Boolean)
+          )
+        )
+      : [];
+
+    const [waitingMetaMap, assignmentLogs] = await Promise.all([
+      waitingItemsForMeta.length > 0
+        ? resolveWaitingSinceMap(
+            waitingItemsForMeta.map((item: any) => ({
+              id: item.id,
+              status: item.status,
+              updatedAt: item.updatedAt,
+              createdAt: item.createdAt,
+              pmReviews: item.taskMap?.pmReviews,
+              recordUpdatedAt: item.taskMap?.updatedAt,
+            }))
+          )
+        : Promise.resolve(new Map<string, any>()),
+      entityIds.length > 0
+        ? prisma.auditLog.findMany({
+            where: {
+              action: 'ASSIGNMENT',
+              entity: { in: ['TASK', 'SUBTASK'] },
+              entityId: { in: entityIds },
+            },
+            select: { entityId: true, details: true, createdAt: true },
+            orderBy: { createdAt: 'desc' },
+            take: Math.min(entityIds.length * 5, 500),
+          })
+        : Promise.resolve([] as Array<{ entityId: string; details: any; createdAt: Date }>),
+    ]);
+
+    if (waitingItemsForMeta.length > 0) {
       for (const item of waitingItemsForMeta) {
         const meta = waitingMetaMap.get(item.id);
         if (meta) {
@@ -1290,37 +1341,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Batched AuditLog fallback for pre-existing multi-assignee tasks/subtasks (so the most recently assigned user owns the card)
-    const multiAssigneeItems = enrichedTasks.filter((item: any) => {
-      if (!item.assigneeId || !Array.isArray(item.assignees) || item.assignees.length <= 1) return false;
-      if (item.taskMap?.handedOver) return false;
-      const isLive = Boolean(item.progress?.maName && !item.progress?.timeOut && item.progress?.timeIn);
-      if (isLive) return false;
-      const revs = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap.pmReviews : [];
-      const hasPm = revs.some(
-        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo && (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
-      );
-      return !hasPm;
-    });
-
-    if (multiAssigneeItems.length > 0) {
-      const entityIds = Array.from(
-        new Set(
-          multiAssigneeItems.flatMap((i: any) => (i.isSubtask ? [i.parentTaskId, i.subtaskId] : [i.id])).filter(Boolean)
-        )
-      );
-      const logs = await prisma.auditLog.findMany({
-        where: {
-          action: 'ASSIGNMENT',
-          entity: { in: ['TASK', 'SUBTASK'] },
-          entityId: { in: entityIds },
-        },
-        select: { entityId: true, details: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-      });
-
+    if (multiAssigneeItems.length > 0 && assignmentLogs.length > 0) {
       const logsByEntity = new Map<string, any[]>();
-      for (const l of logs) {
+      for (const l of assignmentLogs) {
         const arr = logsByEntity.get(l.entityId) || [];
         arr.push(l);
         logsByEntity.set(l.entityId, arr);

@@ -1324,6 +1324,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const [columnShowAdmin, setColumnShowAdmin] = useState<Record<string, boolean>>({});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [columnSearchOpen, setColumnSearchOpen] = useState<Record<string, boolean>>({});
+  const AVAILABLE_POOL_PAGE_SIZE = 10;
+  const [availableVisibleCount, setAvailableVisibleCount] = useState<number>(AVAILABLE_POOL_PAGE_SIZE);
+
+  // Reset Available Tasks infinite-scroll window whenever its filters or search change
+  const availSearchKey = columnSearches['available'] || '';
+  const availPriorityKey = columnPriorityFilters['available'] || 'ALL';
+  const availTaskTypeKey = columnTaskTypeFilters['available'] || 'ALL';
+  const availSubStatusKey = columnSubStatusFilters['available'] || 'ALL';
+  const availClientKey = columnClientFilters['available'] || 'ALL';
+  const availShowAdminKey = Boolean(columnShowAdmin['available']);
+  useEffect(() => {
+    setAvailableVisibleCount(AVAILABLE_POOL_PAGE_SIZE);
+  }, [availSearchKey, availPriorityKey, availTaskTypeKey, availSubStatusKey, availClientKey, availShowAdminKey, search]);
   const [pinnedColumns, setPinnedColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
     try {
@@ -3710,7 +3723,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
               </div>
 
               {/* Cards List */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
+              <div
+                className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0"
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+                    setAvailableVisibleCount((prev) =>
+                      prev < filteredDisplayPool.length
+                        ? Math.min(prev + AVAILABLE_POOL_PAGE_SIZE, filteredDisplayPool.length)
+                        : prev
+                    );
+                  }
+                }}
+              >
                 <ColumnDropCutout
                   columnId="available-pool"
                   canShow={canShowAvailableCutout}
@@ -3755,7 +3780,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     );
                   })()
                 ) : (
-                  sortAvailablePoolTasks(filteredDisplayPool).map((task) => {
+                  (() => {
+                    const sortedPool = sortAvailablePoolTasks(filteredDisplayPool);
+                    const renderedPool = sortedPool.slice(0, availableVisibleCount);
+                    const remainingPoolCount = Math.max(0, sortedPool.length - renderedPool.length);
+                    return (
+                      <>
+                        {renderedPool.map((task) => {
                     const priorityConfig = getPriorityConfig(task.priority);
                     const isClosed =
                       (task.status || '').toUpperCase() === 'CLOSED' ||
@@ -4002,7 +4033,23 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         </div>
                       </DraggableTaskCard>
                     );
-                  })
+                  })}
+                        {remainingPoolCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAvailableVisibleCount((prev) =>
+                                Math.min(prev + AVAILABLE_POOL_PAGE_SIZE, sortedPool.length)
+                              )
+                            }
+                            className="w-full py-2 px-3 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800/70 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 transition-colors text-center"
+                          >
+                            Showing {renderedPool.length} of {sortedPool.length} · Scroll or click for +{Math.min(AVAILABLE_POOL_PAGE_SIZE, remainingPoolCount)} more
+                          </button>
+                        )}
+                      </>
+                    );
+                  })()
                 )}
               </div>
             </DroppableColumn>

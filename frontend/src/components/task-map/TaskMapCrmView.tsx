@@ -261,6 +261,16 @@ export const TaskMapCrmView: React.FC<Props> = ({
   const [columnShowAdmin, setColumnShowAdmin] = useState<Record<string, boolean>>({});
   const [columnSearches, setColumnSearches] = useState<Record<string, string>>({});
   const [columnSearchOpen, setColumnSearchOpen] = useState<Record<string, boolean>>({});
+  const CRM_CLOSED_PAGE_SIZE = 5;
+  const CRM_COLUMN_PAGE_SIZE = 10;
+  const getCrmColumnPageSize = (colId: string) =>
+    colId === 'col-crm-closed' ? CRM_CLOSED_PAGE_SIZE : CRM_COLUMN_PAGE_SIZE;
+  const [columnVisibleCounts, setColumnVisibleCounts] = useState<Record<string, number>>({});
+
+  // Reset infinite-scroll windows when global search or per-column filters change
+  useEffect(() => {
+    setColumnVisibleCounts({});
+  }, [cleanSearch, columnSearches, columnPriorityFilters, columnClientFilters, columnShowAdmin, columnFollowUpFilters]);
 
   const [pinnedColumns, setPinnedColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
@@ -889,6 +899,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                 taskId={task.id}
                 currentStatus={task.status || 'In progress'}
                 listId={task.listId || task.list?.id}
+                listStatuses={task.list?.statuses}
                 onSelect={async (newStatus) => {
                   const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
                   const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
@@ -1747,7 +1758,24 @@ export const TaskMapCrmView: React.FC<Props> = ({
                     })()}
                   </div>
                 ) : (
-                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
+                  <div
+                    data-column-body="true"
+                    className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0"
+                    onScroll={(e) => {
+                      const el = e.currentTarget;
+                      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+                        const pageSize = getCrmColumnPageSize(col.id);
+                        setColumnVisibleCounts((prev) => {
+                          const current = prev[col.id] ?? pageSize;
+                          if (current >= visibleTasks.length) return prev;
+                          return {
+                            ...prev,
+                            [col.id]: Math.min(current + pageSize, visibleTasks.length),
+                          };
+                        });
+                      }
+                    }}
+                  >
                     {visibleTasks.length === 0 ? (
                       (() => {
                         const searchMatches = searchQuery.trim()
@@ -1788,10 +1816,35 @@ export const TaskMapCrmView: React.FC<Props> = ({
                         );
                       })()
                     ) : (
-                      (col.id === 'col-crm-sent'
-                        ? sortCrmSentTasks(visibleTasks, activeFollowUpSort, sortTasksUrgentFirst)
-                        : sortTasksUrgentFirst(visibleTasks)
-                      ).map((task) => renderCrmCard(task))
+                      (() => {
+                        const orderedTasks =
+                          col.id === 'col-crm-sent'
+                            ? sortCrmSentTasks(visibleTasks, activeFollowUpSort, sortTasksUrgentFirst)
+                            : sortTasksUrgentFirst(visibleTasks);
+                        const pageSize = getCrmColumnPageSize(col.id);
+                        const visibleLimit = columnVisibleCounts[col.id] ?? pageSize;
+                        const renderedTasks = orderedTasks.slice(0, visibleLimit);
+                        const remainingCount = Math.max(0, orderedTasks.length - renderedTasks.length);
+                        return (
+                          <>
+                            {renderedTasks.map((task) => renderCrmCard(task))}
+                            {remainingCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setColumnVisibleCounts((prev) => ({
+                                    ...prev,
+                                    [col.id]: Math.min((prev[col.id] ?? pageSize) + pageSize, orderedTasks.length),
+                                  }))
+                                }
+                                className="w-full py-2 px-3 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800/70 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 transition-colors text-center"
+                              >
+                                Showing {renderedTasks.length} of {orderedTasks.length} · Scroll or click for +{Math.min(pageSize, remainingCount)} more
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()
                     )}
                   </div>
                 )}

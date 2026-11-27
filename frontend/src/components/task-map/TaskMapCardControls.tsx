@@ -601,7 +601,8 @@ export const CardStatusDropdown: React.FC<{
   listStatuses?: any[];
   onSelect: (newStatus: string) => void;
   excludeStatuses?: string[];
-}> = ({ taskId, currentStatus, listId, listStatuses, onSelect, excludeStatuses = [] }) => {
+  readOnly?: boolean;
+}> = ({ taskId, currentStatus, listId, listStatuses, onSelect, excludeStatuses = [], readOnly = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -664,6 +665,7 @@ export const CardStatusDropdown: React.FC<{
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     if (isOpen) {
       setIsOpen(false);
       setCoords(null);
@@ -758,17 +760,20 @@ export const CardStatusDropdown: React.FC<{
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <HoverHint label="Status" value={clean} hint="Click to change" accent={triggerDotColor}>
+      <HoverHint label="Status" value={clean} hint={readOnly ? undefined : 'Click to change'} accent={triggerDotColor}>
       <button
         ref={triggerRef}
         type="button"
+        disabled={readOnly}
         onClick={handleToggle}
         onMouseEnter={() => {
-          if (listId && !getCachedListStatuses(listId)) {
+          if (!readOnly && listId && !getCachedListStatuses(listId)) {
             fetchListStatuses(listId).catch(() => {});
           }
         }}
-        className="flex items-center p-1 -m-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer select-none"
+        className={`flex items-center p-1 -m-1 rounded transition-colors select-none ${
+          readOnly ? 'cursor-default opacity-80' : 'hover:bg-zinc-800 cursor-pointer'
+        }`}
       >
         {isClosed ? (
           <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" style={{ color: triggerDotColor }} />
@@ -826,7 +831,8 @@ export const CardPriorityDropdown: React.FC<{
   taskId: string;
   priority: string;
   onSelect: (newPriority: string) => void;
-}> = ({ taskId, priority, onSelect }) => {
+  readOnly?: boolean;
+}> = ({ taskId, priority, onSelect, readOnly = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -857,6 +863,7 @@ export const CardPriorityDropdown: React.FC<{
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     if (isOpen) {
       setIsOpen(false);
       setCoords(null);
@@ -909,12 +916,19 @@ export const CardPriorityDropdown: React.FC<{
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <HoverHint label="Priority" value={priorityConfig.label} hint="Click to change">
+      <HoverHint label="Priority" value={priorityConfig.label} hint={readOnly ? undefined : 'Click to change'}>
       <button
         ref={triggerRef}
         type="button"
-        onClick={handleToggle}
-        className="flex items-center gap-1 font-medium text-[11px] px-1.5 py-0.5 rounded hover:bg-zinc-800/80 transition-colors cursor-pointer select-none"
+        disabled={readOnly}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (readOnly) return;
+          handleToggle(e);
+        }}
+        className={`flex items-center gap-1 font-medium text-[11px] px-1.5 py-0.5 rounded transition-colors select-none ${
+          readOnly ? 'cursor-default opacity-80' : 'hover:bg-zinc-800/80 cursor-pointer'
+        }`}
       >
         <Flag className={`size-3 ${priorityConfig.iconColor}`} />
         <span className={priorityConfig.color}>{priorityConfig.label}</span>

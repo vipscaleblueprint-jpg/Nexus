@@ -2346,7 +2346,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetUser = getUserProfile(targetUserId);
 
       // If already assigned to this user and already live working, no-op!
-      if (currentAssigneeId === targetUserId && isTaskLiveWorking(currentTask as any, targetUser?.name, boardTime)) {
+      if ((sourceOwnerId === targetUserId || currentAssigneeId === targetUserId) && isTaskLiveWorking(currentTask as any, targetUser?.name, boardTime)) {
         return;
       }
 
@@ -2447,7 +2447,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
       );
 
       // If dragged and dropped in the same user's column and already queued for this user: DO NOTHING!
-      if (currentAssigneeId === targetUserId && hasPmAssignmentForUser(currentTask as any, targetUserId) && !isTaskActiveInProgress(currentTask as any, targetUser?.name)) {
+      if (
+        (sourceOwnerId === targetUserId || currentAssigneeId === targetUserId) &&
+        hasPmAssignmentForUser(currentTask as any, targetUserId) &&
+        !isTaskActiveInProgress(currentTask as any, targetUser?.name) &&
+        !isTaskLiveWorking(currentTask as any, targetUser?.name, boardTime)
+      ) {
         return;
       }
 
@@ -4568,6 +4573,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 currentStatus={task.status || 'In progress'}
                                 listId={realListId || undefined}
                                 listStatuses={task.list?.statuses}
+                                readOnly={!(isPmUser || Boolean(currentUser?.id && currentUser.id === userId))}
                                 onSelect={(newStatus: string) => {
                                   const normNew = newStatus.toLowerCase().replace(/[\s_-]+/g, '');
                                   if (normNew === 'toreview' || normNew === 'inreview' || normNew === 'handover') {
@@ -4639,6 +4645,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               <CardPriorityDropdown
                                 taskId={realTaskId || task.id}
                                 priority={task.priority || 'NORMAL'}
+                                readOnly={!(isPmUser || Boolean(currentUser?.id && currentUser.id === userId))}
                                 onSelect={(newPriority: string) => {
                                   if (task.isAssumptionBlock) {
                                     task.priority = newPriority as any;
@@ -4704,7 +4711,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   handleTaskMapSubStatusToggle(task, label, nextStatuses, user)
                                 }
                                 onOptionsUpdated={onOptionsUpdated}
-                                readOnly={Boolean(cardOptions?.forceNonDraggable || task.isAssumptionBlock)}
+                                readOnly={Boolean(
+                                  !(isPmUser || Boolean(currentUser?.id && currentUser.id === userId)) ||
+                                  cardOptions?.forceNonDraggable
+                                )}
                               />
                             </div>
                           </div>
@@ -4718,16 +4728,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 const activeDragSourceOwnerId = activeDragTask && !activeDragIsFromPool
                   ? getEffectiveTaskMapHandlerId(activeDragTask)
                   : null;
+                const isDraggedFromThisQueue = Boolean(
+                  activeDragTask && queuedTasks.some((qt) => qt.id === activeDragTask.id)
+                );
                 const canShowColumnCutout = Boolean(
                   activeDragTask &&
+                  !isDraggedFromThisQueue &&
                   canDropTaskMapCard({
                     isPmUser,
                     currentUserId: currentUser?.id,
                     sourceUserId: activeDragSourceOwnerId,
                     isFromAvailable: activeDragIsFromPool,
                     targetColumnId: `user-${userId}`,
-                  }).allowed &&
-                  (activeDragIsFromPool || !activeDragTask.assigneeId || activeDragTask.assigneeId !== userId)
+                  }).allowed
                 );
                 const allowStartInProgress = canStartInProgressSlot({
                   isPmUser,

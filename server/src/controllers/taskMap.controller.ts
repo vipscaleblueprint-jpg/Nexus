@@ -304,6 +304,7 @@ async function triggerN8nStartTaskWebhook(params: {
   taskUpdateAndDeliverables?: string | null;
   description?: string | null;
   date?: string;
+  sheetName?: string;
   mode?: 'START' | 'STOP' | 'UPDATE';
   insertEmptyRowBeforeStart?: boolean;
 }) {
@@ -316,10 +317,15 @@ async function triggerN8nStartTaskWebhook(params: {
       status: _omitStatus,
       ...safePayload
     } = params;
+    // Explicitly send sheetName (e.g. "2026") so n8n never falls back to "2025" tab
+    const resolvedSheetName =
+      params.sheetName ||
+      params.date?.match(/\b(202\d)\b/)?.[1] ||
+      new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', year: 'numeric' }).format(new Date());
     const res = await fetch(n8nUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(safePayload),
+      body: JSON.stringify({ ...safePayload, sheetName: resolvedSheetName }),
       signal: AbortSignal.timeout(6000),
     });
     logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}): HTTP ${res.status}`);

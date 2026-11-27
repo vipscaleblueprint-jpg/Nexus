@@ -58,7 +58,7 @@ import { openTaskInNewTab, markPendingModalHistoryBack, isModalHistoryBackPendin
 export { isModalHistoryBackPending };
 
 const COMMENT_REMARK_PLUGINS = [remarkGfm];
-const TEMPORARILY_DISABLE_MENTIONS = true;
+const TEMPORARILY_DISABLE_MENTIONS = false;
 const COMMENT_REHYPE_PLUGINS = [rehypeRaw, rehypeUnknownTagsToText, rehypeLinkify];
 const keepUrl = (url: string) => url;
 const uploadCommentImage = (file: File) => uploadApi.uploadFile(file, 'comments').then(res => res.url);

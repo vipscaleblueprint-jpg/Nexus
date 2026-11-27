@@ -89,26 +89,115 @@ async function loadBoard(actor: ActorUser): Promise<{ pool: BoardItem[]; items: 
   }
   const pool: BoardItem[] = board.body.availablePool || [];
   const items: BoardItem[] = board.body.tasks || [];
-  const parentRoles = await loadParentRoles([...pool, ...items]);
-  const resolve = (it: BoardItem) => resolveTaskRoles(it, it.parentTaskId ? parentRoles.get(it.parentTaskId) : null);
-  return { pool: pool.map(resolve), items: items.map(resolve) };
+  const parents = await loadParentInfo([...pool, ...items]);
+  const resolve = (it: BoardItem) => {
+    const parent = it.isSubtask && it.parentTaskId ? parents.get(it.parentTaskId) : undefined;
+    const resolved = resolveTaskRoles(it, parent?.roles);
+    return parent?.waiting ? { ...resolved, parentWaiting: true } : resolved;
+  };
+  const resolvedPool = pool.map(resolve);
+  const resolvedItems = items.map(resolve);
+  await attachTrackerCollaborators([...resolvedPool, ...resolvedItems.filter(isMaWorkItem)]);
+  return { pool: resolvedPool, items: resolvedItems };
 }
 
-/** Roles of the parent tasks of role-less subtasks (a subtask with no role inherits its parent's). */
-async function loadParentRoles(items: BoardItem[]): Promise<Map<string, string[]>> {
-  const ids = [
-    ...new Set(
-      items
-        .filter((it) => it.isSubtask && it.parentTaskId && !(it.assigneeRoleRestrictions || []).length)
-        .map((it) => it.parentTaskId!)
-    ),
-  ];
+/**
+ * Sets trackerCollaboratorIds on each item: everyone tagged IsRole = "Collaborator" in the MA daily
+ * tracker on the item's task family (the parent task or any of its subtasks).
+ *
+ * One query for the whole board (AuditLog is indexed on entity + entityId). Per person and per
+ * scope (parent task / each subtask) only their latest IsRole counts, so a row switched to
+ * "Auditor" drops them for that scope. Unlike the audit block, Revisions do not reset this: whoever
+ * worked the task before is still the best person to pick it back up.
+ */
+async function attachTrackerCollaborators(items: BoardItem[]): Promise<void> {
+  const familyOf = (it: BoardItem) => (it.isSubtask ? it.parentTaskId : it.id) || null;
+  const familyIds = [...new Set(items.map(familyOf).filter((id): id is string => Boolean(id)))];
+  if (!familyIds.length) return;
+
+  const [logs, users] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: {
+        entity: 'TASK',
+        entityId: { in: familyIds },
+        action: { in: ['STATUS_CHANGE', 'MA_UPDATE'] },
+        OR: [
+          { details: { path: ['isCollaborated'], equals: true } },
+          { details: { path: ['isAuditRole'], equals: true } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { entityId: true, userId: true, details: true, user: { select: { name: true } } },
+    }),
+    prisma.user.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
+  ]);
+  const idByName = new Map(users.map((u) => [(u.name || '').trim().toLowerCase(), u.id]));
+  const byNameToId = (n: unknown) => (typeof n === 'string' ? idByName.get(n.trim().toLowerCase()) : undefined);
+
+  // family -> person -> scope -> latest role is Collaborator (logs are newest first)
+  const latest = new Map<string, Map<string, Map<string, boolean>>>();
+  for (const log of logs) {
+    const d = (log.details as any) || {};
+    const people = new Set<string>();
+    if (d.movedById) people.add(d.movedById);
+    const named = byNameToId(d.movedByName);
+    if (named) people.add(named);
+    if (Array.isArray(d.maUpdaterIds)) d.maUpdaterIds.forEach((id: string) => id && people.add(id));
+    if (Array.isArray(d.maUpdaterNames)) d.maUpdaterNames.forEach((n: string) => { const id = byNameToId(n); if (id) people.add(id); });
+    if (d.movedByName && log.user?.name && !log.user.name.toUpperCase().includes('VIPSCALE')) people.add(log.userId);
+    if (!people.size) continue;
+
+    const scope = d.subtaskId || '';
+    const isCollab = d.isCollaborated === true;
+    let fam = latest.get(log.entityId);
+    if (!fam) latest.set(log.entityId, (fam = new Map()));
+    for (const person of people) {
+      let scopes = fam.get(person);
+      if (!scopes) fam.set(person, (scopes = new Map()));
+      if (!scopes.has(scope)) scopes.set(scope, isCollab);
+    }
+  }
+
+  const collaboratorsByFamily = new Map<string, string[]>();
+  for (const [familyId, fam] of latest) {
+    const ids = [...fam].filter(([, scopes]) => [...scopes.values()].some(Boolean)).map(([id]) => id);
+    if (ids.length) collaboratorsByFamily.set(familyId, ids);
+  }
+  for (const it of items) {
+    const ids = collaboratorsByFamily.get(familyOf(it) || '');
+    if (ids) it.trackerCollaboratorIds = ids;
+  }
+}
+
+/**
+ * Parent-task info for subtasks: roles (a subtask with no role inherits its parent's) and whether
+ * the parent is waiting (task status or any Task Map status contains WAITING). Subtasks of a waiting
+ * parent are never auto-assigned, whatever their own status (even In Review).
+ */
+async function loadParentInfo(items: BoardItem[]): Promise<Map<string, { roles: string[]; waiting: boolean }>> {
+  const ids = [...new Set(items.filter((it) => it.isSubtask && it.parentTaskId).map((it) => it.parentTaskId!))];
   if (!ids.length) return new Map();
-  const parents = await prisma.task.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, assigneeRoleRestrictions: true },
-  });
-  return new Map(parents.map((p) => [p.id, p.assigneeRoleRestrictions || []]));
+  const [parents, records] = await Promise.all([
+    prisma.task.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, status: true, assigneeRoleRestrictions: true },
+    }),
+    prisma.taskMapRecord.findMany({
+      where: { taskId: { in: ids } },
+      select: { taskId: true, statuses: true },
+    }),
+  ]);
+  const isWaiting = (v?: string | null) => (v || '').toUpperCase().replace(/[^A-Z]/g, '').includes('WAITING');
+  const recordStatuses = new Map(records.map((r) => [r.taskId, r.statuses || []]));
+  return new Map(
+    parents.map((p) => [
+      p.id,
+      {
+        roles: p.assigneeRoleRestrictions || [],
+        waiting: isWaiting(p.status as any) || (recordStatuses.get(p.id) || []).some(isWaiting),
+      },
+    ])
+  );
 }
 
 async function loadPeople(): Promise<{ users: QueueUser[]; shifts: ShiftWindow[] }> {

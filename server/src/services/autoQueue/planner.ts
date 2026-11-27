@@ -71,7 +71,12 @@ export const taskHistoryKey = (taskId: string) => `task:${taskId}`;
 const taskRowIdOf = (it: BoardItem) => (it.isSubtask ? it.parentTaskId || '' : it.id);
 
 /** Worked on this task before: its original MA, or commented on it (or its parent task). */
+/** Tagged IsRole = "Collaborator" on this task in the MA daily tracker. Always tried first. */
+const isTaggedCollaborator = (userId: string, task: BoardItem) =>
+  Boolean(task.trackerCollaboratorIds?.includes(userId));
+
 function isCollaborator(userId: string, task: BoardItem, history?: ClientHistory): boolean {
+  if (isTaggedCollaborator(userId, task)) return true;
   if (userId === originalMaId(task)) return true;
   const rowId = taskRowIdOf(task);
   return Boolean(rowId && history?.get(userId)?.has(taskHistoryKey(rowId)));
@@ -186,23 +191,35 @@ export async function planAssignments(input: PlanInput): Promise<Plan> {
         .map((user) => ({ user, load: loads.get(user.id) as MaLoad }))
         .filter((c) => c.load.queued < input.maxQueuedPerMa)
     );
-    if (withRoom.length === 0) break;
     const eligible = withRoom.filter((c) => canUserTakeTask(c.user, task));
     if (eligible.length === 0) continue; // nobody with this task's role has room: leave it in the pool
 
-    const ai = await askAi(input.pick, task, shortlist(eligible, eligible, task), clients);
-    const chosen = ai?.candidate || eligible[0];
+    // Collaborators on this task (parent or any subtask) come first, if the estimate fits the time
+    // left in their shift. Lightest load among them (no AI), so shared collaborators split evenly.
+    const hours = itemHours(task);
+    const tagged = eligible.filter(
+      (c) =>
+        isTaggedCollaborator(c.user.id, task) &&
+        remainingShiftHours(c.user, input.shifts, input.minuteOfDay) - c.load.hours >= hours
+    );
+    const ai = tagged.length > 0 ? null : await askAi(input.pick, task, shortlist(eligible, eligible, task), clients);
+    const chosen = tagged[0] || ai?.candidate || eligible[0];
     decisions.push({
       taskId: task.id,
       taskTitle: task.title,
       userId: chosen.user.id,
       userName: chosen.user.name,
       method: ai ? 'ai' : 'rules',
-      reason: ai ? ai.reason : 'Fewest open tasks among on-shift MAs with the right role',
+      reason: ai
+        ? ai.reason
+        : tagged.length > 0
+          ? 'Collaborator on this task (MA daily tracker); fewest open tasks among them'
+          : 'Fewest open tasks among on-shift MAs with the right role',
     });
 
     chosen.load.active++;
     chosen.load.queued++;
+    chosen.load.hours += hours;
     if (clientOf(task)) clients.get(chosen.user.id)!.add(clientOf(task));
   }
 
@@ -318,6 +335,9 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
     // Keep it balanced: the AI only chooses among people the task fits into today
     // (or the three with the most room when it fits no one, unless requireRoom is set).
     const fits = ranked.filter((c) => c.freeHours! >= hours);
+    // Collaborators on this task (parent or any subtask) come first, but only if it fits their
+    // remaining hours. Lightest day first among them (no AI), so shared collaborators split evenly.
+    const tagged = fits.filter((c) => isTaggedCollaborator(c.user.id, task));
     if (input.requireRoom && fits.length === 0) {
       skipped.push({
         taskId: task.id,
@@ -330,14 +350,16 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
     // as long as it fits their day; only fall back to everyone else when none of them has room.
     const doneBefore = (c: Candidate) => input.clientHistory?.get(c.user.id)?.get(clientIdOf(task)) || 0;
     const familiar = fits.filter((c) => doneBefore(c) > 0);
-    const collaborators = input.preferCollaborators
-      ? fits.filter((c) => isCollaborator(c.user.id, task, input.clientHistory))
-      : [];
+    const collaborators = tagged.length > 0
+      ? tagged
+      : input.preferCollaborators
+        ? fits.filter((c) => isCollaborator(c.user.id, task, input.clientHistory))
+        : [];
     const pickable =
       collaborators.length > 0 ? collaborators : familiar.length > 0 ? familiar : fits.length > 0 ? fits : ranked.slice(0, 3);
     const chosenIsCollaborator = (c: Candidate) => collaborators.includes(c);
 
-    const ai = await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
+    const ai = tagged.length > 0 ? null : await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
     const chosen = ai?.candidate || pickable[0];
     const lightest = `lightest day relative to shift (${chosen.load.hours.toFixed(1)}h of ${(shiftHours.get(chosen.user.id) || 0).toFixed(1)}h before this)`;
     decisions.push({
@@ -349,7 +371,7 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       reason: ai
         ? ai.reason
         : chosenIsCollaborator(chosen)
-          ? `Collaborator: worked on this task before; ${lightest}`
+          ? `Collaborator: ${isTaggedCollaborator(chosen.user.id, task) ? 'tagged Collaborator on this task (MA daily tracker)' : 'worked on this task before'}; ${lightest}`
           : doneBefore(chosen) > 0
           ? `Worked ${clientOf(task) || 'this client'} before (commented on ${doneBefore(chosen)} task${doneBefore(chosen) === 1 ? '' : 's'}); ${lightest}`
           : `${familiar.length === 0 && fits.length > 0 && input.clientHistory ? 'No one free has worked this client before; ' : ''}${lightest[0].toUpperCase()}${lightest.slice(1)}`,

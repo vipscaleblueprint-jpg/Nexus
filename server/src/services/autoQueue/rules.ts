@@ -44,6 +44,13 @@ export interface BoardItem {
   subtaskId?: string | null;
   parentTaskId?: string | null;
   parentTaskTitle?: string | null;
+  /** Set by the auto-queue loader: the parent task is Waiting, so this subtask is never auto-assigned. */
+  parentWaiting?: boolean;
+  /**
+   * Set by the auto-queue loader: people tagged IsRole = "Collaborator" on this task in the MA daily
+   * tracker (current round). They are tried first when the task is assigned.
+   */
+  trackerCollaboratorIds?: string[];
   subtaskCount?: number | null;
   subtasks?: Array<{ title?: string | null }> | null;
   listId?: string | null;
@@ -265,6 +272,7 @@ export function isParentTask(item: BoardItem): boolean {
 /** Open production work an MA does (not parent tasks, review/CRM/cadence/on-hold/closed/internal admin). */
 export function isMaWorkItem(item: BoardItem): boolean {
   if (isParentTask(item)) return false;
+  if (item.isSubtask && item.parentWaiting) return false;
   if (item.isClosed || item.isAdminTask || item.recurringConfig) return false;
   const s = norm(item.status);
   if (NOT_MA_WORK_EXACT.has(s) || s.includes('WAITING') || s.includes('CRM')) return false;

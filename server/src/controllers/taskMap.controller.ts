@@ -317,11 +317,9 @@ async function triggerN8nStartTaskWebhook(params: {
       status: _omitStatus,
       ...safePayload
     } = params;
-    // Explicitly send sheetName (e.g. "2026") so n8n never falls back to "2025" tab
-    const resolvedSheetName =
-      params.sheetName ||
-      params.date?.match(/\b(202\d)\b/)?.[1] ||
-      new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', year: 'numeric' }).format(new Date());
+    // Default to "2025" because MA Daily Schedule spreadsheets use the "2025" tab
+    // (sending the calendar year like "2026" causes n8n "Sheet with name 2026 not found").
+    const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
     const res = await fetch(n8nUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -20,6 +20,7 @@ import { invalidateCache } from './redisService';
 import { injectSubtaskIntoJournal } from './journalInjectionService';
 import { queueAuditPick } from './aiAuditPicker';
 import { parseEstimatedHours } from '../utils/estimatedHours';
+import { isClosedStatus } from './taskMapService';
 
 /** ClickUp's "Time Estimate" (milliseconds) as hours, or null when it isn't set. */
 function hoursFromClickUp(cu: { time_estimate?: number | string | null }): number | null {
@@ -522,6 +523,7 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
   const existingSelect = {
     id: true,
     listId: true,
+    status: true,
     externalId: true,
     description: true,
     estimatedHours: true,
@@ -556,13 +558,15 @@ async function syncTask(nexusListId: string, cuTaskId: string, ctx: SyncContext)
 
   let taskId: string;
   if (existing) {
+    // Guard: never reopen a closed/completed Nexus task back to an open ClickUp status (e.g. IN REVIEW).
+    const shouldPreserveClosedStatus = isClosedStatus(existing.status) && (!status || !isClosedStatus(status));
     const updated = await prisma.task.update({
       where: { id: existing.id },
       data: {
         // Keep Nexus titles (Galaxy adds the client suffix); just link the task.
         externalId: existing.externalId ?? cuTaskId,
         ...(listId !== existing.listId && { listId }),
-        ...(status && { status }),
+        ...(status && !shouldPreserveClosedStatus && { status }),
         ...(shouldReplaceDescription(existing.description, description) && { description }),
         ...(PRIORITY_MAP[cu.priority?.priority] && { priority: PRIORITY_MAP[cu.priority.priority] }),
         ...(toDate(cu.due_date) && { dueDate: toDate(cu.due_date) }),
@@ -621,12 +625,12 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
   const existing =
     (await prisma.subtask.findFirst({
       where: { OR: [{ externalId: cuSubtaskId }, { externalId: { endsWith: `/${cuSubtaskId}` } }] },
-      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true, estimatedHours: true },
+      select: { id: true, status: true, completed: true, externalId: true, assigneeRoleRestrictions: true, description: true, estimatedHours: true },
     })) ??
     // Subtasks created in Nexus before their ClickUp ID was stored.
     (await prisma.subtask.findFirst({
       where: { taskId: nexusTaskId, externalId: null, title: { equals: cu.name, mode: 'insensitive' } },
-      select: { id: true, externalId: true, assigneeRoleRestrictions: true, description: true, estimatedHours: true },
+      select: { id: true, status: true, completed: true, externalId: true, assigneeRoleRestrictions: true, description: true, estimatedHours: true },
     }));
   const description = descriptionHtml(cu);
 
@@ -641,12 +645,13 @@ async function syncSubtask(nexusTaskId: string, cuSubtaskId: string, ctx: SyncCo
 
   let subtaskId: string;
   if (existing) {
+    const shouldPreserveClosedSubtask = Boolean((existing.completed || isClosedStatus(existing.status)) && !completed);
     await prisma.subtask.update({
       where: { id: existing.id },
       data: {
         title: cu.name,
         externalId: existing.externalId ?? cuSubtaskId,
-        ...(status && { status, completed }),
+        ...(status && !shouldPreserveClosedSubtask && { status, completed }),
         ...(shouldReplaceDescription(existing.description, description) && { description }),
         ...(PRIORITY_MAP[cu.priority?.priority] && { priority: PRIORITY_MAP[cu.priority.priority] }),
         ...(toDate(cu.due_date) && { dueDate: toDate(cu.due_date) }),

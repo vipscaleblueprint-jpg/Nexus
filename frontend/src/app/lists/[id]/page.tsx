@@ -562,7 +562,7 @@ export default function BoardPage() {
                 if (st.id === payload.subtaskId) {
                   let found = false;
                   const updatedChecklists = (st.checklists || []).map((c: any) => {
-                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                       found = true;
                       const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                       if (hasItem) {
@@ -579,7 +579,7 @@ export default function BoardPage() {
                     return c;
                   });
                   if (!found) {
-                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
                     const newChecklist = {
                       id: payload.checklistId,
                       taskId: t.id,
@@ -601,7 +601,7 @@ export default function BoardPage() {
           } else if (t.id === payload.taskId) {
             let found = false;
             const updatedChecklists = (t.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                 found = true;
                 const hasItem = (c.items || []).some((i: any) => i.id === payload.item.id || (typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text));
                 if (hasItem) {
@@ -618,7 +618,7 @@ export default function BoardPage() {
               return c;
             });
             if (!found) {
-              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
               const newChecklist = {
                 id: payload.checklistId,
                 taskId: t.id,
@@ -660,7 +660,7 @@ export default function BoardPage() {
                 if (st.id === payload.subtaskId) {
                   let found = false;
                   const updatedChecklists = (st.checklists || []).map((c: any) => {
-                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+                    if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                       found = true;
                       if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                       const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -674,7 +674,7 @@ export default function BoardPage() {
                     return c;
                   });
                   if (!found) {
-                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+                    const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
                     const newChecklist = {
                       id: payload.checklistId,
                       taskId: t.id,
@@ -696,7 +696,7 @@ export default function BoardPage() {
           } else if (t.id === payload.taskId) {
             let found = false;
             const updatedChecklists = (t.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                 found = true;
                 if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                 const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -710,7 +710,7 @@ export default function BoardPage() {
               return c;
             });
             if (!found) {
-              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+              const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit', 'design audit', 'production audit', 'ui ux audit', 'funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
               const newChecklist = {
                 id: payload.checklistId,
                 taskId: t.id,

@@ -1758,6 +1758,8 @@ function SubtaskRow({
                         } else if (text === 'Funnel Audit') {
                           canCheck = roles.some(r => r.includes('funnel') || r.includes('backend'));
                           requiredRole = "Funnel/Backend";
+                        } else if (normalizeAuditName(text) === 'production audit') {
+                          canCheck = true;
                         }
                       }
 

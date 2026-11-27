@@ -1,5 +1,3 @@
-import { isTaskUnderAdmin } from '@/api/taskMap';
-
 export interface DeliverableQualityCheck {
   id: 'tangible' | 'measurable' | 'specific';
   label: string;
@@ -10,7 +8,6 @@ export interface DeliverableQualityCheck {
 export interface DeliverableQualityReport {
   score: number; // 0..100
   level: 'strong' | 'fair' | 'weak';
-  isClientTask: boolean;
   isGraphicsOrMediaTask: boolean;
   isSubmittable: boolean;
   blockReason: string | null;
@@ -84,16 +81,7 @@ export function evaluateDeliverableDescription(params: {
 }): DeliverableQualityReport {
   const desc = normalizeText(params.deliverablesDescription);
   const title = normalizeText(params.taskTitle);
-  const client = normalizeText(params.clientName);
 
-  const inferredAdmin =
-    Boolean(params.isAdminTask) ||
-    !client ||
-    client.toLowerCase() === 'general' ||
-    client.toLowerCase() === 'no client inputted' ||
-    isTaskUnderAdmin({ isAdminTask: params.isAdminTask, list: { id: '', name: client } });
-
-  const isClientTask = !inferredAdmin;
   const combinedHintText = `${title} ${desc}`.toLowerCase();
   const isGraphicsOrMediaTask = GRAPHICS_MEDIA_KEYWORDS.some((kw) =>
     combinedHintText.includes(kw)
@@ -147,20 +135,18 @@ export function evaluateDeliverableDescription(params: {
   let blockReason: string | null = null;
   if (!desc) {
     blockReason = 'Task Deliverables Description is required.';
-  } else if (isClientTask) {
-    if (isExplicitVague || GENERIC_ACTIVITY_ONLY_REGEX.test(desc)) {
-      blockReason =
-        'For client tasks, Task Deliverables Description needs a specific tangible output and target (e.g. "Update thumbnails, titles, and graphics across Module 2 lessons").';
-    } else if (!hasTangibleOutput) {
-      blockReason =
-        'Specify what tangible asset or deliverable was created/updated for the client (e.g. thumbnails, graphics, video clips, captions, voice-over, script, posts).';
-    } else if (!hasMeasurableScope) {
-      blockReason =
-        'Add a measurable count or named target (e.g. "two versions", "3 contents", "Reel 1", "Phase 2", "Module 3 Lesson 1") so it is detailed for the client.';
-    } else if (!hasClientSpecificDetail) {
-      blockReason =
-        'Make Task Deliverables Description slightly more detailed for the client (action + tangible deliverable + target).';
-    }
+  } else if (isExplicitVague || GENERIC_ACTIVITY_ONLY_REGEX.test(desc)) {
+    blockReason =
+      'Task Deliverables Description needs a specific tangible output and target (e.g. "Update thumbnails, titles, and graphics across Module 2 lessons").';
+  } else if (!hasTangibleOutput) {
+    blockReason =
+      'Specify what tangible asset or deliverable was created/updated (e.g. thumbnails, graphics, video clips, captions, voice-over, script, posts).';
+  } else if (!hasMeasurableScope) {
+    blockReason =
+      'Add a measurable count or named target (e.g. "two versions", "3 contents", "Reel 1", "Phase 2", "Module 3 Lesson 1").';
+  } else if (!hasClientSpecificDetail) {
+    blockReason =
+      'Make Task Deliverables Description slightly more detailed (action + tangible deliverable + target).';
   }
 
   const suggestions = checks.filter((c) => !c.passed).map((c) => c.hint);
@@ -172,7 +158,6 @@ export function evaluateDeliverableDescription(params: {
   return {
     score,
     level,
-    isClientTask,
     isGraphicsOrMediaTask,
     isSubmittable: !blockReason,
     blockReason,

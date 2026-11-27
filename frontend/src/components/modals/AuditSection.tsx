@@ -1438,7 +1438,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
                     } else if (text === 'Funnel Audit') {
                       canCheck = roles.some(r => r.includes('funnel') || r.includes('backend'));
                       requiredRole = "Funnel/Backend";
-                    } else if (text === 'Instructions Audit') {
+                    } else if (text === 'Instructions Audit' || normalizeAuditName(text) === 'production audit') {
                       canCheck = true;
                     }
                   }

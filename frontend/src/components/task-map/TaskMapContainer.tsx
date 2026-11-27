@@ -2429,6 +2429,7 @@ export const TaskMapContainer: React.FC = () => {
                 initialDate={currentDate}
                 initialLogs={dailySheetLogs}
                 clients={clients}
+                isActive={currentView === 'DAILY_TRACKER' || currentView === 'SHEETS'}
                 onOpenDetail={handleOpenTaskDetail}
                 onRefresh={() => loadData(true)}
               />

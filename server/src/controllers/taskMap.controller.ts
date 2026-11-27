@@ -321,6 +321,50 @@ async function triggerN8nStartTaskWebhook(params: {
   // Default to "2025" because MA Daily Schedule spreadsheets use the "2025" tab
   // (sending the calendar year like "2026" causes n8n "Sheet with name 2026 not found").
   const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
+
+  // 1. Direct Apps Script Web App execution (Runs native Apps Script code in the spreadsheet)
+  let scriptAppUrl: string | null = null;
+  if (params.userId) {
+    const u = await prisma.user.findUnique({
+      where: { id: params.userId },
+      select: { notificationPreferences: true },
+    }).catch(() => null);
+    scriptAppUrl = (u?.notificationPreferences as any)?.dailySheetScriptUrl || null;
+  }
+
+  if (scriptAppUrl) {
+    try {
+      const appScriptPayload = {
+        action: params.mode === 'STOP' ? 'stop' : (params.mode === 'UPDATE' ? 'sync' : 'start'),
+        sheetName: resolvedSheetName,
+        client: params.clientName,
+        task: params.taskTitle,
+        timeIn: params.timeIn,
+        timeOut: params.timeOut,
+        timeTracker: params.timeTracker,
+        taskLink: params.taskLink,
+        status: params.status,
+        sheetRow: params.sheetRow,
+        taskDeliverablesDescription: params.taskDeliverablesDescription || params.description,
+        taskUpdateAndDeliverables: params.taskUpdateAndDeliverables,
+      };
+      const scriptRes = await fetch(scriptAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(appScriptPayload),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (scriptRes.ok) {
+        const resTxt = await scriptRes.text().catch(() => '');
+        logger.info(`[AppsScript Direct] Native script execution succeeded for ${params.userName} (mode: ${params.mode || 'START'}): ${resTxt.substring(0, 100)}`);
+        return;
+      }
+      logger.warn(`[AppsScript Direct] HTTP ${scriptRes.status} for ${params.userName}, falling back to n8n webhook`);
+    } catch (err: any) {
+      logger.warn(`[AppsScript Direct] Call failed for ${params.userName}: ${err.message}, falling back to n8n webhook`);
+    }
+  }
+
   const payload = JSON.stringify({ ...safePayload, sheetName: resolvedSheetName });
 
   const maxAttempts = 2;
@@ -6198,21 +6242,371 @@ export const getUserDailyScheduleConfigHandler = async (req: Request, res: Respo
     }
     const user = await prisma.user.findUnique({
       where: { id: requestedUserId },
-      select: { id: true, name: true, email: true, dailySheetUrl: true },
+      select: { id: true, name: true, email: true, dailySheetUrl: true, notificationPreferences: true },
     });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     const match = user.dailySheetUrl?.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    const prefs = (user.notificationPreferences as any) || {};
     return res.json({
       success: true,
       userId: user.id,
       userName: user.name,
       dailySheetUrl: user.dailySheetUrl || null,
+      dailySheetScriptUrl: prefs.dailySheetScriptUrl || (user as any).dailySheetScriptUrl || null,
       spreadsheetId: match ? match[1] : null,
     });
   } catch (err: any) {
     logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const updateUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = (req.body.userId as string) || (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized or userId missing' });
+    }
+    const { dailySheetUrl, dailySheetScriptUrl } = req.body;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, notificationPreferences: true, dailySheetUrl: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentPrefs = (user.notificationPreferences as any) || {};
+    const updatedPrefs = {
+      ...currentPrefs,
+      ...(dailySheetScriptUrl !== undefined ? { dailySheetScriptUrl: dailySheetScriptUrl ? String(dailySheetScriptUrl).trim() : null } : {}),
+    };
+
+    const updateData: any = {
+      notificationPreferences: updatedPrefs,
+    };
+    if (dailySheetUrl !== undefined) {
+      updateData.dailySheetUrl = dailySheetUrl ? String(dailySheetUrl).trim() : null;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: { id: true, name: true, email: true, dailySheetUrl: true, notificationPreferences: true },
+    });
+
+    const match = updated.dailySheetUrl?.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return res.json({
+      success: true,
+      userId: updated.id,
+      userName: updated.name,
+      dailySheetUrl: updated.dailySheetUrl || null,
+      dailySheetScriptUrl: (updated.notificationPreferences as any)?.dailySheetScriptUrl || null,
+      spreadsheetId: match ? match[1] : null,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in updateUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const triggerSheetFilterHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { filter, scriptUrl } = req.body;
+    if (!filter || !['today', 'week', 'month', 'all'].includes(String(filter).toLowerCase())) {
+      return res.status(400).json({ error: 'Valid filter ("today", "week", "month", "all") is required' });
+    }
+
+    let targetScriptUrl = scriptUrl;
+    if (!targetScriptUrl && user?.id) {
+      const u = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { notificationPreferences: true },
+      });
+      targetScriptUrl = (u?.notificationPreferences as any)?.dailySheetScriptUrl;
+    }
+
+    if (!targetScriptUrl) {
+      return res.status(400).json({
+        error: 'No Apps Script Web App URL found. Please connect your Apps Script Web App URL first.',
+      });
+    }
+
+    // Call the deployed Google Apps Script Web App directly from the server (35s timeout for cold starts)
+    const targetUrl = new URL(targetScriptUrl);
+    targetUrl.searchParams.set('filter', String(filter).toLowerCase());
+    targetUrl.searchParams.set('_t', String(Date.now()));
+
+    const fetchRes = await fetch(targetUrl.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(35000),
+      redirect: 'follow',
+    });
+
+    const text = await fetchRes.text();
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = { raw: text };
+    }
+
+    if (parsed?.raw) {
+      if (
+        parsed.raw.includes('doGet') ||
+        parsed.raw.includes('function: doGet') ||
+        parsed.raw.includes('Script function not found') ||
+        parsed.raw.includes('Hindi mahanap ang script function')
+      ) {
+        return res.status(502).json({
+          success: false,
+          error:
+            'Your Google Apps Script Web App deployment does not have the latest code with doGet. Please open Extensions > Apps Script in your sheet, paste the updated appscript.js, and under Deploy > Manage deployments, select "New version" and click Deploy.',
+          details: parsed,
+        });
+      }
+    }
+
+    if (!fetchRes.ok || (parsed && parsed.ok === false)) {
+      return res.status(fetchRes.status >= 400 ? fetchRes.status : 502).json({
+        success: false,
+        error: parsed?.error || `Apps Script returned HTTP ${fetchRes.status}`,
+        details: parsed,
+      });
+    }
+
+    return res.json({
+      success: true,
+      filter,
+      result: parsed,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in triggerSheetFilterHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUserDailyScheduleMetadataHandler = async (req: Request, res: Response) => {
+  try {
+    const requestedUserId = (req.query.userId as string) || (req as any).user?.id;
+    if (!requestedUserId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: requestedUserId },
+      select: { id: true, name: true, email: true, dailySheetUrl: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.dailySheetUrl) {
+      return res.json({
+        success: true,
+        metadata: null,
+      });
+    }
+
+    const idMatch = user.dailySheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!idMatch?.[1]) {
+      return res.json({
+        success: true,
+        metadata: null,
+      });
+    }
+    const spreadsheetId = idMatch[1];
+    const gidMatch = user.dailySheetUrl.match(/[?#&]gid=(\d+)/);
+    const gid = gidMatch?.[1] || '0';
+
+    // Current Manila date & intervals
+    let todayKey = '';
+    try {
+      todayKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    } catch {
+      todayKey = new Date().toISOString().split('T')[0];
+    }
+
+    const todayDate = new Date(`${todayKey}T12:00:00+08:00`);
+    const dayOfWeek = todayDate.getDay();
+    const diffToMon = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const mondayDate = new Date(todayDate);
+    mondayDate.setDate(todayDate.getDate() + diffToMon);
+    const weekStartKey = mondayDate.toISOString().split('T')[0];
+    const monthStartKey = `${todayKey.slice(0, 7)}-01`;
+
+    let metadata: any = null;
+
+    // 1. Attempt GViz fetch
+    const candidateUrls = [
+      ...(gid && gid !== '0' ? [`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&gid=${gid}`] : []),
+      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=2025`,
+      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json`,
+    ];
+
+    for (const url of candidateUrls) {
+      try {
+        const fetchRes = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!fetchRes.ok) continue;
+        const txt = await fetchRes.text();
+        if (!txt || !txt.includes('setResponse(')) continue;
+        const jsonStr = txt.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, '');
+        const parsed = JSON.parse(jsonStr);
+        if (parsed?.status === 'error' || !Array.isArray(parsed?.table?.rows)) continue;
+
+        const rows = parsed.table.rows;
+        let lastDateKey: string | null = null;
+        const parsedRows: Array<{
+          rowNum: number;
+          dateKey: string;
+          timeIn?: string | null;
+          timeOut?: string | null;
+          client?: string | null;
+          task?: string | null;
+          isLive: boolean;
+        }> = [];
+
+        rows.forEach((r: any, idx: number) => {
+          const rowNum = idx + 2;
+          const cell0 = r?.c?.[0];
+          let dateKey: string | null = null;
+          if (cell0) {
+            const v = String(cell0.v || '');
+            const m = v.match(/Date\((\d+),(\d+),(\d+)\)/);
+            if (m) {
+              const y = parseInt(m[1], 10);
+              const mo = parseInt(m[2], 10) + 1;
+              const d = parseInt(m[3], 10);
+              dateKey = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            } else if (cell0.f) {
+              const dt = new Date(cell0.f);
+              if (!isNaN(dt.getTime())) {
+                dateKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+              }
+            }
+          }
+          if (dateKey) lastDateKey = dateKey;
+
+          const timeIn = r?.c?.[1]?.f || r?.c?.[1]?.v;
+          const timeOut = r?.c?.[2]?.f || r?.c?.[2]?.v;
+          const client = r?.c?.[6]?.f || r?.c?.[6]?.v;
+          const task = r?.c?.[8]?.f || r?.c?.[8]?.v;
+
+          if (lastDateKey && (timeIn || timeOut || client || task || dateKey)) {
+            parsedRows.push({
+              rowNum,
+              dateKey: lastDateKey,
+              timeIn: timeIn ? String(timeIn).trim() : null,
+              timeOut: timeOut ? String(timeOut).trim() : null,
+              client: client ? String(client).trim() : null,
+              task: task ? String(task).trim() : null,
+              isLive: Boolean(timeIn && !timeOut),
+            });
+          }
+        });
+
+        const todayRows = parsedRows.filter((p) => p.dateKey === todayKey);
+        const weekRows = parsedRows.filter((p) => p.dateKey >= weekStartKey && p.dateKey <= todayKey);
+        const monthRows = parsedRows.filter((p) => p.dateKey >= monthStartKey && p.dateKey <= todayKey);
+
+        const currentTask = todayRows.find((p) => p.isLive) || todayRows[todayRows.length - 1] || null;
+
+        metadata = {
+          spreadsheetId,
+          gid,
+          todayKey,
+          weekStartKey,
+          monthStartKey,
+          currentTaskRow: currentTask?.rowNum || (todayRows[0]?.rowNum ?? (parsedRows[parsedRows.length - 1]?.rowNum ? parsedRows[parsedRows.length - 1].rowNum + 1 : 1)),
+          currentTask: currentTask
+            ? {
+                row: currentTask.rowNum,
+                date: currentTask.dateKey,
+                timeIn: currentTask.timeIn,
+                timeOut: currentTask.timeOut,
+                client: currentTask.client,
+                task: currentTask.task,
+                isLive: currentTask.isLive,
+              }
+            : null,
+          todayRange: todayRows.length > 0 ? { startRow: todayRows[0].rowNum, endRow: todayRows[todayRows.length - 1].rowNum } : null,
+          weekRange: weekRows.length > 0 ? { startRow: weekRows[0].rowNum, endRow: weekRows[weekRows.length - 1].rowNum } : null,
+          monthRange: monthRows.length > 0 ? { startRow: monthRows[0].rowNum, endRow: monthRows[monthRows.length - 1].rowNum } : null,
+          totalRows: parsedRows.length,
+          source: 'GOOGLE_SHEET_GVIZ',
+        };
+        break;
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    // 2. Fallback to DailySheetLog if GViz was not reachable
+    if (!metadata) {
+      const maKey = (user.name || user.email || '').toLowerCase().trim();
+      const dbLogs = await prisma.dailySheetLog.findMany({
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(maKey ? [{ maKey }] : []),
+          ],
+          dateKey: { gte: monthStartKey },
+        },
+        orderBy: { dateKey: 'desc' },
+      });
+
+      const todayLogs = dbLogs.filter((l) => l.dateKey === todayKey);
+      const weekLogs = dbLogs.filter((l) => l.dateKey >= weekStartKey && l.dateKey <= todayKey);
+      const monthLogs = dbLogs;
+
+      const liveLog = todayLogs.find((l) => l.isLive && l.sheetRow) || todayLogs.find((l) => l.sheetRow) || null;
+      const currentTaskRow = liveLog?.sheetRow || 1;
+
+      const todaySheetRows = todayLogs.map((l) => l.sheetRow).filter((r): r is number => Boolean(r && r > 0)).sort((a, b) => a - b);
+      const weekSheetRows = weekLogs.map((l) => l.sheetRow).filter((r): r is number => Boolean(r && r > 0)).sort((a, b) => a - b);
+      const monthSheetRows = monthLogs.map((l) => l.sheetRow).filter((r): r is number => Boolean(r && r > 0)).sort((a, b) => a - b);
+
+      metadata = {
+        spreadsheetId,
+        gid,
+        todayKey,
+        weekStartKey,
+        monthStartKey,
+        currentTaskRow,
+        currentTask: liveLog
+          ? {
+              row: liveLog.sheetRow,
+              date: liveLog.dateKey,
+              timeIn: liveLog.timeIn,
+              timeOut: liveLog.timeOut,
+              client: liveLog.client,
+              task: liveLog.taskName,
+              isLive: liveLog.isLive,
+            }
+          : null,
+        todayRange: todaySheetRows.length > 0 ? { startRow: todaySheetRows[0], endRow: todaySheetRows[todaySheetRows.length - 1] } : null,
+        weekRange: weekSheetRows.length > 0 ? { startRow: weekSheetRows[0], endRow: weekSheetRows[weekSheetRows.length - 1] } : null,
+        monthRange: monthSheetRows.length > 0 ? { startRow: monthSheetRows[0], endRow: monthSheetRows[monthSheetRows.length - 1] } : null,
+        totalRows: dbLogs.length,
+        source: 'DAILY_SHEET_LOG_DB',
+      };
+    }
+
+    return res.json({
+      success: true,
+      metadata,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getUserDailyScheduleMetadataHandler');
     return res.status(500).json({ error: err.message });
   }
 };

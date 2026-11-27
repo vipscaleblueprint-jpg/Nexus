@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
@@ -22,6 +22,7 @@ import {
   Trash2,
   ExternalLink,
   CalendarClock,
+  MoreHorizontal,
 } from 'lucide-react';
 import {
   LaunchMapLightItem,
@@ -47,6 +48,11 @@ const LaunchMapDayDrawer = dynamic(
 
 const LaunchScheduleModal = dynamic(
   () => import('./LaunchScheduleModal').then((m) => m.LaunchScheduleModal),
+  { ssr: false }
+);
+
+const LaunchDayModal = dynamic(
+  () => import('./LaunchDayModal').then((m) => m.LaunchDayModal),
   { ssr: false }
 );
 
@@ -229,9 +235,13 @@ interface MonthCellProps {
   isWeekend: boolean;
   isToday: boolean;
   entries: EnrichedLaunchEntry[];
+  heatOpacity: number;
   onSelectDay: (dateKey: string) => void;
   onQuickSchedule: (dateKey: string) => void;
   onOpenDetail: (task: LaunchMapLightItem) => void;
+  onEditLaunch: (task: LaunchMapLightItem) => void;
+  onDeleteLaunch: (taskId: string) => void;
+  onMoveLaunch: (taskId: string, targetDateKey: string) => void;
 }
 
 const MonthDayCell = React.memo<MonthCellProps>(
@@ -242,12 +252,40 @@ const MonthDayCell = React.memo<MonthCellProps>(
     isWeekend,
     isToday,
     entries,
+    heatOpacity,
     onSelectDay,
     onQuickSchedule,
     onOpenDetail,
+    onEditLaunch,
+    onDeleteLaunch,
+    onMoveLaunch,
   }) => {
-    const visiblePills = entries.slice(0, 3);
-    const overflowCount = Math.max(0, entries.length - 3);
+    const [expandedClients, setExpandedClients] = React.useState(false);
+    const [isDragOver, setIsDragOver] = React.useState(false);
+    const [openMenuTaskId, setOpenMenuTaskId] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+      if (!openMenuTaskId) return;
+      const handleClose = () => setOpenMenuTaskId(null);
+      window.addEventListener('click', handleClose);
+      return () => window.removeEventListener('click', handleClose);
+    }, [openMenuTaskId]);
+
+    // Group entries by client for the expandable list
+    const byClient = React.useMemo(() => {
+      const map = new Map<string, EnrichedLaunchEntry[]>();
+      for (const e of entries) {
+        const arr = map.get(e.clientName) || [];
+        arr.push(e);
+        map.set(e.clientName, arr);
+      }
+      return map;
+    }, [entries]);
+
+    const multiClient = byClient.size >= 2;
+    // Show inline pills only when there's 1 client or expanded
+    const visiblePills = multiClient && !expandedClients ? [] : entries.slice(0, 4);
+    const overflowCount = multiClient && !expandedClients ? 0 : Math.max(0, entries.length - 4);
     const hasInReview = entries.some((e) => e.isInReview);
 
     const cellVariantClass = isToday
@@ -261,7 +299,35 @@ const MonthDayCell = React.memo<MonthCellProps>(
     return (
       <div
         onClick={() => onSelectDay(dateKey)}
-        className={`launch-map-cell ${cellVariantClass} group relative flex flex-col p-1.5 border-r border-b border-[var(--border)] min-h-[96px] transition-colors cursor-pointer`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          if (!isDragOver) setIsDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            setIsDragOver(false);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          const taskId = e.dataTransfer.getData('text/plain');
+          if (taskId) {
+            onMoveLaunch(taskId, dateKey);
+          }
+        }}
+        className={`launch-map-cell ${cellVariantClass} ${
+          isDragOver ? 'ring-2 ring-purple-500 bg-purple-500/20' : ''
+        } group relative flex flex-col p-2 border-r border-b border-[var(--border)] min-h-[140px] sm:min-h-[155px] transition-colors cursor-pointer`}
+        style={
+          heatOpacity > 0 && !isDragOver
+            ? {
+                backgroundColor: `color-mix(in srgb, #000000 ${Math.round(heatOpacity * 90)}%, var(--surface))`,
+                borderColor: heatOpacity > 0.25 ? 'rgba(139, 92, 246, 0.4)' : undefined,
+              }
+            : undefined
+        }
       >
         <div className="flex items-center justify-between gap-1 mb-1 px-0.5">
           <div className="flex items-center gap-1.5">
@@ -291,27 +357,162 @@ const MonthDayCell = React.memo<MonthCellProps>(
               onQuickSchedule(dateKey);
             }}
             className="opacity-0 group-hover:opacity-100 size-4 rounded flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--hover-subtle)] transition-all cursor-pointer"
-            title={`Schedule task on ${dateKey}`}
+            title={`Add launch on ${dateKey}`}
           >
             <Plus className="size-3" />
           </button>
         </div>
 
         <div className="flex flex-col gap-1 min-w-0 flex-1 overflow-hidden">
-          {visiblePills.map((entry) => {
+          {/* Multi-client expandable summary */}
+          {multiClient && !expandedClients && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setExpandedClients(true); }}
+              className="w-full text-left flex flex-col gap-0.5 px-2 py-1.5 rounded bg-[var(--accent)]/10 border border-[var(--accent)]/25 hover:bg-[var(--accent)]/18 transition-colors cursor-pointer"
+              title="Click to expand launches for this day"
+            >
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[10.5px] font-bold text-[var(--accent)]">
+                  {entries.length} Launches ({byClient.size} Clients)
+                </span>
+                <ChevronDown className="size-3 text-[var(--accent)]" />
+              </div>
+              <div className="flex flex-wrap gap-1 mt-0.5">
+                {Array.from(byClient.entries()).map(([client, items]) => (
+                  <span
+                    key={client}
+                    className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] truncate max-w-[85px]"
+                    title={`${client}: ${items.length} launch${items.length > 1 ? 'es' : ''}`}
+                  >
+                    {client} ({items.length})
+                  </span>
+                ))}
+              </div>
+            </button>
+          )}
+
+          {/* Expanded multi-client view */}
+          {multiClient && expandedClients && (
+            <>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setExpandedClients(false); }}
+                className="w-full text-left flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-[var(--hover-subtle)] transition-colors cursor-pointer"
+              >
+                <span className="text-[9.5px] font-semibold text-[var(--accent)] uppercase tracking-wider">
+                  {entries.length} launches ▲ Collapse
+                </span>
+              </button>
+              {entries.map((entry) => {
+                const assigneeNames = entry.assignees.map((a) => a.name).join(', ');
+                return (
+                  <div
+                    key={entry.task.id}
+                    draggable={true}
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      e.dataTransfer.setData('text/plain', entry.task.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onClick={(e) => { e.stopPropagation(); onOpenDetail(entry.task); }}
+                    className={`group/pill relative w-full text-left flex items-center justify-between gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-grab active:cursor-grabbing truncate ${
+                      entry.isInReview
+                        ? 'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500'
+                        : entry.isMilestone
+                        ? 'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500'
+                        : entry.isClosed
+                        ? 'launch-pill-closed text-[var(--muted)]'
+                        : 'launch-pill-default text-[var(--text)] border border-[var(--border)]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      {entry.isInReview ? (
+                        <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
+                      ) : entry.isUrgent ? (
+                        <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />
+                      ) : entry.isMilestone ? (
+                        <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
+                      ) : entry.isClosed ? (
+                        <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                      ) : (
+                        <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: entry.statusColor }} />
+                      )}
+                      <span className="truncate font-medium">{entry.task.title}</span>
+                      <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
+                        {entry.clientName}
+                      </span>
+                    </div>
+
+                    {/* Hover ... Menu Button */}
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuTaskId((prev) => (prev === entry.task.id ? null : entry.task.id));
+                        }}
+                        className="opacity-0 group-hover/pill:opacity-100 p-0.5 rounded hover:bg-zinc-700/60 text-[var(--muted)] hover:text-zinc-100 transition-opacity cursor-pointer shrink-0"
+                        title="Launch actions"
+                      >
+                        <MoreHorizontal className="size-3.5" />
+                      </button>
+
+                      {openMenuTaskId === entry.task.id && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 top-full mt-1 z-40 min-w-[125px] bg-[#1a1a24] border border-[#2e2e3f] rounded-lg shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200"
+                        >
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuTaskId(null);
+                              onEditLaunch(entry.task);
+                            }}
+                            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-[#272738] text-zinc-200 hover:text-white cursor-pointer"
+                          >
+                            <Pencil className="size-3 text-purple-400" />
+                            <span>Edit Launch</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuTaskId(null);
+                              onDeleteLaunch(entry.task.id);
+                            }}
+                            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 cursor-pointer"
+                          >
+                            <Trash2 className="size-3 text-red-400" />
+                            <span>Delete Launch</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Normal single-client pills */}
+          {!multiClient && visiblePills.map((entry) => {
             const assigneeNames = entry.assignees.map((a) => a.name).join(', ');
             return (
-              <button
+              <div
                 key={entry.task.id}
-                type="button"
+                draggable={true}
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  e.dataTransfer.setData('text/plain', entry.task.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenDetail(entry.task);
                 }}
-                title={`${entry.task.title} · ${entry.clientName} · ${entry.canonicalStatus}${
-                  assigneeNames ? ` · ${assigneeNames}` : ''
-                }${entry.isUrgent ? ' · URGENT' : ''}`}
-                className={`w-full text-left flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-pointer truncate ${
+                className={`group/pill relative w-full text-left flex items-center justify-between gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-grab active:cursor-grabbing truncate ${
                   entry.isInReview
                     ? 'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500'
                     : entry.isMilestone
@@ -321,25 +522,74 @@ const MonthDayCell = React.memo<MonthCellProps>(
                     : 'launch-pill-default text-[var(--text)] border border-[var(--border)]'
                 }`}
               >
-                {entry.isInReview ? (
-                  <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
-                ) : entry.isUrgent ? (
-                  <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />
-                ) : entry.isMilestone ? (
-                  <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
-                ) : entry.isClosed ? (
-                  <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
-                ) : (
-                  <span
-                    className="size-2 rounded-full shrink-0"
-                    style={{ backgroundColor: entry.statusColor }}
-                  />
-                )}
-                <span className="truncate font-medium flex-1 min-w-0">{entry.task.title}</span>
-                <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
-                  {entry.clientName}
-                </span>
-              </button>
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {entry.isInReview ? (
+                    <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
+                  ) : entry.isUrgent ? (
+                    <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />
+                  ) : entry.isMilestone ? (
+                    <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
+                  ) : entry.isClosed ? (
+                    <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
+                  ) : (
+                    <span
+                      className="size-2 rounded-full shrink-0"
+                      style={{ backgroundColor: entry.statusColor }}
+                    />
+                  )}
+                  <span className="truncate font-medium">{entry.task.title}</span>
+                  <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
+                    {entry.clientName}
+                  </span>
+                </div>
+
+                {/* Hover ... Menu Button */}
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuTaskId((prev) => (prev === entry.task.id ? null : entry.task.id));
+                    }}
+                    className="opacity-0 group-hover/pill:opacity-100 p-0.5 rounded hover:bg-zinc-700/60 text-[var(--muted)] hover:text-zinc-100 transition-opacity cursor-pointer shrink-0"
+                    title="Launch actions"
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </button>
+
+                  {openMenuTaskId === entry.task.id && (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute right-0 top-full mt-1 z-40 min-w-[125px] bg-[#1a1a24] border border-[#2e2e3f] rounded-lg shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200"
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuTaskId(null);
+                          onEditLaunch(entry.task);
+                        }}
+                        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-[#272738] text-zinc-200 hover:text-white cursor-pointer"
+                      >
+                        <Pencil className="size-3 text-purple-400" />
+                        <span>Edit Launch</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuTaskId(null);
+                          onDeleteLaunch(entry.task.id);
+                        }}
+                        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 cursor-pointer"
+                      >
+                        <Trash2 className="size-3 text-red-400" />
+                        <span>Delete Launch</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             );
           })}
 
@@ -394,6 +644,10 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     task: LaunchMapLightItem | null;
     dateKey: string;
   }>({ open: false, task: null, dateKey: todayKey });
+
+  // Day-click modal (new + Launch popup)
+  const [dayModalDate, setDayModalDate] = useState<string | null>(null);
+  const calendarContainerRef = useRef<HTMLDivElement | null>(null);
 
   const handleSetViewMode = useCallback((mode: CalendarViewMode) => {
     try {
@@ -490,16 +744,17 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   // Close drawer/modal on Esc
   useEffect(() => {
-    if (!selectedDayKey && !editorState.open) return;
+    if (!selectedDayKey && !editorState.open && !dayModalDate) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (editorState.open) setEditorState((prev) => ({ ...prev, open: false }));
+        else if (dayModalDate) setDayModalDate(null);
         else if (selectedDayKey) setSelectedDayKey(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedDayKey, editorState.open]);
+  }, [selectedDayKey, editorState.open, dayModalDate]);
 
   const searchLower = search.trim().toLowerCase();
 
@@ -556,10 +811,11 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     }
 
     entries.sort((a, b) => {
+      // Completed / done launches are moved to the bottom; upcoming active launches are prioritized at the top
+      if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1;
       if (a.isInReview !== b.isInReview) return a.isInReview ? -1 : 1;
       if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
       if (a.isMilestone !== b.isMilestone) return a.isMilestone ? -1 : 1;
-      if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1;
       return (a.task.title || '').localeCompare(b.task.title || '');
     });
 
@@ -581,6 +837,25 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     }
     return map;
   }, [allEntries]);
+
+  // ── Heatmap: compute max launches per day in the visible month grid ──────────
+  // Used to darken calendar cells — cells with more launches are darker.
+  const monthHeatmap = useMemo(() => {
+    const dayCounts = new Map<string, number>();
+    for (const cell of monthGridDays) {
+      const count = (entriesByDate.get(cell.dateKey) || []).filter((e) => !e.isClosed).length;
+      dayCounts.set(cell.dateKey, count);
+    }
+    const values = Array.from(dayCounts.values());
+    const maxCount = Math.max(1, ...values);
+    // Returns opacity 0–0.45 for cells based on their active launch count
+    const getHeatOpacity = (dateKey: string): number => {
+      const c = dayCounts.get(dateKey) || 0;
+      if (c === 0) return 0;
+      return Math.min(0.45, (c / maxCount) * 0.45);
+    };
+    return { getHeatOpacity, maxCount };
+  }, [monthGridDays, entriesByDate]);
 
   const timelineStats = useMemo(() => {
     const isActiveLaunch = (e: EnrichedLaunchEntry) =>
@@ -611,6 +886,41 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       scopedTbdCount,
     };
   }, [allEntries, agendaScope, todayKey]);
+
+  // Earliest upcoming active launch
+  const nextUpcomingLaunch = useMemo(() => {
+    return allEntries
+      .filter((e) => !e.isClosed && e.dateKey && e.dateKey >= todayKey)
+      .sort((a, b) => (a.dateKey as string).localeCompare(b.dateKey as string))[0];
+  }, [allEntries, todayKey]);
+
+  // If other client launches in the current viewed month are done (or there are no active launches in current month),
+  // automatically advance the calendar cursor to the earliest upcoming active launch!
+  const userInteractedRef = useRef<boolean>(false);
+  const autoAdvancedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (userInteractedRef.current) return;
+    if (!nextUpcomingLaunch?.dateKey) return;
+
+    // Check if the current viewed month has any active launches
+    const hasActiveInCurrentMonth = allEntries.some((e) => {
+      if (e.isClosed || !e.dateKey) return false;
+      const p = parseDateKeyParts(e.dateKey);
+      return p.year === cursorYear && p.month === cursorMonth;
+    });
+
+    if (hasActiveInCurrentMonth) return;
+
+    // If all launches in current month are done, move calendar date to upcoming launch
+    const target = parseDateKeyParts(nextUpcomingLaunch.dateKey);
+    const targetKey = `${target.year}-${target.month}`;
+    if (autoAdvancedKeyRef.current !== targetKey) {
+      autoAdvancedKeyRef.current = targetKey;
+      setCursorYear(target.year);
+      setCursorMonth(target.month);
+      setCursorDay(target.day);
+    }
+  }, [nextUpcomingLaunch, cursorYear, cursorMonth, allEntries]);
 
   const agendaData = useMemo(() => {
     if (viewMode !== 'AGENDA') {
@@ -742,10 +1052,17 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const yearOptions = useMemo(() => {
     const base = todayParts.year;
-    return [base - 1, base, base + 1, base + 2];
-  }, [todayParts.year]);
+    const start = Math.min(base - 5, cursorYear - 2);
+    const end = Math.max(base + 10, cursorYear + 2);
+    const list: number[] = [];
+    for (let y = start; y <= end; y++) {
+      list.push(y);
+    }
+    return list;
+  }, [todayParts.year, cursorYear]);
 
   const handleNavigatePrev = useCallback(() => {
+    userInteractedRef.current = true;
     if (viewMode === 'WEEK') {
       const d = new Date(Date.UTC(cursorYear, cursorMonth, cursorDay - 7, 12, 0, 0));
       setCursorYear(d.getUTCFullYear());
@@ -763,6 +1080,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
   }, [viewMode, cursorYear, cursorMonth, cursorDay]);
 
   const handleNavigateNext = useCallback(() => {
+    userInteractedRef.current = true;
     if (viewMode === 'WEEK') {
       const d = new Date(Date.UTC(cursorYear, cursorMonth, cursorDay + 7, 12, 0, 0));
       setCursorYear(d.getUTCFullYear());
@@ -780,6 +1098,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
   }, [viewMode, cursorYear, cursorMonth, cursorDay]);
 
   const handleGoToday = useCallback(() => {
+    userInteractedRef.current = true;
     setCursorYear(todayParts.year);
     setCursorMonth(todayParts.month);
     setCursorDay(todayParts.day);
@@ -825,6 +1144,59 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       }
     },
     [onLaunchMetaUpdated, onDataRefresh]
+  );
+
+  const handleMoveLaunch = useCallback(
+    async (taskId: string, targetDateKey: string) => {
+      try {
+        const res = await taskMapApi.updateLaunchMeta(taskId, {
+          launchDate: targetDateKey,
+          targetPeriod: null,
+          syncDueDate: true,
+        });
+        if (res.success) {
+          onLaunchMetaUpdated?.(taskId, {
+            launchMeta: res.launchMeta,
+            effectiveLaunchDate: res.effectiveLaunchDate,
+            targetPeriod: res.targetPeriod ?? null,
+            dueDate: res.dueDate,
+          });
+          toast.success(`Launch moved to ${formatReadableDate(targetDateKey)}`);
+          onDataRefresh?.();
+        }
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : 'Failed to move launch');
+      }
+    },
+    [onLaunchMetaUpdated, onDataRefresh]
+  );
+
+  const wheelCooldownRef = useRef<number>(0);
+  const handleCalendarWheel = useCallback(
+    (e: React.WheelEvent) => {
+      const target = e.target as HTMLElement;
+      // Do not navigate month if scrolling inside an internal dialog, form, input or textarea
+      if (target?.closest?.('[role="dialog"], form, input, textarea, select')) {
+        return;
+      }
+      // Check if target is inside an inner scrollable dropdown menu (other than the calendar container itself)
+      const scrollableParent = target?.closest?.('.overflow-y-auto, .overflow-y-scroll, .custom-scrollbar');
+      if (scrollableParent && scrollableParent !== calendarContainerRef.current) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - wheelCooldownRef.current < 250) return;
+
+      if (e.deltaY > 20) {
+        wheelCooldownRef.current = now;
+        handleNavigateNext();
+      } else if (e.deltaY < -20) {
+        wheelCooldownRef.current = now;
+        handleNavigatePrev();
+      }
+    },
+    [handleNavigateNext, handleNavigatePrev]
   );
 
   const handleToggleMilestoneQuick = useCallback(
@@ -1172,6 +1544,23 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
               >
                 Today
               </button>
+
+              {nextUpcomingLaunch?.dateKey && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = parseDateKeyParts(nextUpcomingLaunch.dateKey!);
+                    setCursorYear(target.year);
+                    setCursorMonth(target.month);
+                    setCursorDay(target.day);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/35 hover:bg-purple-500/25 transition-colors cursor-pointer"
+                  title={`Jump to next upcoming active launch: ${nextUpcomingLaunch.task.title} (${nextUpcomingLaunch.dateKey})`}
+                >
+                  <Rocket className="size-3 text-purple-400" />
+                  <span>Next Launch</span>
+                </button>
+              )}
             </>
           )}
 
@@ -1230,7 +1619,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--accent)] hover:opacity-90 text-[var(--on-accent)] text-xs font-semibold shadow-xs transition-opacity cursor-pointer whitespace-nowrap"
           >
             <Plus className="size-3.5" />
-            <span>Schedule</span>
+            <span>Launch</span>
           </button>
         </div>
       </div>
@@ -1402,8 +1791,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
         {/* MONTH VIEW */}
         {viewMode === 'MONTH' && (
-          <div className="flex flex-col flex-1 min-h-0 overflow-auto custom-scrollbar">
-            <div className="launch-map-header-bar grid grid-cols-7 border-b border-[var(--border)] shrink-0">
+          <div
+            ref={calendarContainerRef}
+            onWheel={handleCalendarWheel}
+            className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar"
+          >
+            <div className="launch-map-header-bar grid grid-cols-7 border-b border-[var(--border)] shrink-0 sticky top-0 z-10 bg-[var(--surface)] shadow-xs">
               {WEEKDAYS.map((day, idx) => {
                 const isWeekend = idx === 0 || idx === 6;
                 return (
@@ -1419,7 +1812,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
               })}
             </div>
 
-            <div className="grid grid-cols-7 grid-rows-6 flex-1 min-h-[540px]">
+            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-[560px]">
               {monthGridDays.map((cell) => (
                 <MonthDayCell
                   key={cell.dateKey}
@@ -1429,9 +1822,13 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                   isWeekend={cell.isWeekend}
                   isToday={cell.isToday}
                   entries={entriesByDate.get(cell.dateKey) || []}
-                  onSelectDay={setSelectedDayKey}
-                  onQuickSchedule={handleQuickScheduleForDay}
+                  heatOpacity={monthHeatmap.getHeatOpacity(cell.dateKey)}
+                  onSelectDay={(dk) => setDayModalDate(dk)}
+                  onQuickSchedule={(dk) => setDayModalDate(dk)}
                   onOpenDetail={onOpenDetail}
+                  onEditLaunch={(task) => openScheduleModal({ task })}
+                  onDeleteLaunch={handleUnscheduleTask}
+                  onMoveLaunch={handleMoveLaunch}
                 />
               ))}
             </div>
@@ -1904,6 +2301,21 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           onOpenDetail={onOpenDetail}
           onToggleMilestone={handleToggleMilestoneQuick}
           onUnschedule={handleUnscheduleTask}
+        />
+      )}
+
+      {/* Day-click Launch Modal */}
+      {dayModalDate && (
+        <LaunchDayModal
+          initialDate={dayModalDate}
+          existingEntries={entriesByDate.get(dayModalDate) || []}
+          onDeleteLaunch={handleUnscheduleTask}
+          onClose={() => setDayModalDate(null)}
+          onSaved={(taskId, data) => {
+            onLaunchMetaUpdated?.(taskId, data);
+            onDataRefresh?.();
+            setDayModalDate(null);
+          }}
         />
       )}
 

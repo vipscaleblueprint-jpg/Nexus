@@ -33,6 +33,9 @@ import {
   getClientLockStatusHandler,
   syncSpreadsheetRowHandler,
   getUserDailyScheduleConfigHandler,
+  updateUserDailyScheduleConfigHandler,
+  triggerSheetFilterHandler,
+  getUserDailyScheduleMetadataHandler,
   getDailySheetLogsHandler,
   createDailySheetLogHandler,
   createSuperviseCheckHandler,
@@ -98,6 +101,9 @@ taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);
 
 // Spreadsheet Schedule Row Sync & User Config
 taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
+taskMapRouter.post('/sheets/user-config', updateUserDailyScheduleConfigHandler);
+taskMapRouter.post('/sheets/trigger-filter', triggerSheetFilterHandler);
+taskMapRouter.get('/sheets/metadata', getUserDailyScheduleMetadataHandler);
 taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);
 taskMapRouter.get('/sheets/logs', getDailySheetLogsHandler);
 taskMapRouter.post('/sheets/logs', createDailySheetLogHandler);

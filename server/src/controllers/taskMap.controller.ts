@@ -2289,17 +2289,32 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         }
 
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
+        let matchedSubSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+        let matchedSubTimeIn: string | null = null;
+        let matchedSubDate: string | null = null;
+        let matchedSubClient: string | null = null;
         for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id && r.timeIn && !r.timeOut) {
-            r.timeOut = nowManilaTime;
-            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
-            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id) {
+            if (!matchedSubSheetRow && r.sheetRow) matchedSubSheetRow = Number(r.sheetRow);
+            if (!matchedSubTimeIn && r.timeIn) matchedSubTimeIn = r.timeIn;
+            if (!matchedSubDate && r.date) matchedSubDate = r.date;
+            if (!matchedSubClient && r.client) matchedSubClient = r.client;
+            if (r.timeIn && !r.timeOut) {
+              r.timeOut = nowManilaTime;
+              if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+              if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+            }
           }
           if (r?.type === 'UPWORK_SESSION' && r?.subtaskId === subtask.id && r.active) {
             r.active = false;
             r.stoppedAt = new Date().toISOString();
           }
         }
+        await closeLiveDailySheetLogsForTask({
+          taskId: subtask.taskId,
+          subtaskId: subtask.id,
+          timeOut: nowManilaTime,
+        }).catch(() => {});
         const subUser = subtask.User || (subtask.assignees && subtask.assignees[0]);
         const subNamesToClear = [actorDisplayName, subUser?.name].filter(Boolean) as string[];
         for (const n of subNamesToClear) {
@@ -2333,11 +2348,13 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
               dailySheetUrl: (subUser as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
               taskId: subtask.taskId,
               subtaskId: subtask.id,
-              sheetRow: sheetRow ? Number(sheetRow) : null,
+              sheetRow: sheetRow ? Number(sheetRow) : matchedSubSheetRow,
               taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
-              clientName: (subtask.task as any)?.list?.name || 'General',
+              clientName: matchedSubClient || (subtask.task as any)?.list?.name || 'General',
               taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
               status: isExplicitHandover ? 'Hand-over' : isAvailableTaskStatus ? 'Available Task' : 'In Review',
+              date: matchedSubDate || getManilaDateStr(),
+              timeIn: matchedSubTimeIn || undefined,
               timeOut: nowManilaTime,
               taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
               taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
@@ -2628,14 +2645,24 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           }
         }
       }
+      let matchedMainSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+      let matchedMainTimeIn: string | null = null;
+      let matchedMainDate: string | null = null;
+      let matchedMainClient: string | null = null;
       if (Array.isArray(pmReviews)) {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
         // Clock out any open sheet progress and close Upwork session on handover / transfer
         for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && !r?.subtaskId && r.timeIn && !r.timeOut) {
-            r.timeOut = nowManilaTime;
-            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
-            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+          if (r?.type === 'SHEET_PROGRESS' && !r?.subtaskId) {
+            if (!matchedMainSheetRow && r.sheetRow) matchedMainSheetRow = Number(r.sheetRow);
+            if (!matchedMainTimeIn && r.timeIn) matchedMainTimeIn = r.timeIn;
+            if (!matchedMainDate && r.date) matchedMainDate = r.date;
+            if (!matchedMainClient && r.client) matchedMainClient = r.client;
+            if (r.timeIn && !r.timeOut) {
+              r.timeOut = nowManilaTime;
+              if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+              if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+            }
           }
           if (r?.type === 'UPWORK_SESSION' && !r?.subtaskId && r.active) {
             r.active = false;
@@ -2643,6 +2670,11 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           }
         }
       }
+      await closeLiveDailySheetLogsForTask({
+        taskId: id,
+        subtaskId: null,
+        timeOut: nowManilaTime,
+      }).catch(() => {});
       const namesToClear = [actorDisplayName, currentTask?.assignee?.name].filter(Boolean) as string[];
       for (const n of namesToClear) {
         await deleteMaActiveSession(n).catch(() => {});
@@ -2675,11 +2707,13 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             userEmail: primaryAssignee?.email || actorUser?.email,
             dailySheetUrl: (primaryAssignee as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
             taskId: id,
-            sheetRow: sheetRow ? Number(sheetRow) : null,
+            sheetRow: sheetRow ? Number(sheetRow) : matchedMainSheetRow,
             taskTitle: currentTask?.title || 'Task',
-            clientName: (currentTask as any)?.list?.name || 'General',
+            clientName: matchedMainClient || (currentTask as any)?.list?.name || 'General',
             taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
             status: isExplicitHandover ? 'Hand-over' : isAvailableTaskStatus ? 'Available Task' : 'In Review',
+            date: matchedMainDate || getManilaDateStr(),
+            timeIn: matchedMainTimeIn || undefined,
             timeOut: nowManilaTime,
             taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
             taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,

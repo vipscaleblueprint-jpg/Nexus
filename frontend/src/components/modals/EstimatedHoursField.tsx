@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Clock } from 'lucide-react';
 
+/** Blank estimates count as 30 minutes; mirrors DEFAULT_ESTIMATED_HOURS in server/src/services/autoQueue/rules.ts. */
+export const DEFAULT_ESTIMATED_HOURS = 0.5;
+
 /** 0.5 -> "30m", 1 -> "1h", 2.75 -> "2h 45m" */
 export function formatEstimatedHours(hours: number): string {
   const totalMinutes = Math.round(hours * 60);
@@ -97,7 +100,9 @@ export function EstimatedHoursField({ hours, canEdit, onSave }: EstimatedHoursFi
             canEdit ? 'cursor-pointer hover:bg-zinc-700/50' : 'cursor-default'
           } ${hours != null ? 'text-zinc-300' : 'text-zinc-500'}`}
         >
-          {hours != null ? `~${formatEstimatedHours(hours)}` : canEdit ? 'Set estimate' : 'No estimate'}
+          {hours != null
+            ? `~${formatEstimatedHours(hours)}`
+            : `~${formatEstimatedHours(DEFAULT_ESTIMATED_HOURS)} (default)`}
         </button>
       )}
     </div>

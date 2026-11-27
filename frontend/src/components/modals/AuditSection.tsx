@@ -769,32 +769,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
     try {
       await currentOp;
 
-      // Auto-transition: In Review -> Checking when Level 1 audits complete; or Checking -> In Review if unchecked
-      if (!subtaskId) {
-        const taskStatusUpper = (task.status || '').toUpperCase().trim();
-        if (newCompleted && (taskStatusUpper === 'IN REVIEW' || taskStatusUpper === 'INREVIEW')) {
-          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text) || isProductionAudit(text);
-          if (isLevel1) {
-            const dummyTask = { ...task, checklists: localChecklistsRef.current };
-            if (areLevel1AuditsComplete(dummyTask)) {
-              await tasksApi.updateTask(task.id, { status: 'Checking' } as any).catch(console.error);
-              const updatedTask = { ...task, status: 'Checking', checklists: localChecklistsRef.current };
-              useAppStore.getState().updateTask(updatedTask);
-              window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-              toast.success('✓ Level 1 audits completed — task moved to Checking');
-            }
-          }
-        } else if (!newCompleted && (taskStatusUpper === 'CHECKING' || taskStatusUpper === 'IN CHECKING')) {
-          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text) || isProductionAudit(text);
-          if (isLevel1 && hasUiUxOrDesignAudit(task)) {
-            await tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
-            const updatedTask = { ...task, status: 'In Review', checklists: localChecklistsRef.current };
-            useAppStore.getState().updateTask(updatedTask);
-            window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-            toast.info('Level 1 audit unchecked — task returned to In Review');
-          }
-        }
-      }
+      // CHECKING is retired: audits no longer move the task between In Review and Checking.
     } catch (e: any) {
       console.error('[AuditSection] Failed to persist audit toggle:', e);
       toast.error(e?.response?.data?.error || e?.message || 'Failed to save audit change');

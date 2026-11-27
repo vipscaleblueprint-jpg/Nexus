@@ -38,9 +38,11 @@ export interface GalaxyTaskPayload {
   complexity?: string;
   task_link?: string;
   goal?: string;
+  /** Optional YYYY-MM-DD; Nexus sets it as the created task's due date. */
+  launch_date?: string;
 }
 
-export interface GalaxyTaskResponse {
+export interface GalaxyTaskResponse {
   success?: boolean;
   task_link?: string;
   nexus_task_link?: string;

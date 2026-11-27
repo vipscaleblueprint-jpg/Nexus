@@ -23,6 +23,7 @@
  * n8n links a new ClickUp comment by sending clickup_comment_id on a create/update.
  */
 
+import { resolveClickUpListId } from '../services/clickupService';
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
@@ -38,6 +39,100 @@ import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpw
 import { upsertDailySheetLog, clearDailySheetLogRow } from '../services/dailySheetLogService';
 import { verifyDailyOtp, setClientUnlockedToday, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
 import { checkClientLockStatus } from '../services/clientLockService';
+import { getTaskMoverAndUpdaters } from './task.controller';
+
+/** Tracker rows in "In Review" are auditing; any other status means the MA worked on the task. */
+function roleFromTaskStatus(taskStatus: unknown, fallback: unknown): unknown {
+  const status = taskStatus == null ? '' : String(taskStatus).trim();
+  if (!status) return fallback;
+  return /^in\s*review$/i.test(status) ? 'Auditor' : 'Collaborator';
+}
+
+function parseIsRoleFlags(isRole: unknown): { isRole: string | null; isAuditRole: boolean; isCollaborated: boolean } {
+  const isRoleStr = isRole !== undefined && isRole !== null ? String(isRole).trim() || null : null;
+  const s = (isRoleStr || '').toLowerCase();
+  const isCollaborated = s.includes('collab');
+  const isAuditRole = !isCollaborated && (s === 'true' || s.includes('audit'));
+  return { isRole: isRoleStr, isAuditRole, isCollaborated };
+}
+
+/**
+ * Records an MA_UPDATE AuditLog when a sheet row is marked IsCollaborated=true,
+ * so getTaskMoverAndUpdaters blocks that user from checking audits on the task.
+ */
+async function recordSheetCollaborationIfNeeded(params: {
+  taskId: string;
+  subtaskId?: string | null;
+  listId?: string | null;
+  userId?: string | null;
+  userName?: string | null;
+  isRole: string | null;
+  isAuditRole: boolean;
+  isCollaborated: boolean;
+}) {
+  if ((!params.isCollaborated && !params.isAuditRole) || !params.taskId || (!params.userId && !params.userName)) return;
+  try {
+    const currentMovers = await getTaskMoverAndUpdaters(params.taskId, params.subtaskId || undefined);
+    const alreadyListed = Boolean(
+      (params.userId && currentMovers.maUpdaterIds.includes(params.userId)) ||
+      (params.userName && currentMovers.maUpdaterNames.some((n) => n.trim().toLowerCase() === params.userName!.trim().toLowerCase()))
+    );
+    if (params.isAuditRole) {
+      // Row switched to "Auditor" (rows default to "Collaborator"): record the latest role so
+      // getTaskMoverAndUpdaters drops this person's earlier auto-Collaborator logs.
+      if (!alreadyListed) return;
+      const actorId = params.userId || (await getOrCreateVipScaleUser()).id;
+      await prisma.auditLog.create({
+        data: {
+          action: 'MA_UPDATE',
+          entity: 'TASK',
+          entityId: params.taskId,
+          userId: actorId,
+          details: {
+            subtaskId: params.subtaskId || null,
+            source: 'sheets',
+            movedByName: params.userName || 'Unknown',
+            movedById: params.userId || null,
+            isRole: params.isRole,
+            isAuditRole: true,
+            isCollaborated: false,
+            maUpdaterIds: [],
+            maUpdaterNames: [],
+          },
+        },
+      });
+    } else if (!alreadyListed) {
+      const actorId = params.userId || (await getOrCreateVipScaleUser()).id;
+      await prisma.auditLog.create({
+        data: {
+          action: 'MA_UPDATE',
+          entity: 'TASK',
+          entityId: params.taskId,
+          userId: actorId,
+          details: {
+            subtaskId: params.subtaskId || null,
+            source: 'sheets',
+            movedByName: params.userName || 'Unknown',
+            movedById: params.userId || null,
+            isMaUpdate: true,
+            isRole: params.isRole,
+            isAuditRole: params.isAuditRole,
+            isCollaborated: true,
+            maUpdaterIds: params.userId ? [params.userId] : [],
+            maUpdaterNames: params.userName ? [params.userName] : [],
+          },
+        },
+      });
+    }
+    const freshMovers = await getTaskMoverAndUpdaters(params.taskId, params.subtaskId || undefined);
+    io.emit('task:updated', { id: params.taskId, ...freshMovers });
+    if (params.listId) {
+      io.to(`list:${params.listId}`).emit('task:updated', { id: params.taskId, ...freshMovers });
+    }
+  } catch (err) {
+    console.warn('[Sheets] Failed to record sheet collaboration:', err);
+  }
+}
 
 interface LinkedTarget {
   taskId: string;
@@ -578,11 +673,23 @@ const MAX_RESOLVE_LINKS = 500;
 
 /**
  * POST /api/webhooks/sheets/nexus-links  { clickup_links: string[] }
- * → { links: { [clickupLink]: nexusLink | null } }
+ * → { links: { [clickupLink]: nexusLink | null }, statuses: { [clickupLink]: status | null } }
+ * statuses is the Nexus status as the sheet labels it ("In Review"), so the sheet can follow Nexus.
  *
  * Lets "Notes for Today" fill its Nexus Task Link column from the ClickUp links it
  * already has. null means the task isn't in Nexus yet; the sheet asks again later.
  */
+/** Nexus status -> the label Notes for Today uses. Unknown statuses give null (the sheet keeps its value). */
+const SHEET_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pending', INPROGRESS: 'In Progress', REVISION: 'Revision', WAITING: 'Waiting',
+  INREVIEW: 'In Review', CHECKING: 'In Review', INCHECKING: 'In Review', CLOSED: 'Closed',
+  COMPLETE: 'Closed', DONE: 'Closed', DAILY: 'Daily', WEEKLY: 'Weekly', MONTHLY: 'Monthly',
+  ONHOLD: 'On-Hold', CRM: 'Crm', KYC: 'Kyc', PINBOARD: 'Pin Board',
+};
+function sheetStatusLabel(status: string | null | undefined): string | null {
+  return SHEET_STATUS_LABELS[(status || '').toUpperCase().replace(/[^A-Z]/g, '')] ?? null;
+}
+
 export const resolveNexusLinks = async (req: Request, res: Response) => {
   if (!requireApiKey(req, res)) return;
   try {
@@ -598,29 +705,142 @@ export const resolveNexusLinks = async (req: Request, res: Response) => {
     const match = { OR: ids.flatMap((id) => [{ externalId: id }, { externalId: { endsWith: `/${id}` } }]) };
     const [tasks, subtasks] = ids.length
       ? await Promise.all([
-        prisma.task.findMany({ where: match, select: { id: true, listId: true, externalId: true } }),
+        prisma.task.findMany({ where: match, select: { id: true, listId: true, externalId: true, status: true } }),
         prisma.subtask.findMany({
           where: match,
-          select: { id: true, taskId: true, externalId: true, task: { select: { listId: true } } },
+          select: { id: true, taskId: true, externalId: true, status: true, task: { select: { listId: true } } },
         }),
       ])
       : [[], []];
 
     const nexusLinkById = new Map<string, string>();
+    const statusById = new Map<string, string | null>();
     for (const s of subtasks) {
       const id = s.externalId && clickUpIdOf(s.externalId);
-      if (id) nexusLinkById.set(id, `${NEXUS_APP_URL}/lists/${s.task.listId}?task=${s.taskId}&subtask=${s.id}`);
+      if (id) {
+        nexusLinkById.set(id, `${NEXUS_APP_URL}/lists/${s.task.listId}?task=${s.taskId}&subtask=${s.id}`);
+        statusById.set(id, sheetStatusLabel(s.status));
+      }
     }
     for (const t of tasks) {
       const id = t.externalId && clickUpIdOf(t.externalId);
-      if (id) nexusLinkById.set(id, `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}`);
+      if (id) {
+        nexusLinkById.set(id, `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}`);
+        statusById.set(id, sheetStatusLabel(t.status));
+      }
     }
 
     const result: Record<string, string | null> = {};
-    for (const [link, id] of idByLink) result[link] = (id && nexusLinkById.get(id)) || null;
-    return res.status(200).json({ links: result });
+    const statuses: Record<string, string | null> = {};
+    for (const [link, id] of idByLink) {
+      result[link] = (id && nexusLinkById.get(id)) || null;
+      statuses[link] = (id && statusById.get(id)) || null;
+    }
+    return res.status(200).json({ links: result, statuses });
   } catch (error: any) {
     console.error('[Sheets] resolve links failed:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+const NFT_CLOSED_WINDOW_DAYS = 14;
+const NFT_PRIORITY_LABELS: Record<string, string> = { URGENT: 'Urgent', HIGH: 'High', MEDIUM: 'Normal', LOW: 'Low' };
+// Client-details items (KYC, Pin Board) are kept off the sheet, as before.
+const isOffSheetStatus = (s: string | null | undefined) => ['KYC', 'PINBOARD'].includes((s || '').toUpperCase().replace(/[^A-Z]/g, ''));
+const isRecurringStatus = (s: string | null | undefined) => ['DAILY', 'WEEKLY', 'MONTHLY'].includes((s || '').toUpperCase().replace(/[^A-Z]/g, ''));
+const isClosedSheetStatus = (s: string | null | undefined) => ['CLOSED', 'COMPLETE', 'DONE'].includes((s || '').toUpperCase().replace(/[^A-Z]/g, ''));
+const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s-])\S/g, (c) => c.toUpperCase());
+const manilaDate = (d: Date) =>
+  new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: '2-digit', day: '2-digit', year: 'numeric' }).format(d);
+
+/**
+ * POST /api/webhooks/sheets/notes-for-today
+ * → { items: [{ clickup_link, nexus_link, list_name, task_name, status, priority, assigned,
+ *               start_date, parent_task_id, tab }] }
+ *
+ * Nexus is the source of truth for "Notes for Today". Its sync script asks for every task and
+ * subtask that belongs on the sheet and puts each row on the right tab: Recurring (Daily/
+ * Weekly/Monthly, and their subtasks), Closed (closed in the last 14 days, so recent closes
+ * still move), or 2025. Rows are keyed by ClickUp link, so only tasks with a ClickUp copy in a
+ * ClickUp-mapped list are listed.
+ */
+export const getNotesForTodayItems = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+  try {
+    const closedSince = new Date(Date.now() - NFT_CLOSED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const lists = await prisma.list.findMany({ select: { id: true, name: true, externalId: true, clickUpListId: true } });
+    const mapped = lists.filter((l) => resolveClickUpListId(l));
+    const listName = new Map(mapped.map((l) => [l.id, l.name]));
+
+    const people = { select: { name: true } };
+    const tasks = await prisma.task.findMany({
+      where: {
+        listId: { in: mapped.map((l) => l.id) },
+        externalId: { not: null },
+        OR: [
+          { status: { notIn: ['CLOSED', 'Closed', 'closed', 'COMPLETE', 'Complete', 'DONE', 'Done'] } },
+          { updatedAt: { gte: closedSince } },
+        ],
+      },
+      select: {
+        id: true, listId: true, title: true, status: true, priority: true, createdAt: true, updatedAt: true, externalId: true,
+        assignee: people, assignees: people,
+        subtasks: {
+          where: { externalId: { not: null } },
+          select: {
+            id: true, title: true, status: true, completed: true, priority: true, createdAt: true, externalId: true,
+            User: people, assignees: people,
+          },
+        },
+      },
+    });
+
+    const names = (one: { name: string } | null | undefined, many: { name: string }[] = []) =>
+      Array.from(new Set([...(one ? [one.name] : []), ...many.map((u) => u.name)].filter(Boolean))).join(', ') || 'Unassigned';
+    const statusLabel = (s: string | null | undefined) => sheetStatusLabel(s) ?? (s ? titleCase(s) : '');
+    const tabFor = (status: string | null | undefined, recurringParent = false) =>
+      isClosedSheetStatus(status) ? 'Closed' : recurringParent || isRecurringStatus(status) ? 'Recurring' : '2025';
+
+    const items: any[] = [];
+    for (const t of tasks) {
+      const cuId = clickUpIdOf(t.externalId!);
+      if (!cuId || isOffSheetStatus(t.status)) continue;
+      if (!isClosedSheetStatus(t.status) || t.updatedAt >= closedSince) {
+        items.push({
+          clickup_link: `https://app.clickup.com/t/${cuId}`,
+          nexus_link: `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}`,
+          list_name: listName.get(t.listId) || '',
+          task_name: t.title,
+          status: statusLabel(t.status),
+          priority: NFT_PRIORITY_LABELS[t.priority] || '',
+          assigned: names(t.assignee, t.assignees),
+          start_date: manilaDate(t.createdAt),
+          parent_task_id: '',
+          tab: tabFor(t.status),
+        });
+      }
+      for (const s of t.subtasks) {
+        const subId = clickUpIdOf(s.externalId!);
+        const status = s.completed ? 'CLOSED' : s.status;
+        // Subtasks have no updatedAt: a closed one is listed while its parent changed recently.
+        if (!subId || isOffSheetStatus(status) || (isClosedSheetStatus(status) && t.updatedAt < closedSince)) continue;
+        items.push({
+          clickup_link: `https://app.clickup.com/t/${subId}`,
+          nexus_link: `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}&subtask=${s.id}`,
+          list_name: listName.get(t.listId) || '',
+          task_name: s.title,
+          status: statusLabel(status),
+          priority: NFT_PRIORITY_LABELS[s.priority] || '',
+          assigned: names(s.User, s.assignees),
+          start_date: manilaDate(s.createdAt),
+          parent_task_id: cuId,
+          tab: tabFor(status, isRecurringStatus(t.status)),
+        });
+      }
+    }
+    return res.status(200).json({ items });
+  } catch (error: any) {
+    console.error('[Sheets] notes-for-today items failed:', error);
     return res.status(500).json({ error: error.message });
   }
 };
@@ -806,6 +1026,7 @@ export const handleSheetComment = async (req: Request, res: Response) => {
     }
 
     const author = (await findUserByName(body.name)) ?? (await getOrCreateVipScaleUser());
+    const { isRole: isRoleStr, isAuditRole, isCollaborated } = parseIsRoleFlags(roleFromTaskStatus(body.task_status, body.is_role));
     const comment = await prisma.taskComment.create({
       data: {
         taskId: target.taskId,
@@ -1869,6 +2090,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Filter out previous SHEET_PROGRESS entry
     reviewsList = reviewsList.filter((r: any) => r.type !== 'SHEET_PROGRESS');
 
+    const { isRole: isRoleStr, isAuditRole, isCollaborated } = parseIsRoleFlags(roleFromTaskStatus(statusStr, body.is_role));
     const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
     const progressObj = {
       type: 'SHEET_PROGRESS',

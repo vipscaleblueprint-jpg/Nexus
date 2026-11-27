@@ -263,6 +263,8 @@ model Task {
   recurringConfig          Json?
   /// Hands-on hours to finish (Galaxy's AI estimate on creation; PMs/Admins can edit). Used to balance the Task Map.
   estimatedHours           Float?
+  /// Galaxy launch date. Subtasks and related same-client tasks are scheduled to finish 2 working days before it.
+  launchDate               DateTime?
   attachments              Attachment[]
   checklists               Checklist[]
   subtasks                 Subtask[]

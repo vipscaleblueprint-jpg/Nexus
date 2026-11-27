@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { scheduleLaunchPlan } from '../services/launchPlanner';
 import bcrypt from 'bcryptjs';
 import { timingSafeEqual, randomBytes } from 'crypto';
 import { io } from '../server';
@@ -15,6 +16,7 @@ import {
   safeCreateClickUpTask,
   safeCreateClickUpChecklist,
   safeCreateClickUpChecklistItem,
+  safeUpdateClickUpTask,
 } from '../services/clickupService';
 import { getStatusChangeRecipients } from '../utils/roleNotification';
 import { HIDE_INSTRUCTIONS_AUDIT, isReviewStatus } from '../utils/auditChecklist';
@@ -379,7 +381,6 @@ export async function createExternalList(req: Request, res: Response) {
       { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
       { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
       { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
-      { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
       { name: 'CRM Needed to Send', color: '#0284c7', groupName: 'Management' },
       { name: 'CRM Needed to Follow Up', color: '#6366F1', groupName: 'Management' },
       { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
@@ -639,7 +640,6 @@ export async function createTask(req: Request, res: Response) {
         { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task', order: 4 },
         { name: 'WAITING', color: '#D9534F', groupName: 'Management', order: 0 },
         { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management', order: 1 },
-        { name: 'CHECKING', color: '#A35DB8', groupName: 'Management', order: 2 },
         { name: 'CRM', color: '#22A3AE', groupName: 'Management', order: 3 },
       ];
 
@@ -864,6 +864,9 @@ export async function updateTask(req: Request, res: Response) {
       const isMaUpdate = !isAuditOnlyNoCollab && Boolean(req.body.is_ma_update || req.body.ma_updaters || isCollaboratedFlag);
       const rawMoverName = req.body.moved_by_name || req.body.author || (!isMaUpdate ? req.body.assignee : undefined);
       const statusChanged = normalizedStatus !== undefined && normalizedStatus !== existingSubtask.status;
+      if (statusChanged && normalizedStatus && existingSubtask.externalId) {
+        safeUpdateClickUpTask(existingSubtask.externalId, { status: mapNexusStatusToClickUp(normalizedStatus) }).catch(() => {});
+      }
 
       if (statusChanged || isMaUpdate) {
         try {
@@ -1088,6 +1091,11 @@ export async function updateTask(req: Request, res: Response) {
     const isMaUpdate = !isAuditOnlyNoCollab && Boolean(req.body.is_ma_update || req.body.ma_updaters || isCollaboratedFlag);
     const rawMoverName = req.body.moved_by_name || req.body.author || (!isMaUpdate ? req.body.assignee : undefined);
     const statusChanged = finalStatus !== undefined && finalStatus !== existingTask.status;
+    // Mirror the status to ClickUp: Notes for Today (and the MA trackers' Task Status column) only
+    // update from ClickUp events, so a change made here would otherwise never reach the sheets.
+    if (statusChanged && finalStatus && existingTask.externalId) {
+      safeUpdateClickUpTask(existingTask.externalId, { status: mapNexusStatusToClickUp(finalStatus) }).catch(() => {});
+    }
 
     if (statusChanged || isMaUpdate) {
       try {
@@ -1691,6 +1699,7 @@ export async function createSubtask(req: Request, res: Response) {
       console.error('Failed to inject subtask into Priorities Journal:', error);
     });
 
+    scheduleLaunchPlan(taskId);
     return res.status(201).json({ message: 'Subtask created successfully', subtask });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Flag, ChevronDown, Check, CheckCircle2, Infinity as InfinityIcon } from 'lucide-react';
+import { Flag, ChevronDown, Check, CheckCircle2, Clock, Infinity as InfinityIcon } from 'lucide-react';
+import { DEFAULT_ESTIMATED_HOURS, formatEstimatedHours } from '@/components/modals/EstimatedHoursField';
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
@@ -1129,6 +1130,46 @@ export function computeElapsed(timeInStr?: string | null, dateStr?: string | nul
   return `${remM} mins`;
 }
 
+/** Parses "1hr 20 mins" / "45 mins" / "2hr" / "0hr 0m" back into minutes. */
+function parseDurationLabelMinutes(label: string): number | null {
+  if (!label) return null;
+  const h = label.match(/(\d+)\s*hr/);
+  const m = label.match(/(\d+)\s*m(?:in|$|\b)/);
+  if (!h && !m) return null;
+  return (h ? parseInt(h[1], 10) : 0) * 60 + (m ? parseInt(m[1], 10) : 0);
+}
+
+/**
+ * Time-vs-estimate color. Slower: >=1.75x purple, >=1.5x red, >=1.25x orange.
+ * Faster (only once the work is finished): <=0.5x teal, <=0.75x green. Otherwise null (normal color).
+ */
+export function getPaceColor(task: TaskMapItem, durationLabel: string, finished: boolean): { hex: string; label: string } | null {
+  const minutes = parseDurationLabelMinutes(durationLabel);
+  if (minutes == null) return null;
+  const ratio = minutes / ((task.estimatedHours ?? DEFAULT_ESTIMATED_HOURS) * 60);
+  if (ratio >= 1.75) return { hex: '#a855f7', label: '1.75x+ over estimate' };
+  if (ratio >= 1.5) return { hex: '#ef4444', label: '1.5x+ over estimate' };
+  if (ratio >= 1.25) return { hex: '#f97316', label: '1.25x+ over estimate' };
+  if (finished && ratio <= 0.5) return { hex: '#14b8a6', label: '2x faster than estimate' };
+  if (finished && ratio <= 0.75) return { hex: '#22c55e', label: 'Faster than estimate' };
+  return null;
+}
+
+/** Clock icon + estimated time under the time badge; blank estimates show the 30m default. */
+export const TaskEstimateLabel: React.FC<{ task: TaskMapItem }> = ({ task }) => {
+  const hours = task.estimatedHours ?? null;
+  const label = formatEstimatedHours(hours ?? DEFAULT_ESTIMATED_HOURS);
+  return (
+    <div
+      className="inline-flex items-center gap-1 text-[9.5px] font-mono text-zinc-500 select-none"
+      title={hours != null ? `Estimated time: ${label}` : `No estimate set — default ${label}`}
+    >
+      <Clock className="size-3 shrink-0" />
+      <span>Est. {label}</span>
+    </div>
+  );
+};
+
 export interface TaskTimeProgressSlotProps {
   task: TaskMapItem;
   now?: Date;
@@ -1178,11 +1219,13 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     const timeOutDisplay = cleanDisplayTime(prog.timeOut);
     const duration = prog.timeIn ? computeDuration(prog.timeIn, prog.timeOut) : '';
     const label = duration || timeOutDisplay;
+    const pace = duration ? getPaceColor(task, duration, true) : null;
 
     return (
       <div
         className="text-[9.5px] font-mono text-zinc-300 font-medium truncate max-w-full px-1.5 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/60 shadow-xs select-none tracking-tight"
-        title={`Logged time: ${prog.timeIn ? `${prog.timeIn} - ` : ''}${prog.timeOut}${duration ? ` (${duration})` : ''}${prog.maName ? ` • ${prog.maName}` : ''}`}
+        style={pace ? { backgroundColor: hexToRgba(pace.hex, 0.15), borderColor: hexToRgba(pace.hex, 0.5), color: pace.hex } : undefined}
+        title={`Logged time: ${prog.timeIn ? `${prog.timeIn} - ` : ''}${prog.timeOut}${duration ? ` (${duration})` : ''}${prog.maName ? ` • ${prog.maName}` : ''}${pace ? ` • ${pace.label}` : ''}`}
       >
         {label}
       </div>
@@ -1208,9 +1251,10 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
     }
 
     const liveText = `${timeInDisplay} | ${elapsed}`;
+    const pace = getPaceColor(task, elapsed, false);
 
-    // If it's an Upwork task, highlight the time badge in pure white!
-    if (isUpwork) {
+    // If it's an Upwork task, highlight the time badge in pure white! (unless it's running over the estimate)
+    if (isUpwork && !pace) {
       return (
         <div
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/40 text-indigo-700 dark:bg-white/15 dark:border-white/50 dark:text-white font-bold text-[10px] shadow-[0_0_8px_rgba(99,102,241,0.12)] dark:shadow-[0_0_8px_rgba(255,255,255,0.12)] select-none truncate max-w-full"
@@ -1227,7 +1271,7 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
 
     // Non-Upwork live task: highlight the time badge using the task's DB status color
     const statusLabel = toCanonicalTaskStatus(task.status) || task.status || 'IN PROGRESS';
-    const statusHex = resolveTaskStatusColor(statusLabel, task.listId || task.list?.id, task.list?.statuses);
+    const statusHex = pace?.hex ?? resolveTaskStatusColor(statusLabel, task.listId || task.list?.id, task.list?.statuses);
     return (
       <div
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-bold text-[10px] select-none truncate max-w-full"
@@ -1237,7 +1281,7 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
           color: statusHex,
           boxShadow: `0 0 8px ${hexToRgba(statusHex, 0.12)}`,
         }}
-        title={`${statusLabel} since ${prog.timeIn} (${elapsed} elapsed)`}
+        title={`${statusLabel} since ${prog.timeIn} (${elapsed} elapsed)${pace ? ` • ${pace.label}` : ''}`}
       >
         <span className="relative flex size-1.5 shrink-0">
           <span

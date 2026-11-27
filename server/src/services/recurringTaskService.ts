@@ -1,3 +1,4 @@
+import { mirrorNewTaskToClickUp } from './clickupMirror';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { prisma } from '../config/prisma';
@@ -343,6 +344,9 @@ export async function duplicateRecurringTask(sourceTaskId: string, scheduledDate
       },
     });
   }
+
+  // Keep the ClickUp backup complete: recurring copies are made only in Nexus.
+  mirrorNewTaskToClickUp(newTask.id).catch(() => {});
 
   // 6. Broadcast via WebSocket immediately
   const fullNewTask = await prisma.task.findUnique({

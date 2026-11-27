@@ -36,6 +36,8 @@ import { invalidateCache } from './services/redisService';
 
 // Import workers to initialize them
 import './workers/task.worker';
+import { registerClickUpMirror } from './services/clickupMirror';
+registerClickUpMirror();
 import { dailyRolloverQueue } from './queues/dailyRollover.queue';
 import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TASK_MAP_DAILY_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB, LAUNCH_REVIEW_SWEEP_JOB, CRM_FOLLOW_UP_SWEEP_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';

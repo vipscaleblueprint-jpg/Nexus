@@ -17,6 +17,8 @@ import { autoAssignAudits } from '../services/auditAutoAssign';
 import { findExistingListByIdentifiers, linkMissingListIdentifiers } from '../utils/listLookup';
 import { injectSubtaskIntoJournal } from '../services/journalInjectionService';
 import { parseEstimatedHours } from '../utils/estimatedHours';
+import { parseLaunchDate } from '../utils/launchDate';
+import { scheduleLaunchPlan } from '../services/launchPlanner';
 import { shouldPoolGalaxyRoleTasks } from '../services/autoQueue/config';
 
 
@@ -83,7 +85,6 @@ const DEFAULT_CLIENT_STATUSES = [
   { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress' },
   { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
   { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
-  { name: 'CHECKING', color: '#A35DB8', groupName: 'Management' },
   { name: 'CRM Needed to Send', color: '#0284c7', groupName: 'Management' },
   { name: 'CRM Needed to Follow Up', color: '#6366F1', groupName: 'Management' },
   { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
@@ -307,6 +308,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
   try {
     const { clients, prompt, priority, assignee, task_link, listed_by, audits } = req.body;
     const estimatedHours = parseEstimatedHours(req.body.estimated_hours);
+    const launchDueDate = parseLaunchDate(req.body.launch_date) ?? null;
     // While auto-queue assigns, Galaxy's picked role becomes the task's requirement and the task
     // waits in Available tasks for one matching MA, instead of going to everyone with that role.
     const poolRoleTasks = shouldPoolGalaxyRoleTasks();
@@ -492,6 +494,7 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     const newTask = await prisma.task.create({
       data: {
         title: title || 'New Task',
+        ...(launchDueDate && { dueDate: launchDueDate, launchDate: launchDueDate }),
         description,
         listId: list.id,
         creatorId: creator.id,
@@ -520,6 +523,9 @@ export const handleGalaxyTask = async (req: Request, res: Response) => {
     } else {
       queueAuditPick({ taskId: newTask.id });
     }
+
+    // Launch task: schedule its subtasks and related client tasks before the launch.
+    if (launchDueDate) scheduleLaunchPlan(newTask.id);
 
 
     // n8n adds the task's ClickUp subtasks and checklists after it replies to Galaxy,
@@ -735,6 +741,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
   try {
     const { task_link, listed_by, priority, assignee } = req.body;
     const estimatedHours = parseEstimatedHours(req.body.estimated_hours);
+    const launchDueDate = parseLaunchDate(req.body.launch_date) ?? null;
     // See handleGalaxyTask: while auto-queue assigns, the picked role waits in Available tasks.
     const poolRoleTasks = shouldPoolGalaxyRoleTasks();
 
@@ -949,6 +956,15 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     await injectSubtaskIntoJournal(parentTask.id, { id: subtask.id, title: subtask.title });
 
     io.emit('subtask_created', subtask);
+
+    // A launch date sent with a subtask belongs to its parent; the planner then dates the subtask.
+    if (launchDueDate) {
+      await prisma.task.update({
+        where: { id: parentTask.id },
+        data: { launchDate: launchDueDate, dueDate: launchDueDate },
+      });
+    }
+    scheduleLaunchPlan(parentTask.id);
 
     // The subtask's own audits: the ones Galaxy's AI picked, else ask the AI here.
     const pickedAudits = Array.isArray(req.body.audits) ? toAuditItems(req.body.audits) : [];

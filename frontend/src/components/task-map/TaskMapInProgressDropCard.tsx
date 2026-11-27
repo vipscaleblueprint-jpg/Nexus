@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { UploadCloud, Search, X, Flag, Play } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import { TaskMapItem, isTaskUnderAdmin, taskMapApi, extractTaskLinkIdentifiers, matchesTaskLinkOrId } from '@/api/taskMap';
+import { TaskEstimateLabel } from './TaskMapCardControls';
 
 interface Props {
   userId: string;
@@ -372,9 +373,10 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
                                 </span>
                               )}
                             </div>
-                            <p className="text-[10px] text-muted-foreground truncate">
-                              {clientName}
-                            </p>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="text-[10px] text-muted-foreground truncate">{clientName}</p>
+                              <TaskEstimateLabel task={task} />
+                            </div>
                           </div>
                           <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#D04A7C]/15 text-[#D04A7C] border border-[#D04A7C]/30 shrink-0 flex items-center gap-1">
                             <Play className="size-2.5 fill-current" />
@@ -424,9 +426,10 @@ export const TaskMapInProgressDropCard: React.FC<Props> = ({
                                 </span>
                               )}
                             </div>
-                            <p className="text-[10px] text-muted-foreground truncate">
-                              {clientName}
-                            </p>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="text-[10px] text-muted-foreground truncate">{clientName}</p>
+                              <TaskEstimateLabel task={task} />
+                            </div>
                           </div>
                           <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0 flex items-center gap-1">
                             <Play className="size-2.5 fill-current" />

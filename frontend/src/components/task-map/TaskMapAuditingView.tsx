@@ -12,6 +12,7 @@ import {
   isUiUxAudit,
   isFunnelAudit,
   getEffectiveTaskMapHandlerId,
+  isTaskMapItemOnHold,
   isTaskHandedOver,
   countNonOnHoldTasks,
   TASK_MAP_STATUS_COLORS,
@@ -26,6 +27,7 @@ import {
   findSearchedTaskLocations,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
+import { auditShiftsApi } from '@/api/auditShifts';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
 import { useLiveClock } from '@/lib/liveClock';
 import { TaskMapStatusDropdown } from './TaskMapStatusDropdown';
@@ -44,12 +46,14 @@ import {
   Infinity as InfinityIcon,
   RotateCcw,
   Loader2,
+  Scale,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isAuditorUser, isProjectManagerOrAdmin, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { SubStatusChangeGuideModal } from '@/components/modals/SubStatusChangeGuideModal';
 import { toast } from '@/lib/toast';
+import { isClosedStatus } from '@/lib/taskTokens';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
   CardStatusDropdown,
@@ -61,6 +65,7 @@ import {
   hexToRgba,
   resolveSubStatusColor,
   resolveTaskStatusColor,
+  TaskEstimateLabel,
 } from './TaskMapCardControls';
 import { ColumnClientDropdown } from './ColumnClientDropdown';
 import { ColumnSubStatusDropdown, matchesSubStatusFilter } from './ColumnSubStatusDropdown';
@@ -786,6 +791,11 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           }
         }
 
+        if (await isCollaboratorOnTask(task.id, auditor.id)) {
+          toast.error(`${auditor.name} is a collaborator on this task and can't audit it. Assign another auditor.`);
+          return;
+        }
+
         updatedStatuses = [auditType];
         if (targetColumnId.startsWith('in-progress-')) {
           if (!updatedStatuses.includes('In progress')) {
@@ -795,7 +805,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         toast.success(`Task assigned to ${auditor.name} (${auditType})`);
         onStatusChange(taskId, updatedStatuses);
 
-        const targetStatus = (auditType === 'UI UX Audit' || auditType === 'Design Audit') ? 'IN REVIEW' : 'CHECKING';
+        const targetStatus = 'IN REVIEW';
 
         if (onTaskUpdate) {
           await onTaskUpdate(taskId, { assigneeId: auditor.id, status: targetStatus });
@@ -806,6 +816,17 @@ export const TaskMapAuditingView: React.FC<Props> = ({
           onDataRefresh();
         }
       }
+    }
+  };
+
+  /** True when the auditor worked on the task (MA daily tracker collaborator), so may not audit it. */
+  const isCollaboratorOnTask = async (taskId: string, auditorId: string): Promise<boolean> => {
+    try {
+      const res = await auditShiftsApi.getEligibility([taskId]);
+      return (res.blocked?.[taskId] || []).includes(auditorId);
+    } catch (err) {
+      console.error('Collaborator check failed:', err);
+      return false;
     }
   };
 
@@ -867,11 +888,16 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       }
     }
 
+    if (await isCollaboratorOnTask(task.id, auditor.id)) {
+      toast.error(`${auditor.name} is a collaborator on this task and can't audit it. Assign another auditor.`);
+      return;
+    }
+
     const updatedStatuses = [auditType, 'In progress'];
     toast.success(`Task set In Progress for ${auditor.name} (${auditType})`);
     onStatusChange(taskId, updatedStatuses);
 
-    const targetStatus = (auditType === 'UI UX Audit' || auditType === 'Design Audit') ? 'IN REVIEW' : 'CHECKING';
+    const targetStatus = 'IN REVIEW';
     if (onTaskUpdate) {
       await onTaskUpdate(taskId, { assigneeId: auditor.id, status: targetStatus });
     } else {
@@ -879,6 +905,102 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         .updateTask(taskId, { assigneeId: auditor.id, status: targetStatus } as any)
         .catch(console.error);
       onDataRefresh();
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Auto Distribute: hands To Review tasks to on-shift auditors. Each task goes to an auditor
+  // whose role matches an audit it still needs (prerequisites and the UI/UX vs Funnel rule
+  // enforced, same as a drag), picking whoever has the fewest queued tasks on the Task Map.
+  // ---------------------------------------------------------------------------
+  const MAX_AUTO_AUDIT_QUEUE = 5;
+  const [isDistributing, setIsDistributing] = useState(false);
+
+  /** The audit `auditor` would do on `task`, or null if their roles match nothing it needs now. */
+  const pickAuditTypeFor = (task: TaskMapItem, auditor: any): string | null => {
+    const roles = [...(auditor.roles || []), auditor.role || '', auditor.title || ''].map((r: string) =>
+      (r || '').toLowerCase()
+    );
+    const unchecked = getTaskAuditStatus(task).uncheckedAudits || [];
+    const candidates: string[] = [];
+    if (roles.some((r) => r.includes('ui') || r.includes('ux')) && unchecked.some((a) => isUiUxAudit(a))) candidates.push('UI UX Audit');
+    if (roles.some((r) => r.includes('design') || r.includes('graphic')) && unchecked.some((a) => a.toLowerCase().includes('design'))) candidates.push('Design Audit');
+    if (roles.some((r) => r.includes('instruction') || r.includes('copy')) && unchecked.some((a) => a.toLowerCase().includes('instruction'))) candidates.push('Instruction Audit');
+    if (roles.some((r) => r.includes('funnel')) && unchecked.some((a) => isFunnelAudit(a))) candidates.push('Funnel Audit');
+    return candidates.find((type) => canPerformAudit(type, task, undefined, auditor.id).allowed) || null;
+  };
+
+  const handleAutoDistribute = async () => {
+    if (isDistributing) return;
+    const pending = sortTasksUrgentFirst(toReviewTasks.filter((t) => !isTaskMapItemOnHold(t)));
+    if (pending.length === 0) {
+      toast.info('No tasks waiting in To Review.');
+      return;
+    }
+    setIsDistributing(true);
+    let eligibility: Awaited<ReturnType<typeof auditShiftsApi.getEligibility>>;
+    try {
+      eligibility = await auditShiftsApi.getEligibility(pending.map((t) => t.id));
+    } catch (err) {
+      console.error('Audit eligibility failed:', err);
+      toast.error('Could not load the audit shift schedule. Try again.');
+      setIsDistributing(false);
+      return;
+    }
+    // Only auditors scheduled on the current audit shift, whatever shift the map is showing.
+    const onShift = new Set(eligibility.onShiftUserIds || []);
+    const scheduledAuditors = Array.from(
+      new Map(
+        [...(allUsers || []), ...(shiftUsers || []), ...auditorUsers]
+          .filter((u: any) => u?.id && onShift.has(u.id) && isAuditorUser(u))
+          .map((u: any) => [u.id, u])
+      ).values()
+    );
+    if (scheduledAuditors.length === 0) {
+      setIsDistributing(false);
+      toast.error(`No auditors are scheduled on the current audit shift (${eligibility.activeShift}).`);
+      return;
+    }
+
+    // Queued load per auditor: open Task Map tasks they currently hold.
+    const load = new Map<string, number>(scheduledAuditors.map((a: any) => [a.id, 0]));
+    for (const t of allTasks || tasks) {
+      const ownerId = getEffectiveTaskMapHandlerId(t);
+      if (ownerId && load.has(ownerId) && !isClosedStatus(t.status)) load.set(ownerId, (load.get(ownerId) || 0) + 1);
+    }
+
+    let assigned = 0;
+    try {
+      for (const task of pending) {
+        const collaborators = eligibility.blocked?.[task.id] || [];
+        const options = scheduledAuditors
+          .filter((auditor: any) => !collaborators.includes(auditor.id))
+          .map((auditor: any) => ({ auditor, auditType: pickAuditTypeFor(task, auditor), load: load.get(auditor.id) || 0 }))
+          .filter((o): o is { auditor: any; auditType: string; load: number } => Boolean(o.auditType) && o.load < MAX_AUTO_AUDIT_QUEUE)
+          .sort((a, b) => a.load - b.load || (a.auditor.name || '').localeCompare(b.auditor.name || ''));
+        const best = options[0];
+        if (!best) continue;
+
+        onStatusChange(task.id, [best.auditType]);
+        const targetStatus = 'IN REVIEW';
+        if (onTaskUpdate) {
+          await onTaskUpdate(task.id, { assigneeId: best.auditor.id, status: targetStatus });
+        } else {
+          await tasksApi.updateTask(task.id, { assigneeId: best.auditor.id, status: targetStatus } as any).catch(console.error);
+        }
+        load.set(best.auditor.id, best.load + 1);
+        assigned++;
+      }
+    } finally {
+      setIsDistributing(false);
+      if (!onTaskUpdate) onDataRefresh();
+    }
+
+    const left = pending.length - assigned;
+    if (assigned === 0) {
+      toast.info(`No matching auditor with room (under ${MAX_AUTO_AUDIT_QUEUE} queued tasks) for the ${pending.length} task(s) in To Review.`);
+    } else {
+      toast.success(`Distributed ${assigned} task(s) to auditors${left > 0 ? ` · ${left} left in To Review (no matching auditor with room)` : ''}.`);
     }
   };
 
@@ -1048,8 +1170,9 @@ export const TaskMapAuditingView: React.FC<Props> = ({
 
             {/* Right: Section where Sub-Status is (with Time Progress in top right corner) */}
             <div className="w-[125px] sm:w-[135px] shrink-0 flex flex-col justify-between py-0.5">
-              <div className="flex justify-end items-center">
+              <div className="flex flex-col items-end gap-0.5">
                 <TaskTimeProgressSlot task={task} isLive={isLiveWorking} />
+                <TaskEstimateLabel task={task} />
               </div>
 
               <div
@@ -1476,6 +1599,19 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                         title={`Reset ${col.title}'s column (return review tasks to Queue)`}
                       >
                         <RotateCcw className="size-3.5" />
+                      </button>
+                    )}
+
+                    {col.id === 'col-to-review' && isPmUser && (
+                      <button
+                        type="button"
+                        onClick={handleAutoDistribute}
+                        disabled={isDistributing}
+                        className="inline-flex items-center gap-1 h-6 px-1.5 text-[10px] font-semibold text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-wait"
+                        title="Auto distribute: give each To Review task to an on-shift auditor with the matching audit role and the fewest queued tasks"
+                      >
+                        {isDistributing ? <Loader2 className="size-3.5 animate-spin" /> : <Scale className="size-3.5" />}
+                        Distribute
                       </button>
                     )}
 

@@ -9,6 +9,8 @@ import {
   getManilaHourAndMinute,
   getActiveManilaShift,
   DEFAULT_SHIFTS,
+  isUserInShift,
+  getTaskCollaboratorBlock,
 } from '../services/auditAutoAssign';
 
 /**
@@ -312,3 +314,35 @@ export const triggerShiftSweep = async (req: Request, res: Response) => {
   }
 };
 
+
+/**
+ * POST /api/admin/audit-shifts/eligibility { taskIds, userIds? }
+ * For the Auditor map: which auditors are on the audit shift schedule right now, and which
+ * of them are collaborators on each task (MA daily tracker) and so may not audit it.
+ */
+export const getAuditEligibility = async (req: Request, res: Response) => {
+  try {
+    const taskIds: string[] = Array.isArray(req.body?.taskIds) ? req.body.taskIds.map(String).slice(0, 200) : [];
+    const users = await prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, email: true, roles: true },
+    });
+    const auditors = users.filter((u) => isAuditorRole(u.roles));
+
+    const configs = await getDbShiftConfigs();
+    const activeShift = await getActiveManilaShift();
+    const onShiftUserIds = auditors.filter((u) => isUserInShift(u, activeShift, configs)).map((u) => u.id);
+
+    const blocked: Record<string, string[]> = {};
+    for (const taskId of taskIds) {
+      const { isUserBlocked } = await getTaskCollaboratorBlock(taskId);
+      const ids = auditors.filter((u) => isUserBlocked(u)).map((u) => u.id);
+      if (ids.length) blocked[taskId] = ids;
+    }
+
+    res.json({ success: true, activeShift, onShiftUserIds, blocked });
+  } catch (error: any) {
+    req.log.error({ error }, 'Error computing audit eligibility');
+    res.status(500).json({ error: 'Failed to compute audit eligibility' });
+  }
+};

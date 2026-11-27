@@ -39,6 +39,7 @@ import {
   isBoardItemStarted,
   isMaWorkItem,
   isStillMovable,
+  queueTier,
   remainingShiftHours,
   resolveTaskRoles,
   usersInGroup,
@@ -406,7 +407,7 @@ export interface DailyResult {
 }
 
 async function runGroupDistribution(
-  group: ShiftGroup,
+  group: ShiftGroup | ShiftGroup[],
   label: '5am' | '5pm',
   opts: { modeOverride?: AutoQueueMode } = {}
 ): Promise<DailyResult> {
@@ -484,8 +485,8 @@ export async function runCheckpoint(
       loadClientHistory(bot.id),
     ]);
     const { hour, minute } = getManilaHourAndMinute();
-    const from: ShiftGroup = kind === '1pm' ? 'morning' : 'noon';
-    const to: ShiftGroup = kind === '1pm' ? 'noon' : 'night';
+    const from: ShiftGroup | ShiftGroup[] = kind === '1pm' ? 'morning' : ['morning', 'noon'];
+    const to: ShiftGroup | ShiftGroup[] = kind === '1pm' ? 'noon' : ['noon', 'night'];
 
     const plan = await planCheckpoint({
       boardItems: items,
@@ -499,6 +500,7 @@ export async function runCheckpoint(
       judge: aiJudge(),
       pick: aiPicker(),
       clientHistory,
+      morningSigningOut: kind === '5pm',
     });
 
     const dryRun = mode === 'dry_run';
@@ -579,7 +581,7 @@ export async function runCheckpoint(
 
     let nightFill: DailyResult | undefined;
     if (kind === '5pm') {
-      nightFill = await runGroupDistribution('night', '5pm', { modeOverride: mode });
+      nightFill = await runGroupDistribution(['noon', 'night'], '5pm', { modeOverride: mode });
     }
 
     logger.info(
@@ -732,4 +734,48 @@ export async function setAutoQueueExcluded(userId: string, excluded: boolean, ac
   logger.info(
     `[AutoQueue] ${user.name} ${excluded ? 'excluded from' : 'included in'} the auto-queue by ${actor.name || actor.email || actor.id}`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Work order: MAs start their To Do in hierarchy order
+// ---------------------------------------------------------------------------
+
+let workOrderActor: ActorUser | null = null;
+
+const TIER_LABEL = ['Hand-over Urgent', 'Urgent', 'Hand-over High', 'High', 'Hand-over', 'Normal'];
+
+/**
+ * The higher-priority task an MA must start before `targetId`, or null when `targetId` is next in line.
+ * Order: hand-over urgent, urgent, hand-over high, high, hand-over, the rest. Fails open (returns null)
+ * if the board can't be read, so a Task Map hiccup never blocks work.
+ */
+export async function findHigherPriorityQueued(
+  userId: string,
+  targetId: string
+): Promise<{ id: string; title: string; tier: string } | null> {
+  try {
+    // Hot path on every MA start: reuse the bot id and skip role resolution (tier/owner don't need it).
+    // getTaskMapData serves from its Redis cache, which every Task Map change invalidates.
+    if (!workOrderActor) {
+      const bot = await getOrCreateAutoQueueUser();
+      workOrderActor = { id: bot.id, name: bot.name, email: bot.email };
+    }
+    const { getTaskMapData } = await taskMapHandlers();
+    const board = await invokeHandler(getTaskMapData, { query: { shift: 'ALL' }, user: workOrderActor });
+    if (board.status !== 200 || !board.body?.success) return null;
+    const items: BoardItem[] = board.body.tasks || [];
+    const mine = items.filter(
+      (it) => isMaWorkItem(it) && !isBoardItemStarted(it) && getBoardItemOwnerId(it) === userId
+    );
+    const target = mine.find((it) => it.id === targetId);
+    if (!target) return null;
+    const targetTier = queueTier(target);
+    const blocker = mine
+      .filter((it) => it.id !== targetId && queueTier(it) < targetTier)
+      .sort((a, b) => queueTier(a) - queueTier(b))[0];
+    return blocker ? { id: blocker.id, title: blocker.title, tier: TIER_LABEL[queueTier(blocker)] } : null;
+  } catch (err) {
+    logger.warn(`[AutoQueue] Work-order check skipped: ${errMsg(err)}`);
+    return null;
+  }
 }

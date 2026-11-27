@@ -14,6 +14,7 @@ import {
   getBoardItemOwnerId,
   isAutoQueueEligibleUser,
   isBoardItemStarted,
+  isHandedOver,
   isMaWorkItem,
   isUserOnShiftNow,
   itemHours,
@@ -21,6 +22,7 @@ import {
   rankCandidatesByLoad,
   remainingShiftHours,
   scheduledShiftHours,
+  shiftGroupOf,
   usersInGroup,
   type BoardItem,
   type MaLoad,
@@ -357,13 +359,15 @@ export interface CheckpointPlanInput {
   users: QueueUser[];
   shifts: ShiftWindow[];
   minuteOfDay: number;
-  from: ShiftGroup; // group being checked
-  to: ShiftGroup; // group receiving handovers
+  from: ShiftGroup | ShiftGroup[]; // group(s) being checked
+  to: ShiftGroup | ShiftGroup[]; // group(s) receiving handovers
   botId: string;
   defaultHours?: number;
   judge?: JudgeFn;
   pick?: PickFn;
   clientHistory?: ClientHistory;
+  /** When true (e.g. 5pm checkpoint), morning shift workers (8-5) are treated as signing out (0 remaining hours). */
+  morningSigningOut?: boolean;
 }
 
 export interface CheckpointPlan {
@@ -390,10 +394,15 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
   const atRisk: CheckpointPlan['atRisk'] = [];
 
   for (const user of fromUsers) {
+    const userGroup = shiftGroupOf(user, input.shifts);
     const userItems = input.boardItems.filter(
       (it) => isMaWorkItem(it) && getBoardItemOwnerId(it) === user.id
     );
-    const remHours = remainingShiftHours(user, input.shifts, input.minuteOfDay);
+    // At 5 PM, morning shift workers (8-5) are signing out, so remaining hours is 0
+    const remHours =
+      input.morningSigningOut && userGroup === 'morning'
+        ? 0
+        : remainingShiftHours(user, input.shifts, input.minuteOfDay);
     const verdict = await decideDoable(userItems, remHours, {
       judge: input.judge,
       defaultHours,
@@ -411,7 +420,9 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
     for (const id of verdict.cannotFinishIds) {
       const item = byId.get(id);
       if (!item || isBoardItemStarted(item)) continue;
-      if (autoQueuedTo(item, input.botId) === user.id) {
+      const isAuto = autoQueuedTo(item, input.botId) === user.id;
+      const isHo = isHandedOver(item);
+      if (isAuto || isHo) {
         candidates.push(item);
         candidateFrom.set(item.id, user.id);
       } else {

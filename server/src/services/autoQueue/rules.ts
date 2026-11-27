@@ -273,7 +273,15 @@ export function isMaWorkItem(item: BoardItem): boolean {
 
 function isStarted(item: BoardItem): boolean {
   if (norm(item.status) === 'INPROGRESS') return true;
+  if ((item.taskMap?.statuses || []).some((s) => norm(s) === 'INPROGRESS')) return true;
   return Boolean(item.progress?.timeIn && !item.progress?.timeOut);
+}
+
+/** True if the user currently has at least one task or subtask started (In Progress slot is not blank). */
+export function hasTaskInProgress(user: QueueUser, boardItems: BoardItem[]): boolean {
+  return boardItems.some(
+    (it) => isMaWorkItem(it) && getBoardItemOwnerId(it) === user.id && isStarted(it)
+  );
 }
 
 export function getBoardItemOwnerId(item: BoardItem): string | null {

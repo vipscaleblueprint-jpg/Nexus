@@ -408,8 +408,8 @@ export interface DailyResult {
 
 async function runGroupDistribution(
   group: ShiftGroup | ShiftGroup[],
-  label: '5am' | '5pm',
-  opts: { modeOverride?: AutoQueueMode } = {}
+  label: string,
+  opts: { modeOverride?: AutoQueueMode; requireInProgress?: boolean } = {}
 ): Promise<DailyResult> {
   const config = getAutoQueueConfig();
   const mode = opts.modeOverride || config.mode;
@@ -430,6 +430,7 @@ async function runGroupDistribution(
     defaultHours: config.defaultHours,
     pick: aiPicker(),
     clientHistory,
+    requireInProgress: opts.requireInProgress ?? true,
   });
   const decisions = await applyDecisions({
     decisions: plan.decisions,
@@ -440,18 +441,30 @@ async function runGroupDistribution(
     label,
   });
   logger.info(
-    `[AutoQueue][${label}] ${decisions.filter((d) => d.applied).length}/${plan.decisions.length} queued to ${plan.scheduledMaCount} ${group} MAs; ${plan.skipped.length} left in pool`
+    `[AutoQueue][${label}] ${decisions.filter((d) => d.applied).length}/${plan.decisions.length} queued to ${plan.scheduledMaCount} ${Array.isArray(group) ? group.join('/') : group} MAs; ${plan.skipped.length} left in pool`
   );
   return { mode, decisions, skippedTasks: plan.skipped, scheduledMaCount: plan.scheduledMaCount, summary: plan.summary };
 }
 
-export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode } = {}): Promise<DailyResult> {
+export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode; requireInProgress?: boolean } = {}): Promise<DailyResult> {
   const config = getAutoQueueConfig();
   const mode = opts.modeOverride || config.mode;
   if (mode === 'off') {
     return { mode, skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
   }
-  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', opts));
+  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', { ...opts, requireInProgress: opts.requireInProgress ?? true }));
+}
+
+/** Active shift triggers (10am, 3pm, 8pm) in case there are late or newly clocked-in workers. */
+export async function runActiveShiftQueue(
+  group: ShiftGroup | ShiftGroup[],
+  label: '10am' | '3pm' | '8pm'
+): Promise<DailyResult> {
+  const config = getAutoQueueConfig();
+  if (config.mode === 'off') {
+    return { mode: 'off', skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
+  }
+  return exclusive(`${label} queue`, () => runGroupDistribution(group, label, { requireInProgress: true }));
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +514,7 @@ export async function runCheckpoint(
       pick: aiPicker(),
       clientHistory,
       morningSigningOut: kind === '5pm',
+      requireInProgress: true,
     });
 
     const dryRun = mode === 'dry_run';
@@ -581,7 +595,7 @@ export async function runCheckpoint(
 
     let nightFill: DailyResult | undefined;
     if (kind === '5pm') {
-      nightFill = await runGroupDistribution(['noon', 'night'], '5pm', { modeOverride: mode });
+      nightFill = await runGroupDistribution(['noon', 'night'], '5pm', { modeOverride: mode, requireInProgress: true });
     }
 
     logger.info(

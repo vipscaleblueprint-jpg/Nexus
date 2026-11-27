@@ -12,6 +12,7 @@ import {
   computeMaLoads,
   DEFAULT_ESTIMATED_HOURS,
   getBoardItemOwnerId,
+  hasTaskInProgress,
   isAutoQueueEligibleUser,
   isBoardItemStarted,
   isHandedOver,
@@ -219,6 +220,8 @@ export interface DailyPlanInput {
   roomLabel?: string;
   /** Past work per client (from comments): people who worked the client before are preferred. */
   clientHistory?: ClientHistory;
+  /** When true, only workers who currently have at least one task In Progress receive work. */
+  requireInProgress?: boolean;
 }
 
 export interface MaDaySummary {
@@ -243,6 +246,7 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
   const getCapacity = input.capacityHours ?? ((user: QueueUser) => scheduledShiftHours(user, input.shifts));
   const scheduled = input.users
     .filter(isAutoQueueEligibleUser)
+    .filter((user) => !input.requireInProgress || hasTaskInProgress(user, input.boardItems))
     .map((user) => ({ user, shiftHours: getCapacity(user) }))
     .filter((s) => s.shiftHours > 0);
 
@@ -368,6 +372,8 @@ export interface CheckpointPlanInput {
   clientHistory?: ClientHistory;
   /** When true (e.g. 5pm checkpoint), morning shift workers (8-5) are treated as signing out (0 remaining hours). */
   morningSigningOut?: boolean;
+  /** When true, handovers only go to workers with at least one task already In Progress. */
+  requireInProgress?: boolean;
 }
 
 export interface CheckpointPlan {
@@ -440,17 +446,22 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
     return { verdicts, handovers: [], returned: [], atRisk };
   }
 
+  const toCandidates = usersInGroup(input.users, input.shifts, input.to);
+  const toUsers = input.requireInProgress
+    ? toCandidates.filter((u) => hasTaskInProgress(u, input.boardItems))
+    : toCandidates;
   const candidateIds = new Set(candidates.map((c) => c.id));
   const dist = await planDailyDistribution({
     pool: candidates,
     boardItems: input.boardItems.filter((it) => !candidateIds.has(it.id)),
-    users: usersInGroup(input.users, input.shifts, input.to),
+    users: toUsers,
     shifts: input.shifts,
     defaultHours,
     pick: input.pick,
     requireRoom: true,
     capacityHours: (u) => remainingShiftHours(u, input.shifts, input.minuteOfDay),
     clientHistory: input.clientHistory,
+    requireInProgress: input.requireInProgress,
   });
 
   const handovers: Decision[] = dist.decisions.map((d) => ({

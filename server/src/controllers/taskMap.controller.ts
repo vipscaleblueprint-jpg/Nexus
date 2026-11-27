@@ -108,6 +108,8 @@ const CRM_TAG_SET = new Set([
   'FOLLOW UP',
   'FOLLOWUP',
   'OUTREACH',
+  'CLOSED',
+  'DONE',
 ]);
 
 const CLOSED_OR_EXCLUDED_STATUS_VARIANTS = [
@@ -1515,25 +1517,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (!isClosedTask(t)) return true;
       const s = (t.status || '').toUpperCase().trim();
       const mapStatuses = (t.taskMap?.statuses || []).map((x: string) => x.toUpperCase().trim());
-      if (
-        (s === 'CLOSED' || s === 'DONE') &&
-        (mapStatuses.includes('CRM') ||
-          mapStatuses.includes('SENT') ||
-          mapStatuses.includes('SENT BUT WAITING') ||
-          mapStatuses.includes('SENTBUTWAITING') ||
-          mapStatuses.includes('WAITING') ||
-          mapStatuses.includes('OUTREACH SENT') ||
-          mapStatuses.includes('CLIENT SENT') ||
-          mapStatuses.includes('TO SEND') ||
-          mapStatuses.includes('TOSEND') ||
-          mapStatuses.includes('READY TO SEND') ||
-          mapStatuses.includes('READYTOSEND') ||
-          mapStatuses.includes('ASK CLIENT') ||
-          mapStatuses.includes('ASKCLIENT') ||
-          mapStatuses.includes('FOLLOW UP') ||
-          mapStatuses.includes('FOLLOWUP') ||
-          mapStatuses.includes('OUTREACH'))
-      ) {
+      if ((s === 'CLOSED' || s === 'DONE') && mapStatuses.some((st: string) => CRM_TAG_SET.has(st))) {
         return true;
       }
       return false;

@@ -12,7 +12,7 @@ export const AUTO_QUEUE_1PM_JOB = 'taskMapAutoQueue1pm';
 /** 5:00 PM Manila: check noon shift doability, hand over to night, then fill night from Available tasks. */
 export const AUTO_QUEUE_5PM_JOB = 'taskMapAutoQueue5pm';
 
-// Runs are no-ops while AUTO_QUEUE_MODE=off (see services/autoQueue/config.ts).
+// Active by default unless AUTO_QUEUE_MODE=off (see services/autoQueue/config.ts).
 export const autoQueueWorker = new Worker(
   'TaskMapAutoQueue',
   async (job) => {

@@ -4,6 +4,8 @@ import { prisma } from '../config/prisma';
 import { getCache, setCache, invalidateCache, clearAllCache } from '../services/redisService';
 import { syncUsers } from './webhook.controller';
 import { queueUserPush } from '../services/toolsSync';
+import { normalizeScheduleFormat, queueShiftTimeWebhooks } from '../services/shiftTimeSync';
+import { io } from '../server';
 import { generateApiKey } from '../utils/apiKey';
 import { decryptText } from '../utils/encryption';
 import type { AuthRequest } from '../types';
@@ -39,12 +41,20 @@ const rosterSelect = {
   createdAt: true,
   team: true,
   notificationPreferences: true,
+  shiftTime: {
+    select: {
+      schedule: true,
+      source: true,
+      updatedBy: true,
+      updatedAt: true,
+    },
+  },
 };
 
 // credits is a BigInt column — JSON.stringify (used by res.json and setCache) can't
 // serialize those, so it has to be converted before it leaves this function.
 // Also decrypt confettiUrl and soundUrl if encrypted at rest.
-function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string | null; notificationPreferences?: any }>(user: T) {
+function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string | null; notificationPreferences?: any; shiftTime?: { schedule: string; source: string; updatedBy: string | null; updatedAt: Date } | null }>(user: T) {
   let notificationPreferences = user.notificationPreferences;
   if (notificationPreferences && typeof notificationPreferences === 'object') {
     notificationPreferences = {
@@ -78,6 +88,7 @@ function serializeUser<T extends { credits?: bigint | null; confettiUrl?: string
     credits: user.credits != null ? Number(user.credits) : null,
     confettiUrl: decryptText(user.confettiUrl),
     notificationPreferences,
+    shiftSchedule: user.shiftTime?.schedule ?? null,
   };
 }
 
@@ -89,11 +100,11 @@ export async function listUsers(req: Request, res: Response) {
       return res.json({ users: cachedUsers, cached: true });
     }
 
-    const users = await prisma.user.findMany({
+    const users = await db.user.findMany({
       select: rosterSelect,
       orderBy: { name: 'asc' },
     });
-    const serialized = users.map(serializeUser);
+    const serialized = users.map((u: any) => serializeUser(u));
 
     await setCache('users:all', serialized, 300);
 
@@ -139,24 +150,70 @@ export async function updateUser(req: Request, res: Response) {
       systemRole,
       employmentType,
       isActive,
+      shiftSchedule,
     } = req.body;
 
-    const user = await prisma.user.update({
+    const hasUserFields =
+      dailySheetUrl !== undefined ||
+      starRating !== undefined ||
+      roles !== undefined ||
+      systemRole !== undefined ||
+      employmentType !== undefined ||
+      isActive !== undefined;
+
+    if (hasUserFields) {
+      await prisma.user.update({
+        where: { id },
+        data: {
+          ...(dailySheetUrl !== undefined && { dailySheetUrl }),
+          ...(starRating !== undefined && { starRating }),
+          ...(roles !== undefined && { roles }),
+          ...(systemRole !== undefined && { systemRole }),
+          ...(employmentType !== undefined && { employmentType }),
+          ...(isActive !== undefined && { isActive }),
+        },
+      });
+    }
+
+    let shiftPayload: { userId: string; email: string; name: string; schedule: string; source: string; updatedBy: string; updatedAt: string } | null = null;
+    if (shiftSchedule !== undefined) {
+      const normalizedSchedule = normalizeScheduleFormat(typeof shiftSchedule === 'string' ? shiftSchedule : '');
+      const updatedBy = (req as AuthRequest).user?.email || 'nexus-ui';
+      if (!normalizedSchedule) {
+        await db.userShiftTime.deleteMany({ where: { userId: id } });
+      } else {
+        await db.userShiftTime.upsert({
+          where: { userId: id },
+          create: { userId: id, schedule: normalizedSchedule, source: 'NEXUS', updatedBy },
+          update: { schedule: normalizedSchedule, source: 'NEXUS', updatedBy },
+        });
+      }
+      const targetUser = await prisma.user.findUnique({ where: { id }, select: { id: true, email: true, name: true } });
+      if (targetUser) {
+        shiftPayload = {
+          userId: targetUser.id,
+          email: targetUser.email,
+          name: targetUser.name,
+          schedule: normalizedSchedule,
+          source: 'NEXUS',
+          updatedBy,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    const user = await db.user.findUniqueOrThrow({
       where: { id },
-      data: {
-        ...(dailySheetUrl !== undefined && { dailySheetUrl }),
-        ...(starRating !== undefined && { starRating }),
-        ...(roles !== undefined && { roles }),
-        ...(systemRole !== undefined && { systemRole }),
-        ...(employmentType !== undefined && { employmentType }),
-        ...(isActive !== undefined && { isActive }),
-      },
       select: rosterSelect,
     });
 
     await invalidateCache('users:all', 'teams:all', 'dashboard:all');
     // The tools are the source of truth for these fields, so mirror the edit there.
-    queueUserPush(user.email);
+    if (hasUserFields) queueUserPush(user.email);
+    if (shiftPayload) {
+      io.emit('shift_times:updated', shiftPayload);
+      queueShiftTimeWebhooks(shiftPayload);
+    }
 
     return res.json({ user: serializeUser(user) });
   } catch (err: any) {

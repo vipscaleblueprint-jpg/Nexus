@@ -211,17 +211,23 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
   }
 
   const isSubtask = Boolean(
+    task.isSubtask ||
     task.parentTaskId ||
     (task.taskId && task.taskId !== task.id) ||
     task.subtaskId ||
+    (typeof task.id === 'string' && task.id.startsWith('subtask:')) ||
     (task.checklists && task.checklists.some((c: any) => c.subtaskId === task.id))
   );
+
+  const effectiveSubtaskId = isSubtask
+    ? (task.subtaskId || (typeof task.id === 'string' ? task.id.replace(/^subtask:/, '') : task.id))
+    : null;
 
   const auditChecklists = (task.checklists || []).filter((c: any) => {
     const isAudit = isNexusAuditChecklist(c) || (c.name || '').trim().toLowerCase() === 'audit';
     if (!isAudit) return false;
     if (isSubtask) {
-      return !c.subtaskId || c.subtaskId === task.id;
+      return !c.subtaskId || c.subtaskId === effectiveSubtaskId || c.subtaskId === task.id;
     }
     return !c.subtaskId;
   });
@@ -244,7 +250,7 @@ export function getTaskAuditStatus(task: any): TaskAuditStatus {
     .map((i: any) => i.text);
 
   // Audits the AI picked replace the role/title rules (saved items and exclusions still apply).
-  const aiPickedAudits = getAiPickedAudits(task.checklists, isSubtask ? task.id : null);
+  const aiPickedAudits = getAiPickedAudits(task.checklists, effectiveSubtaskId);
   const hideDesign = hidesDesignAudit(aiPickedAudits);
   const requiredAuditItems = Array.from(
     new Set([
@@ -372,17 +378,20 @@ export const isFunnelAudit = (name: string): boolean => {
 
 export function resolveTargetTaskOrSubtask(task: any, subtaskId?: string): any {
   if (!task) return task;
-  if (!subtaskId || task.id === subtaskId || task.subtaskId === subtaskId) {
+  const cleanSubId = subtaskId ? subtaskId.replace(/^subtask:/, '') : undefined;
+  if (!cleanSubId || task.id === subtaskId || task.id === cleanSubId || task.subtaskId === cleanSubId) {
     return task;
   }
-  const found = (task.subtasks || []).find((s: any) => s.id === subtaskId);
+  const found = (task.subtasks || []).find((s: any) => s.id === cleanSubId);
   if (found) {
     const subChecklists = (found.checklists && found.checklists.length > 0)
       ? found.checklists
-      : (task.checklists || []).filter((c: any) => c.subtaskId === subtaskId);
+      : (task.checklists || []).filter((c: any) => c.subtaskId === cleanSubId);
     return {
       ...found,
-      id: subtaskId,
+      id: cleanSubId,
+      subtaskId: cleanSubId,
+      isSubtask: true,
       taskId: task.id || found.taskId,
       title: found.title || '',
       assigneeRoleRestrictions: found.assigneeRoleRestrictions || [],
@@ -390,10 +399,12 @@ export function resolveTargetTaskOrSubtask(task: any, subtaskId?: string): any {
     };
   }
   return {
-    id: subtaskId,
+    id: cleanSubId,
+    subtaskId: cleanSubId,
+    isSubtask: true,
     taskId: task.id,
     title: '',
-    checklists: (task.checklists || []).filter((c: any) => c.subtaskId === subtaskId),
+    checklists: (task.checklists || []).filter((c: any) => c.subtaskId === cleanSubId),
   };
 }
 
@@ -498,13 +509,26 @@ export function canPerformAudit(
     }
   }
 
-  // Level 1 audits have no hierarchy prerequisites
-  if (isUiUxAudit(norm) || isDesignAudit(norm) || isProductionAudit(norm)) {
+  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
+  const status = getTaskAuditStatus(targetTask);
+
+  // Design Audit and Production Audit have no hierarchy prerequisites
+  if (isDesignAudit(norm) || isProductionAudit(norm)) {
     return { allowed: true, missingPrerequisites: [] };
   }
 
-  const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
-  const status = getTaskAuditStatus(targetTask);
+  // UI/UX Audit cannot be checked if Design Audit is required and unchecked
+  if (isUiUxAudit(norm)) {
+    const missingDesign = status.uncheckedAudits.filter(isDesignAudit);
+    if (missingDesign.length > 0) {
+      return {
+        allowed: false,
+        reason: 'Cannot do UI/UX Audit: Design Audit must be completed first.',
+        missingPrerequisites: missingDesign,
+      };
+    }
+    return { allowed: true, missingPrerequisites: [] };
+  }
 
   // Uncompleted Level 1 audits
   const missingLevel1 = status.uncheckedAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a) || isProductionAudit(a));

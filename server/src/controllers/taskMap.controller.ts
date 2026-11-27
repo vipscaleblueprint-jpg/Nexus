@@ -5284,14 +5284,25 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
     }
 
     if (type === 'AUDIT') {
-      // Find tasks assigned to this auditor in review status
-      const reviewTasks = await prisma.task.findMany({
-        where: {
-          assigneeId: targetUserId,
-          status: { in: ['In Review', 'IN REVIEW', 'To review', 'TO REVIEW', 'Review', 'Checking', 'CHECKING', 'In Checking', 'IN CHECKING'] },
-        },
-        select: { id: true, title: true, listId: true, checklists: { include: { items: true } } },
-      });
+      const reviewStatusNames = ['In Review', 'IN REVIEW', 'To review', 'TO REVIEW', 'Review', 'Checking', 'CHECKING', 'In Checking', 'IN CHECKING'];
+      // Find tasks and subtasks assigned to this auditor in review status
+      const [reviewTasks, reviewSubtasks] = await Promise.all([
+        prisma.task.findMany({
+          where: {
+            assigneeId: targetUserId,
+            status: { in: reviewStatusNames },
+          },
+          select: { id: true, title: true, listId: true, checklists: { include: { items: true } } },
+        }),
+        prisma.subtask.findMany({
+          where: {
+            assigneeId: targetUserId,
+            completed: false,
+            status: { in: reviewStatusNames },
+          },
+          select: { id: true, taskId: true, title: true },
+        }),
+      ]);
 
       for (const t of reviewTasks) {
         await prisma.task.update({
@@ -5306,12 +5317,37 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
         await invalidateCache(`task:${t.id}`, 'task_map:*', 'tasks:all');
       }
 
+      for (const st of reviewSubtasks) {
+        await prisma.subtask.update({
+          where: { id: st.id },
+          data: {
+            assigneeId: null,
+            status: 'IN REVIEW',
+            assignees: { set: [] },
+          },
+        });
+        const parentRec = await getOrCreateTaskMapRecord(st.taskId);
+        let revs: any[] = Array.isArray(parentRec.pmReviews) ? [...parentRec.pmReviews] : [];
+        revs = revs
+          .filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id))
+          .map((r: any) =>
+            r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id
+              ? { ...r, statuses: [], handedOver: false }
+              : r
+          );
+        await updateTaskMapRecord(st.taskId, { pmReviews: revs });
+        await invalidateCache(`task:${st.taskId}`, 'task_map:*', 'tasks:all');
+      }
+
       await invalidateCache('task_map:*').catch(() => { });
-    io.emit('task_map:updated');
+      io.emit('task_map:updated');
       return res.json({
         success: true,
-        count: reviewTasks.length,
-        resetTaskIds: reviewTasks.map((t) => t.id),
+        count: reviewTasks.length + reviewSubtasks.length,
+        resetTaskIds: [
+          ...reviewTasks.map((t) => t.id),
+          ...reviewSubtasks.map((st) => `subtask:${st.id}`),
+        ],
       });
     }
 

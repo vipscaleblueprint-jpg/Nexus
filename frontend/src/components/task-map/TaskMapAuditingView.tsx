@@ -47,6 +47,7 @@ import {
   RotateCcw,
   Loader2,
   Scale,
+  CornerDownRight,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { isAuditorUser, isProjectManagerOrAdmin, canTransitionTaskStatus, canUserEditTask, canUserMoveTask } from '@/lib/permissions';
@@ -54,6 +55,7 @@ import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
 import { SubStatusChangeGuideModal } from '@/components/modals/SubStatusChangeGuideModal';
 import { toast } from '@/lib/toast';
 import { isClosedStatus } from '@/lib/taskTokens';
+import { isDesignAudit, isProductionAudit, isInstructionAudit } from '@/lib/auditChecklist';
 import { useHorizontalScroll } from '@/lib/useHorizontalScroll';
 import {
   CardStatusDropdown,
@@ -498,7 +500,10 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       const pool = [...(allUsers || []), ...(shiftUsers || [])];
       candidates = pool.filter((u) => u && selectedCustomMAs.includes(u.id));
     } else if (!isAllShifts && !isCustomShift) {
-      candidates = [...(shiftUsers || [])];
+      candidates = [
+        ...(currentUser?.id && isAuditorUser(currentUser) ? [currentUser] : []),
+        ...(shiftUsers || []),
+      ];
     } else {
       candidates = [
         ...(currentUser ? [currentUser] : []),
@@ -679,6 +684,93 @@ export const TaskMapAuditingView: React.FC<Props> = ({
   // Build the list of columns
   const toReviewTasks = filteredReviewTasks.filter(isGeneralToReview);
 
+  /**
+   * Resolves the appropriate audit sub-status when dragging/assigning a task to an auditor.
+   * - If the task has unchecked audits, the target auditor MUST hold the role for at least one
+   *   needed audit; otherwise returns an error flashing the missing audit name(s).
+   * - Enforces audit hierarchy (Design Audit before UI/UX Audit, Level 1 before Instruction/Funnel)
+   *   and UI/UX vs Funnel different-auditor separation.
+   */
+  const resolveAuditorAssignmentForTask = (
+    task: TaskMapItem,
+    auditor: any
+  ): { allowed: true; auditType: string } | { allowed: false; reason: string } => {
+    const auditorRolesLower = [
+      ...(auditor.roles || []),
+      auditor.role || '',
+      auditor.title || '',
+    ].map((r: string) => (r || '').toLowerCase());
+
+    const hasDesignRole = auditorRolesLower.some((r) => r.includes('design') || r.includes('graphic'));
+    const hasProdRole = auditorRolesLower.some((r) => r.includes('production') || /\bprod\b/.test(r));
+    const hasUiUxRole = auditorRolesLower.some((r) => r.includes('ui') || r.includes('ux'));
+    const hasInstrRole = auditorRolesLower.some((r) => r.includes('instruction') || r.includes('copy'));
+    const hasFunnelRole = auditorRolesLower.some((r) => r.includes('funnel'));
+
+    const auditStatus = getTaskAuditStatus(task);
+    const unchecked = auditStatus.uncheckedAudits || [];
+
+    const needsDesign = unchecked.some((a) => isDesignAudit(a));
+    const needsProd = unchecked.some((a) => isProductionAudit(a));
+    const needsUiUx = unchecked.some((a) => isUiUxAudit(a));
+    const needsInstr = unchecked.some((a) => isInstructionAudit(a));
+    const needsFunnel = unchecked.some((a) => isFunnelAudit(a));
+
+    const formatNeededLabel = (raw: string) => {
+      if (isDesignAudit(raw)) return 'Design Audit';
+      if (isProductionAudit(raw)) return 'Production Audit';
+      if (isUiUxAudit(raw)) return 'UI/UX Audit';
+      if (isInstructionAudit(raw)) return 'Instruction Audit';
+      if (isFunnelAudit(raw)) return 'Funnel Audit';
+      return raw;
+    };
+
+    // Build candidate audit types in strict hierarchy order: Design -> Production -> UI UX -> Instruction -> Funnel
+    const matchedCandidates: string[] = [];
+    if (needsDesign && hasDesignRole) matchedCandidates.push('Design Audit');
+    if (needsProd && hasProdRole) matchedCandidates.push('Production Audit');
+    if (needsUiUx && hasUiUxRole) matchedCandidates.push('UI UX Audit');
+    if (needsInstr && hasInstrRole) matchedCandidates.push('Instruction Audit');
+    if (needsFunnel && hasFunnelRole) matchedCandidates.push('Funnel Audit');
+
+    if (unchecked.length > 0 && matchedCandidates.length === 0) {
+      const neededLabels = Array.from(new Set(unchecked.map(formatNeededLabel))).join(', ');
+      return {
+        allowed: false,
+        reason: `${auditor.name} doesn't have the necessary audit role (${neededLabels}).`,
+      };
+    }
+
+    const candidatesToCheck =
+      matchedCandidates.length > 0 ? matchedCandidates : [getDesignatedAuditType(auditor)];
+
+    let firstFailureReason = 'Cannot assign: prerequisites not completed.';
+    for (const candidateType of candidatesToCheck) {
+      const permCheck = canPerformAudit(candidateType, task, undefined, auditor.id);
+      if (!permCheck.allowed) {
+        firstFailureReason = permCheck.reason || firstFailureReason;
+        continue;
+      }
+      if (isFunnelAudit(candidateType)) {
+        const uiUxActors = getCompletedAuditActorIds(isUiUxAudit, task);
+        if (uiUxActors.actorIds.includes(auditor.id)) {
+          firstFailureReason = `${auditor.name} already completed the UI/UX Audit for this task — Funnel Audit must be assigned to a different Funnel Auditor.`;
+          continue;
+        }
+      }
+      if (isUiUxAudit(candidateType)) {
+        const funnelActors = getCompletedAuditActorIds(isFunnelAudit, task);
+        if (funnelActors.actorIds.includes(auditor.id)) {
+          firstFailureReason = `${auditor.name} already completed the Funnel Audit for this task — UI/UX Audit must be assigned to a different UI/UX Auditor.`;
+          continue;
+        }
+      }
+      return { allowed: true, auditType: candidateType };
+    }
+
+    return { allowed: false, reason: firstFailureReason };
+  };
+
   // DnD Handlers
   const handleDragStart = (event: DragStartEvent) => {
     const task = event.active.data.current?.task as TaskMapItem;
@@ -706,6 +798,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         up === 'TO REVIEW' ||
         up === 'IN REVIEW' ||
         up === 'DESIGN AUDIT' ||
+        up === 'PRODUCTION AUDIT' ||
         up === 'UI UX AUDIT' ||
         up === 'UI/UX AUDIT' ||
         up === 'INSTRUCTION AUDIT' ||
@@ -721,8 +814,8 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     });
 
     if (targetColumnId === 'col-to-review') {
-      updatedStatuses = [];
-      toast.info('Task moved to General Review queue');
+      updatedStatuses = ['To Review'];
+      toast.info('Task moved to Audit Pool (To Review)');
       onStatusChange(taskId, updatedStatuses);
 
       const targetStatus = 'IN REVIEW';
@@ -738,58 +831,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       const auditorId = targetColumnId.replace('col-auditor-', '').replace('in-progress-', '');
       const auditor = auditorUsers.find((a) => a.id === auditorId);
       if (auditor) {
-        const auditorRolesLower = [
-          ...(auditor.roles || []),
-          auditor.role || '',
-          auditor.title || '',
-        ].map((r: string) => (r || '').toLowerCase());
-        const hasUiUxRole = auditorRolesLower.some((r) => r.includes('ui') || r.includes('ux'));
-        const hasDesignRole = auditorRolesLower.some((r) => r.includes('design') || r.includes('graphic'));
-        const hasInstrRole = auditorRolesLower.some((r) => r.includes('instruction') || r.includes('copy'));
-        const hasFunnelRole = auditorRolesLower.some((r) => r.includes('funnel'));
-
-        const auditStatus = getTaskAuditStatus(task);
-        const unchecked = auditStatus.uncheckedAudits || [];
-        const needsUiUx = unchecked.some((a) => isUiUxAudit(a));
-        const needsDesign = unchecked.some((a) => a.toLowerCase().includes('design'));
-        const needsInstr = unchecked.some((a) => a.toLowerCase().includes('instruction'));
-        const needsFunnel = unchecked.some((a) => isFunnelAudit(a));
-
-        let auditType = getDesignatedAuditType(auditor);
-        if (hasUiUxRole && needsUiUx) {
-          auditType = 'UI UX Audit';
-        } else if (hasDesignRole && needsDesign) {
-          auditType = 'Design Audit';
-        } else if (hasInstrRole && needsInstr) {
-          auditType = 'Instruction Audit';
-        } else if (hasFunnelRole && needsFunnel) {
-          auditType = 'Funnel Audit';
-        }
-
-        // Enforce audit hierarchy AND UI/UX vs Funnel different-auditor separation
-        const permCheck = canPerformAudit(auditType, task, undefined, auditor.id);
-        if (!permCheck.allowed) {
-          toast.error(permCheck.reason || 'Cannot assign: prerequisites not completed.');
+        const assignmentCheck = resolveAuditorAssignmentForTask(task, auditor);
+        if (!assignmentCheck.allowed) {
+          toast.error(assignmentCheck.reason);
           return;
         }
-        if (isFunnelAudit(auditType)) {
-          const uiUxActors = getCompletedAuditActorIds(isUiUxAudit, task);
-          if (uiUxActors.actorIds.includes(auditor.id)) {
-            toast.error(
-              `${auditor.name} already completed the UI/UX Audit for this task — Funnel Audit must be assigned to a different Funnel Auditor.`
-            );
-            return;
-          }
-        }
-        if (isUiUxAudit(auditType)) {
-          const funnelActors = getCompletedAuditActorIds(isFunnelAudit, task);
-          if (funnelActors.actorIds.includes(auditor.id)) {
-            toast.error(
-              `${auditor.name} already completed the Funnel Audit for this task — UI/UX Audit must be assigned to a different UI/UX Auditor.`
-            );
-            return;
-          }
-        }
+        const auditType = assignmentCheck.auditType;
 
         if (await isCollaboratorOnTask(task.id, auditor.id)) {
           toast.error(`${auditor.name} is a collaborator on this task and can't audit it. Assign another auditor.`);
@@ -836,57 +883,12 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     const task = (allTasks || tasks).find((t) => t.id === taskId) || combinedTasks.find((t) => t.id === taskId) || taskOverride;
     if (!task) return;
 
-    const auditorRolesLower = [
-      ...(auditor.roles || []),
-      auditor.role || '',
-      auditor.title || '',
-    ].map((r: string) => (r || '').toLowerCase());
-    const hasUiUxRole = auditorRolesLower.some((r) => r.includes('ui') || r.includes('ux'));
-    const hasDesignRole = auditorRolesLower.some((r) => r.includes('design') || r.includes('graphic'));
-    const hasInstrRole = auditorRolesLower.some((r) => r.includes('instruction') || r.includes('copy'));
-    const hasFunnelRole = auditorRolesLower.some((r) => r.includes('funnel'));
-
-    const auditStatus = getTaskAuditStatus(task);
-    const unchecked = auditStatus.uncheckedAudits || [];
-    const needsUiUx = unchecked.some((a) => isUiUxAudit(a));
-    const needsDesign = unchecked.some((a) => a.toLowerCase().includes('design'));
-    const needsInstr = unchecked.some((a) => a.toLowerCase().includes('instruction'));
-    const needsFunnel = unchecked.some((a) => isFunnelAudit(a));
-
-    let auditType = getDesignatedAuditType(auditor);
-    if (hasUiUxRole && needsUiUx) {
-      auditType = 'UI UX Audit';
-    } else if (hasDesignRole && needsDesign) {
-      auditType = 'Design Audit';
-    } else if (hasInstrRole && needsInstr) {
-      auditType = 'Instruction Audit';
-    } else if (hasFunnelRole && needsFunnel) {
-      auditType = 'Funnel Audit';
-    }
-
-    const permCheck = canPerformAudit(auditType, task, undefined, auditor.id);
-    if (!permCheck.allowed) {
-      toast.error(permCheck.reason || 'Cannot assign: prerequisites not completed.');
+    const assignmentCheck = resolveAuditorAssignmentForTask(task, auditor);
+    if (!assignmentCheck.allowed) {
+      toast.error(assignmentCheck.reason);
       return;
     }
-    if (isFunnelAudit(auditType)) {
-      const uiUxActors = getCompletedAuditActorIds(isUiUxAudit, task);
-      if (uiUxActors.actorIds.includes(auditor.id)) {
-        toast.error(
-          `${auditor.name} already completed the UI/UX Audit for this task — Funnel Audit must be assigned to a different Funnel Auditor.`
-        );
-        return;
-      }
-    }
-    if (isUiUxAudit(auditType)) {
-      const funnelActors = getCompletedAuditActorIds(isFunnelAudit, task);
-      if (funnelActors.actorIds.includes(auditor.id)) {
-        toast.error(
-          `${auditor.name} already completed the Funnel Audit for this task — UI/UX Audit must be assigned to a different UI/UX Auditor.`
-        );
-        return;
-      }
-    }
+    const auditType = assignmentCheck.auditType;
 
     if (await isCollaboratorOnTask(task.id, auditor.id)) {
       toast.error(`${auditor.name} is a collaborator on this task and can't audit it. Assign another auditor.`);
@@ -923,9 +925,10 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     );
     const unchecked = getTaskAuditStatus(task).uncheckedAudits || [];
     const candidates: string[] = [];
+    if (roles.some((r) => r.includes('design') || r.includes('graphic')) && unchecked.some((a) => isDesignAudit(a))) candidates.push('Design Audit');
+    if (roles.some((r) => r.includes('production') || /\bprod\b/.test(r)) && unchecked.some((a) => isProductionAudit(a))) candidates.push('Production Audit');
     if (roles.some((r) => r.includes('ui') || r.includes('ux')) && unchecked.some((a) => isUiUxAudit(a))) candidates.push('UI UX Audit');
-    if (roles.some((r) => r.includes('design') || r.includes('graphic')) && unchecked.some((a) => a.toLowerCase().includes('design'))) candidates.push('Design Audit');
-    if (roles.some((r) => r.includes('instruction') || r.includes('copy')) && unchecked.some((a) => a.toLowerCase().includes('instruction'))) candidates.push('Instruction Audit');
+    if (roles.some((r) => r.includes('instruction') || r.includes('copy')) && unchecked.some((a) => isInstructionAudit(a))) candidates.push('Instruction Audit');
     if (roles.some((r) => r.includes('funnel')) && unchecked.some((a) => isFunnelAudit(a))) candidates.push('Funnel Audit');
     return candidates.find((type) => canPerformAudit(type, task, undefined, auditor.id).allowed) || null;
   };
@@ -1004,19 +1007,15 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     }
   };
 
-  // Helper options for sub-status dropdown in Auditing
+  // Helper options for sub-status dropdown in Auditing (audit tags are assigned automatically via drag/drop)
   const getAuditingOptions = (task: TaskMapItem): TaskMapOption[] => {
     const ls = task.list?.statuses;
     return [
-    { id: 'opt-audit-design', label: 'Design Audit', color: '#ec4899', textColor: '#ffffff', order: 1 },
-    { id: 'opt-audit-uiux', label: 'UI UX Audit', color: '#06b6d4', textColor: '#ffffff', order: 2 },
-    { id: 'opt-audit-instruction', label: 'Instruction Audit', color: '#10b981', textColor: '#ffffff', order: 3 },
-    { id: 'opt-audit-funnel', label: 'Funnel Audit', color: '#f59e0b', textColor: '#ffffff', order: 4 },
-    { id: 'opt-audit-readytosend', label: 'Ready to Send', color: resolveSubStatusColor('Ready to Send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 5 },
-    { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 6 },
-    { id: 'opt-audit-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 7 },
-    { id: 'opt-audit-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 8 },
-    { id: 'opt-audit-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 9 },
+      { id: 'opt-audit-readytosend', label: 'Ready to Send', color: resolveSubStatusColor('Ready to Send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 1 },
+      { id: 'opt-audit-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#ffffff', order: 2 },
+      { id: 'opt-audit-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 3 },
+      { id: 'opt-audit-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 4 },
+      { id: 'opt-audit-toreview', label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW, textColor: '#ffffff', order: 5 },
     ];
   };
 
@@ -1064,6 +1063,14 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                   className="font-bold uppercase tracking-wider flex items-center gap-1.5 truncate text-[11px] mb-1"
                   style={{ color: liveColor }}
                 >
+                  {task.isSubtask && (
+                    <span
+                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                      title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
+                    >
+                      <CornerDownRight className="size-2.5 shrink-0" />
+                    </span>
+                  )}
                   <span className="relative flex size-2 shrink-0">
                     <span
                       className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
@@ -1077,17 +1084,25 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                   {task.list?.name || 'General'}
                 </span>
               ) : (
-                <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1">
-                  {task.list?.name || 'General'}
+                <div className="text-[11px] font-medium text-zinc-400 truncate max-w-[170px] mb-1 flex items-center gap-1.5">
+                  {task.isSubtask && (
+                    <span
+                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0"
+                      title={task.parentTaskTitle ? `Subtask of: ${task.parentTaskTitle}` : 'Subtask'}
+                    >
+                      <CornerDownRight className="size-2.5 shrink-0" />
+                    </span>
+                  )}
+                  <span className="truncate">{task.list?.name || 'General'}</span>
                 </div>
               )}
 
               {/* Title */}
               <h4
                 className="text-[13px] font-bold text-zinc-100 group-hover:text-white line-clamp-2 leading-snug my-0.5 h-[36px]"
-                title={task.title}
+                title={task.isSubtask && task.parentTaskTitle ? `${task.title} (Parent: ${task.parentTaskTitle})` : task.title}
               >
-                {task.title}
+                {task.isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title}
               </h4>
 
               {/* Controls row: circle dot left of bulletin, priority flag (Exact Task Map parity) */}
@@ -1185,7 +1200,7 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                   Sub-Status
                 </span>
                 <TaskMapStatusDropdown
-                  selectedStatuses={task.taskMap?.statuses || []}
+                  selectedStatuses={isQueueColumn ? ['To Review'] : (task.taskMap?.statuses || [])}
                   options={getAuditingOptions(task)}
                   onToggleStatus={async (label, nextStatuses) => {
                     const isSelecting = (nextStatuses || []).includes(label);
@@ -1197,9 +1212,13 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                       let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
                       if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
                         try {
-                          const fresh = await tasksApi.getTask(task.id);
+                          const targetApiTaskId = task.isSubtask && task.parentTaskId ? task.parentTaskId : task.id;
+                          const fresh = await tasksApi.getTask(targetApiTaskId);
                           if (fresh?.task) {
-                            const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+                            const freshTarget = task.isSubtask
+                              ? (fresh.task.subtasks || []).find((st: any) => st.id === task.subtaskId) || fresh.task
+                              : fresh.task;
+                            const freshCheck = canTransitionTaskStatus(freshTarget, 'CRM');
                             if (freshCheck.allowed) {
                               transitionCheck = freshCheck;
                               useAppStore.getState().updateTask(fresh.task);
@@ -1293,14 +1312,14 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                           if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
                             task.progress.timeOut = formatManilaTime(new Date());
                           }
-                          onStatusChange(task.id, []);
+                          onStatusChange(task.id, ['To Review']);
                           if (onTaskUpdate) {
                             await onTaskUpdate(task.id, { assigneeId: null, status: 'IN REVIEW' });
                           } else {
                             await tasksApi.updateTask(task.id, { assigneeId: null, status: 'IN REVIEW' } as any).catch(console.error);
                             onDataRefresh();
                           }
-                          toast.info('Task returned to Review queue');
+                          toast.info('Task returned to Audit Pool (To Review)');
                         }
                       } else {
                         // Designated audit types: Design Audit, UI UX Audit, Instruction Audit, Funnel Audit
@@ -1860,11 +1879,16 @@ export const TaskMapAuditingView: React.FC<Props> = ({
       <DragOverlay>
         {activeDragTask ? (
           <div className="p-3.5 bg-card border border-amber-500/80 rounded-xl shadow-2xl w-[320px] pointer-events-none opacity-90">
-            <span className="text-xs text-zinc-400 font-medium block mb-1">
-              {activeDragTask.list?.name || 'General'}
-            </span>
+            <div className="text-xs text-zinc-400 font-medium flex items-center gap-1.5 mb-1">
+              {activeDragTask.isSubtask && (
+                <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-bold text-[10px] shrink-0">
+                  <CornerDownRight className="size-2.5 shrink-0" />
+                </span>
+              )}
+              <span className="truncate">{activeDragTask.list?.name || 'General'}</span>
+            </div>
             <h4 className="text-sm font-bold text-white truncate">
-              {activeDragTask.title}
+              {activeDragTask.isSubtask ? (activeDragTask.title || '').replace(/^--\s*/, '') : activeDragTask.title}
             </h4>
           </div>
         ) : null}

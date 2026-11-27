@@ -35,6 +35,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu';
 import { SettingsSkeleton, MemberSkeleton } from '@/components/ui/Skeleton';
 import { ClickUpStatusPanel } from '@/components/layout/ClickUpStatusPanel';
 import { AuditShiftsTab } from '@/components/settings/AuditShiftsTab';
+import { ShiftTimesTab } from '@/components/settings/ShiftTimesTab';
 
 const ROLE_COLORS: Record<string, string> = {
   PM: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
@@ -219,8 +220,12 @@ export default function UsersSettingsPage() {
   const tabParam = searchParams?.get('tab');
   const { currentUser } = useAppStore();
   const isAdmin = currentUser?.systemRole === 'ADMIN';
-  const [activeTab, setActiveTab] = useState<'users' | 'shifts'>(
-    tabParam === 'shifts' || tabParam === 'audit-shifts' ? 'shifts' : 'users'
+  const [activeTab, setActiveTab] = useState<'users' | 'shifts' | 'shift-times'>(
+    tabParam === 'shift-times'
+      ? 'shift-times'
+      : tabParam === 'shifts' || tabParam === 'audit-shifts'
+      ? 'shifts'
+      : 'users'
   );
 
   const [users, setUsers] = useState<User[]>([]);
@@ -298,7 +303,7 @@ export default function UsersSettingsPage() {
   };
 
   useEffect(() => {
-    if (currentUser && currentUser.systemRole !== 'ADMIN' && tabParam !== 'users') {
+    if (currentUser && currentUser.systemRole !== 'ADMIN' && tabParam !== 'users' && tabParam !== 'shift-times') {
       setActiveTab('shifts');
     }
     loadData();
@@ -449,8 +454,8 @@ export default function UsersSettingsPage() {
             </h1>
 
             {/* Segmented Tab Switcher (Users & Roles shown only to Admins) */}
-            {isAdmin && (
-              <div className="inline-flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 shadow-inner">
+            <div className="inline-flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 shadow-inner">
+              {isAdmin && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('users')}
@@ -463,24 +468,38 @@ export default function UsersSettingsPage() {
                   <Users className="w-3.5 h-3.5" />
                   <span>Users & Roles</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('shifts')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    activeTab === 'shifts'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Audit Shifts</span>
-                </button>
-              </div>
-            )}
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveTab('shifts')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === 'shifts'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Audit Shifts</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('shift-times')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === 'shift-times'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Shift Times</span>
+              </button>
+            </div>
           </div>
           <p className="text-zinc-500 text-sm mt-0.5">
             {activeTab === 'users'
               ? 'Manage workspace members, invitations, and custom roles.'
+              : activeTab === 'shift-times'
+              ? 'Manage team shift schedules synced two-way with VIPScale Tools.'
               : 'Configure shift schedules and auto-assigned auditors for in-review tasks.'}
           </p>
         </div>
@@ -526,6 +545,8 @@ export default function UsersSettingsPage() {
 
       {activeTab === 'shifts' ? (
         <AuditShiftsTab onRefreshUsers={loadData} />
+      ) : activeTab === 'shift-times' ? (
+        <ShiftTimesTab onRefreshUsers={loadData} />
       ) : (
         <div className="space-y-8">
           <div className="flex flex-col sm:flex-row items-center gap-3 w-full">

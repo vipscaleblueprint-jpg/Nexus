@@ -31,6 +31,7 @@ import {
   getAssistantsLastTasks,
   triggerShiftAudits
 } from '../controllers/external.controller';
+import { getExternalShiftTimes } from '../controllers/shiftTime.controller';
 
 const router = Router();
 
@@ -82,5 +83,8 @@ router.delete('/roles/:id', deleteRole);
 router.get('/teams', getExternalTeams);
 router.post('/teams', createExternalTeam);
 router.post('/teams/:teamId/roles', createExternalTeamRole);
+
+// Shift Times (UUID-keyed schedules for VIPScale Tools & n8n)
+router.get('/shift-times', getExternalShiftTimes);
 
 export default router;

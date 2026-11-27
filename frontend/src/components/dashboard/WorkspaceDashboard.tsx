@@ -1955,8 +1955,6 @@ function WorkspaceDashboardContent({
                 { value: "ON-HOLD", label: "On-Hold", group: "Workflow & Progress" },
                 { value: "WAITING", label: "Waiting", group: "Management" },
                 { value: "IN REVIEW", label: "In Review", group: "Management" },
-                { value: "CRM Needed to Send", label: "CRM Needed to Send", group: "Management" },
-                { value: "CRM Needed to Follow Up", label: "CRM Needed to Follow Up", group: "Management" },
                 { value: "CRM", label: "CRM", group: "Management" },
                 { value: "CLOSED", label: "Closed", group: "Closed Task" },
                 { value: "COMPLETED", label: "Completed", group: "Closed Task" },

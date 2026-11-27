@@ -116,8 +116,6 @@ const DEFAULT_STATUSES = [
   { name: 'REVISION', color: '#5B6BD6', groupName: 'Workflow & Progress' },
   { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
   { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
-  { name: 'CRM Needed to Send', color: '#0284c7', groupName: 'Management' },
-  { name: 'CRM Needed to Follow Up', color: '#6366F1', groupName: 'Management' },
   { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
   { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
   { name: 'ON-HOLD', color: '#8A8F98', groupName: 'Workflow & Progress' },

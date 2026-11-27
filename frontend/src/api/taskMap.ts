@@ -984,60 +984,268 @@ export interface DailySheetLogItem {
   updatedAt: string;
 }
 
-export const taskMapApi = {
-  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<TaskMapDataResponse> => {
-    const q = new URLSearchParams();
-    if (params?.shift) q.set('shift', params.shift);
-    if (params?.date) q.set('date', params.date);
-    if (params?.client) q.set('client', params.client);
-    q.set('_t', String(Date.now()));
-    const queryString = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
-      signal: params?.signal,
-      timeoutMs: params?.timeoutMs ?? 25000,
+// ===========================================================================
+// Client-Side Request Cache & In-Flight Deduplication for taskMapApi
+// ===========================================================================
+
+interface TaskMapApiCacheEntry<T = any> {
+  data: T;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+const TASK_MAP_API_CACHE_MAX_ENTRIES = 100;
+const TASK_MAP_CACHE_TTL = {
+  DATA: 15_000,
+  ADMIN_TASKS: 30_000,
+  OPTIONS: 5 * 60_000,
+  SHIFTS: 5 * 60_000,
+  HISTORY_DATES: 2 * 60_000,
+  LAUNCH_DATA: 30_000,
+  LAUNCH_CANDIDATES: 30_000,
+  DAILY_OTP: 60_000,
+  CLIENT_LOCK: 30_000,
+  TIMELINE: 15_000,
+  UPWORK_CLIENTS: 5 * 60_000,
+  UPWORK_ACTIVE: 10_000,
+  TASK_DESCRIPTION: 60_000,
+  CRM_FOLLOW_UPS: 20_000,
+  DAILY_SHEET_LOGS: 10_000,
+  DAILY_SCHEDULE_CONFIG: 5 * 60_000,
+  USER_SHEET_ACTIVITY: 15_000,
+} as const;
+
+const taskMapApiCache = new Map<string, TaskMapApiCacheEntry>();
+const taskMapApiInflight = new Map<string, Promise<any>>();
+
+function getCacheEntry<T>(key: string): T | undefined {
+  const entry = taskMapApiCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    taskMapApiCache.delete(key);
+    return undefined;
+  }
+  // Refresh LRU order
+  taskMapApiCache.delete(key);
+  taskMapApiCache.set(key, entry);
+  return entry.data as T;
+}
+
+function setCacheEntry<T>(key: string, data: T, ttlMs: number): void {
+  if (ttlMs <= 0) return;
+  const now = Date.now();
+  if (taskMapApiCache.has(key)) {
+    taskMapApiCache.delete(key);
+  }
+  taskMapApiCache.set(key, {
+    data,
+    updatedAt: now,
+    expiresAt: now + ttlMs,
+  });
+  while (taskMapApiCache.size > TASK_MAP_API_CACHE_MAX_ENTRIES) {
+    const oldestKey = taskMapApiCache.keys().next().value;
+    if (!oldestKey) break;
+    taskMapApiCache.delete(oldestKey);
+  }
+}
+
+function createAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', 'AbortError');
+  }
+  const err = new Error('The operation was aborted.');
+  err.name = 'AbortError';
+  return err;
+}
+
+function raceWithAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(createAbortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(createAbortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
+function cachedRequest<T>(
+  key: string,
+  ttlMs: number,
+  fetcher: () => Promise<T>,
+  options?: { force?: boolean; signal?: AbortSignal }
+): Promise<T> {
+  if (options?.signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
+  if (!options?.force) {
+    const cached = getCacheEntry<T>(key);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+    const existingInflight = taskMapApiInflight.get(key) as Promise<T> | undefined;
+    if (existingInflight) {
+      return raceWithAbortSignal(existingInflight, options?.signal);
+    }
+  }
+
+  const requestPromise = fetcher()
+    .then((result) => {
+      setCacheEntry(key, result, ttlMs);
+      return result;
+    })
+    .finally(() => {
+      if (taskMapApiInflight.get(key) === requestPromise) {
+        taskMapApiInflight.delete(key);
+      }
     });
+
+  taskMapApiInflight.set(key, requestPromise);
+  return raceWithAbortSignal(requestPromise, options?.signal);
+}
+
+/**
+ * Invalidates cached entries in taskMapApi matching the given prefix(es).
+ * Omit `prefixes` to clear all in-memory taskMapApi cache entries.
+ */
+export function invalidateTaskMapCache(prefixes?: string | string[]): void {
+  if (!prefixes) {
+    taskMapApiCache.clear();
+    return;
+  }
+  const list = Array.isArray(prefixes) ? prefixes : [prefixes];
+  for (const key of Array.from(taskMapApiCache.keys())) {
+    if (list.some((prefix) => key.startsWith(prefix))) {
+      taskMapApiCache.delete(key);
+    }
+  }
+}
+
+/**
+ * Clears all taskMapApi in-memory caches, in-flight trackers, and Task Map sessionStorage SWR entries.
+ */
+export function clearTaskMapApiCache(): void {
+  taskMapApiCache.clear();
+  taskMapApiInflight.clear();
+  if (typeof window !== 'undefined') {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (key && key.startsWith('nexus_taskmap_swr_v1:')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => sessionStorage.removeItem(k));
+    } catch {
+      // Ignore storage access errors
+    }
+  }
+}
+
+export const taskMapApi = {
+  invalidateCache: invalidateTaskMapCache,
+  clearCache: clearTaskMapApiCache,
+
+  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string; signal?: AbortSignal; timeoutMs?: number; force?: boolean }): Promise<TaskMapDataResponse> => {
+    const shiftKey = (params?.shift || 'DEFAULT').trim().toUpperCase();
+    const dateKey = (params?.date || 'TODAY').trim();
+    const clientKey = (params?.client || '').trim().toLowerCase();
+    const cacheKey = `data:${shiftKey}::${dateKey}::${clientKey}`;
+
+    return cachedRequest<TaskMapDataResponse>(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.DATA,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.shift) q.set('shift', params.shift);
+        if (params?.date) q.set('date', params.date);
+        if (params?.client) q.set('client', params.client);
+        const queryString = q.toString() ? `?${q.toString()}` : '';
+        return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
+          timeoutMs: params?.timeoutMs ?? 25000,
+        });
+      },
+      { force: params?.force, signal: params?.signal }
+    );
   },
 
-  searchAdminTasks: async (query?: string, limit?: number): Promise<TaskMapItem[]> => {
+  searchAdminTasks: async (query?: string, limit?: number, options?: { force?: boolean }): Promise<TaskMapItem[]> => {
+    const cleanQuery = (query || '').trim().toLowerCase();
+    const cacheKey = `admin-tasks:${cleanQuery}::${limit ?? ''}`;
     try {
-      const q = new URLSearchParams();
-      if (query) q.set('q', query);
-      if (limit) q.set('limit', String(limit));
-      q.set('_t', String(Date.now()));
-      const res = await apiClient<{ success: boolean; tasks: TaskMapItem[] }>(`/api/task-map/admin-tasks?${q.toString()}`);
-      return res.tasks || [];
+      return await cachedRequest<TaskMapItem[]>(
+        cacheKey,
+        TASK_MAP_CACHE_TTL.ADMIN_TASKS,
+        async () => {
+          const q = new URLSearchParams();
+          if (query) q.set('q', query);
+          if (limit) q.set('limit', String(limit));
+          const qs = q.toString() ? `?${q.toString()}` : '';
+          const res = await apiClient<{ success: boolean; tasks: TaskMapItem[] }>(`/api/task-map/admin-tasks${qs}`);
+          return res.tasks || [];
+        },
+        { force: options?.force }
+      );
     } catch (err) {
       console.warn('Failed to search admin tasks:', err);
       return [];
     }
   },
 
-  getOptions: async (): Promise<{ success: boolean; options: TaskMapOption[] }> => {
-    return apiClient<{ success: boolean; options: TaskMapOption[] }>(`/api/task-map/options?_t=${Date.now()}`);
+  getOptions: async (options?: { force?: boolean }): Promise<{ success: boolean; options: TaskMapOption[] }> => {
+    return cachedRequest(
+      'options',
+      TASK_MAP_CACHE_TTL.OPTIONS,
+      () => apiClient<{ success: boolean; options: TaskMapOption[] }>('/api/task-map/options'),
+      { force: options?.force }
+    );
   },
 
   upsertOption: async (data: Partial<TaskMapOption>): Promise<{ success: boolean; option: TaskMapOption }> => {
-    return apiClient<{ success: boolean; option: TaskMapOption }>('/api/task-map/options', {
+    const res = await apiClient<{ success: boolean; option: TaskMapOption }>('/api/task-map/options', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['options', 'data:']);
+    return res;
   },
 
   deleteOption: async (id: string, force = false): Promise<{ success: boolean; inUseCount?: number }> => {
-    return apiClient<{ success: boolean; inUseCount?: number }>(`/api/task-map/options/${id}?force=${force}`, {
+    const res = await apiClient<{ success: boolean; inUseCount?: number }>(`/api/task-map/options/${id}?force=${force}`, {
       method: 'DELETE',
     });
+    invalidateTaskMapCache(['options', 'data:']);
+    return res;
   },
 
-  getShifts: async (): Promise<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }> => {
-    return apiClient<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }>(`/api/task-map/shifts?_t=${Date.now()}`);
+  getShifts: async (options?: { force?: boolean }): Promise<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }> => {
+    return cachedRequest(
+      'shifts',
+      TASK_MAP_CACHE_TTL.SHIFTS,
+      () => apiClient<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }>('/api/task-map/shifts'),
+      { force: options?.force }
+    );
   },
 
   updateShifts: async (shifts: Partial<TaskMapShift>[]): Promise<{ success: boolean; shifts: TaskMapShift[] }> => {
-    return apiClient<{ success: boolean; shifts: TaskMapShift[] }>('/api/task-map/shifts', {
+    const res = await apiClient<{ success: boolean; shifts: TaskMapShift[] }>('/api/task-map/shifts', {
       method: 'PUT',
       body: JSON.stringify({ shifts }),
     });
+    invalidateTaskMapCache(['shifts', 'data:']);
+    return res;
   },
 
   updateTaskStatuses: async (
@@ -1063,7 +1271,7 @@ export const taskMapApi = {
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{
+      const res = await apiClient<{
         success: boolean;
         taskMap: TaskMapRecord;
         upworkStartedAt?: string | null;
@@ -1076,6 +1284,17 @@ export const taskMapApi = {
         method: 'PATCH',
         body: JSON.stringify({ statuses, ...(extra || {}) }),
       });
+      invalidateTaskMapCache([
+        'data:',
+        'admin-tasks:',
+        'launch-data:',
+        `timeline:${taskId}`,
+        'task-desc:',
+        'upwork-active',
+        'crm-follow-ups',
+        'daily-sheet-logs:',
+      ]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1084,9 +1303,11 @@ export const taskMapApi = {
   claimTask: async (taskId: string): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/claim`, {
+      const res = await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/claim`, {
         method: 'PATCH',
       });
+      invalidateTaskMapCache(['data:', 'admin-tasks:', 'launch-data:', `timeline:${taskId}`]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1100,10 +1321,21 @@ export const taskMapApi = {
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }>(`/api/task-map/tasks/${taskId}/assign`, {
+      const res = await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }>(`/api/task-map/tasks/${taskId}/assign`, {
         method: 'PATCH',
         body: JSON.stringify({ assigneeId, mode, ...options }),
       });
+      invalidateTaskMapCache([
+        'data:',
+        'admin-tasks:',
+        'launch-data:',
+        `timeline:${taskId}`,
+        'task-desc:',
+        'upwork-active',
+        'daily-sheet-logs:',
+        'user-sheet-activity:',
+      ]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1116,10 +1348,12 @@ export const taskMapApi = {
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/transfer`, {
+      const res = await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/transfer`, {
         method: 'POST',
         body: JSON.stringify({ targetUserId, ...options }),
       });
+      invalidateTaskMapCache(['data:', 'admin-tasks:', 'launch-data:', `timeline:${taskId}`]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1129,20 +1363,24 @@ export const taskMapApi = {
     columnId: string,
     type: 'BOARD' | 'AUDIT' = 'BOARD'
   ): Promise<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }> => {
-    return apiClient<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }>(
+    const res = await apiClient<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }>(
       `/api/task-map/columns/${columnId}/reset`,
       {
         method: 'POST',
         body: JSON.stringify({ type }),
       }
     );
+    invalidateTaskMapCache(['data:', 'admin-tasks:', 'upwork-active']);
+    return res;
   },
 
   pmReview: async (taskId: string, data: { action: 'APPROVE' | 'REQUEST_REVISION'; pmTag?: string; comment?: string }): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/pm-review`, {
+    const res = await apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/pm-review`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['data:', `timeline:${taskId}`]);
+    return res;
   },
 
   runRollover: async (data?: {
@@ -1152,10 +1390,12 @@ export const taskMapApi = {
     fromDate?: string;
     toDate?: string;
   }): Promise<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord; retainedDate?: string; newDate?: string }> => {
-    return apiClient('/api/task-map/rollover', {
+    const res = await apiClient<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord; retainedDate?: string; newDate?: string }>('/api/task-map/rollover', {
       method: 'POST',
       body: JSON.stringify(data || {}),
     });
+    invalidateTaskMapCache(['data:', 'history-dates']);
+    return res;
   },
 
   runDailyRollover: async (data?: {
@@ -1163,48 +1403,69 @@ export const taskMapApi = {
     toDate?: string;
     retainCurrent?: boolean;
   }): Promise<DailyRolloverResult> => {
-    return apiClient<DailyRolloverResult>('/api/task-map/daily-rollover', {
+    const res = await apiClient<DailyRolloverResult>('/api/task-map/daily-rollover', {
       method: 'POST',
       body: JSON.stringify(data || {}),
     });
+    invalidateTaskMapCache(['data:', 'history-dates']);
+    return res;
   },
 
-  getHistoryDates: async (): Promise<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }> => {
-    return apiClient<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }>(`/api/task-map/history-dates?_t=${Date.now()}`);
+  getHistoryDates: async (options?: { force?: boolean }): Promise<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }> => {
+    return cachedRequest(
+      'history-dates',
+      TASK_MAP_CACHE_TTL.HISTORY_DATES,
+      () => apiClient<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }>('/api/task-map/history-dates'),
+      { force: options?.force }
+    );
   },
 
   updateTaskMeta: async (taskId: string, meta: { dontRollover?: boolean; handedOver?: boolean; stepOrder?: number; shift?: string }): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/meta`, {
+    const res = await apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/meta`, {
       method: 'PATCH',
       body: JSON.stringify(meta),
     });
+    invalidateTaskMapCache(['data:', `timeline:${taskId}`, 'task-desc:']);
+    return res;
   },
 
-  getLaunchData: async (params?: { start?: string; end?: string; signal?: AbortSignal }): Promise<LaunchMapDataResponse> => {
-    const q = new URLSearchParams();
-    if (params?.start) q.set('start', params.start);
-    if (params?.end) q.set('end', params.end);
-    const qs = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<LaunchMapDataResponse>(`/api/task-map/launch${qs}`, {
-      ...(params?.signal ? { signal: params.signal } : {}),
-    });
+  getLaunchData: async (params?: { start?: string; end?: string; signal?: AbortSignal; force?: boolean }): Promise<LaunchMapDataResponse> => {
+    const cacheKey = `launch-data:${params?.start || ''}::${params?.end || ''}`;
+    return cachedRequest<LaunchMapDataResponse>(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.LAUNCH_DATA,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.start) q.set('start', params.start);
+        if (params?.end) q.set('end', params.end);
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient<LaunchMapDataResponse>(`/api/task-map/launch${qs}`);
+      },
+      { force: params?.force, signal: params?.signal }
+    );
   },
 
-  getLaunchCandidates: async (params?: { q?: string; limit?: number; includeClosed?: boolean; signal?: AbortSignal }): Promise<{
+  getLaunchCandidates: async (params?: { q?: string; limit?: number; includeClosed?: boolean; signal?: AbortSignal; force?: boolean }): Promise<{
     success: boolean;
     candidates: LaunchMapLightItem[];
   }> => {
-    const q = new URLSearchParams();
-    if (params?.q) q.set('q', params.q);
-    if (params?.limit) q.set('limit', String(params.limit));
-    if (params?.includeClosed) q.set('includeClosed', 'true');
-    const qs = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`, {
-      ...(params?.signal ? { signal: params.signal } : {}),
-    });
+    const cacheKey = `launch-candidates:${(params?.q || '').trim().toLowerCase()}::${params?.limit ?? ''}::${Boolean(params?.includeClosed)}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.LAUNCH_CANDIDATES,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.q) q.set('q', params.q);
+        if (params?.limit) q.set('limit', String(params.limit));
+        if (params?.includeClosed) q.set('includeClosed', 'true');
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`);
+      },
+      { force: params?.force, signal: params?.signal }
+    );
   },
 
-  getMyDailyOtp: async (): Promise<{
+  getMyDailyOtp: async (options?: { force?: boolean }): Promise<{
     isPm: boolean;
     otp: string | null;
     date?: string;
@@ -1216,18 +1477,31 @@ export const taskMapApi = {
       timestamp: string;
     }>;
   }> => {
-    return apiClient(`/api/task-map/my-daily-otp?_t=${Date.now()}`);
+    return cachedRequest(
+      'daily-otp',
+      TASK_MAP_CACHE_TTL.DAILY_OTP,
+      () => apiClient('/api/task-map/my-daily-otp'),
+      { force: options?.force }
+    );
   },
 
   verifyClientOtp: async (data: { client: string; otp: string }): Promise<{ success: boolean; pmName?: string; error?: string }> => {
-    return apiClient<{ success: boolean; pmName?: string; error?: string }>(`/api/task-map/verify-client-otp`, {
+    const res = await apiClient<{ success: boolean; pmName?: string; error?: string }>('/api/task-map/verify-client-otp', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['daily-otp', `client-lock:${(data.client || '').trim().toLowerCase()}`]);
+    return res;
   },
 
-  getClientLockStatus: async (client: string): Promise<{ clientName: string; isLocked: boolean; isOvertime: boolean; hoursLogged?: number; weeklyLimit?: number }> => {
-    return apiClient(`/api/task-map/client-lock-status?client=${encodeURIComponent(client)}&_t=${Date.now()}`);
+  getClientLockStatus: async (client: string, options?: { force?: boolean }): Promise<{ clientName: string; isLocked: boolean; isOvertime: boolean; hoursLogged?: number; weeklyLimit?: number }> => {
+    const cacheKey = `client-lock:${(client || '').trim().toLowerCase()}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.CLIENT_LOCK,
+      () => apiClient(`/api/task-map/client-lock-status?client=${encodeURIComponent(client)}`),
+      { force: options?.force }
+    );
   },
 
   updateLaunchMeta: async (
@@ -1251,7 +1525,7 @@ export const taskMapApi = {
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{
+      const res = await apiClient<{
         success: boolean;
         launchMeta: LaunchMeta;
         effectiveLaunchDate: string | null;
@@ -1262,17 +1536,29 @@ export const taskMapApi = {
         method: 'PATCH',
         body: JSON.stringify(payload),
       });
+      invalidateTaskMapCache(['launch-data:', 'launch-candidates:', 'data:']);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
   },
 
-  getTimeline: async (taskId: string): Promise<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/timeline`);
+  getTimeline: async (taskId: string, options?: { force?: boolean }): Promise<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }> => {
+    return cachedRequest(
+      `timeline:${taskId}`,
+      TASK_MAP_CACHE_TTL.TIMELINE,
+      () => apiClient<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/timeline`),
+      { force: options?.force }
+    );
   },
 
-  getUpworkClients: async (): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>(`/api/task-map/upwork-clients?_t=${Date.now()}`);
+  getUpworkClients: async (options?: { force?: boolean }): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
+    return cachedRequest(
+      'upwork-clients',
+      TASK_MAP_CACHE_TTL.UPWORK_CLIENTS,
+      () => apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients'),
+      { force: options?.force }
+    );
   },
 
   toggleUpworkClient: async (data: {
@@ -1283,20 +1569,28 @@ export const taskMapApi = {
     clients?: string[];
     projectClients?: string[];
   }): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients', {
+    const res = await apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['upwork-clients', 'data:']);
+    return res;
   },
 
-  getUpworkActiveSessions: async (): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
-    return apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>(`/api/task-map/upwork-active?_t=${Date.now()}`);
+  getUpworkActiveSessions: async (options?: { force?: boolean }): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
+    return cachedRequest(
+      'upwork-active',
+      TASK_MAP_CACHE_TTL.UPWORK_ACTIVE,
+      () => apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>('/api/task-map/upwork-active'),
+      { force: options?.force }
+    );
   },
 
   getTaskDescription: async (params: {
     taskId?: string | null;
     title?: string | null;
     client?: string | null;
+    force?: boolean;
   }): Promise<{
     success: boolean;
     taskId: string | null;
@@ -1307,19 +1601,32 @@ export const taskMapApi = {
     subStatuses?: string[];
     description: string | null;
   }> => {
-    const q = new URLSearchParams();
-    if (params.taskId) q.set('taskId', params.taskId);
-    if (params.title) q.set('title', params.title);
-    if (params.client) q.set('client', params.client);
-    const qs = q.toString() ? `?${q.toString()}` : '';
-    return apiClient(`/api/task-map/task-description${qs}`);
+    const cacheKey = `task-desc:${params.taskId || ''}::${(params.title || '').trim().toLowerCase()}::${(params.client || '').trim().toLowerCase()}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.TASK_DESCRIPTION,
+      () => {
+        const q = new URLSearchParams();
+        if (params.taskId) q.set('taskId', params.taskId);
+        if (params.title) q.set('title', params.title);
+        if (params.client) q.set('client', params.client);
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient(`/api/task-map/task-description${qs}`);
+      },
+      { force: params.force }
+    );
   },
 
-  getPendingCrmFollowUps: async (): Promise<{
+  getPendingCrmFollowUps: async (options?: { force?: boolean }): Promise<{
     success: boolean;
     items: PendingCrmFollowUpItem[];
   }> => {
-    return apiClient(`/api/task-map/crm/follow-ups?_t=${Date.now()}`);
+    return cachedRequest(
+      'crm-follow-ups',
+      TASK_MAP_CACHE_TTL.CRM_FOLLOW_UPS,
+      () => apiClient('/api/task-map/crm/follow-ups'),
+      { force: options?.force }
+    );
   },
 
   acknowledgeCrmFollowUps: async (
@@ -1329,10 +1636,16 @@ export const taskMapApi = {
     count?: number;
     error?: string;
   }> => {
-    return apiClient('/api/task-map/crm/follow-ups/acknowledge', {
+    const res = await apiClient<{
+      success: boolean;
+      count?: number;
+      error?: string;
+    }>('/api/task-map/crm/follow-ups/acknowledge', {
       method: 'POST',
       body: JSON.stringify({ taskIds }),
     });
+    invalidateTaskMapCache(['crm-follow-ups']);
+    return res;
   },
 
   respondCrmFollowUp: async (
@@ -1348,10 +1661,19 @@ export const taskMapApi = {
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient(`/api/task-map/crm/follow-ups/${taskId}/respond`, {
+      const res = await apiClient<{
+        success: boolean;
+        task?: any;
+        comment?: any;
+        error?: string;
+        uncheckedAudits?: string[];
+        openSubtasks?: string[];
+      }>(`/api/task-map/crm/follow-ups/${taskId}/respond`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+      invalidateTaskMapCache(['crm-follow-ups', 'data:', `timeline:${taskId}`]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1395,7 +1717,7 @@ export const taskMapApi = {
 
     const isSplitAcrossMidnight = rows.length > 1;
 
-    return apiClient<{
+    const res = await apiClient<{
       success: boolean;
       rows: SpreadsheetScheduleRow[];
       log?: DailySheetLogItem | null;
@@ -1413,19 +1735,29 @@ export const taskMapApi = {
         isSplitAcrossMidnight,
       }),
     });
+    invalidateTaskMapCache(['data:', 'daily-sheet-logs:', 'upwork-active', 'user-sheet-activity:']);
+    return res;
   },
 
-  getDailySheetLogs: async (params?: { date?: string; maName?: string; search?: string }): Promise<{
+  getDailySheetLogs: async (params?: { date?: string; maName?: string; search?: string; force?: boolean }): Promise<{
     success: boolean;
     date: string;
     logs: DailySheetLogItem[];
   }> => {
-    const q = new URLSearchParams();
-    if (params?.date) q.set('date', params.date);
-    if (params?.maName) q.set('maName', params.maName);
-    if (params?.search) q.set('search', params.search);
-    q.set('_t', String(Date.now()));
-    return apiClient(`/api/task-map/sheets/logs?${q.toString()}`);
+    const cacheKey = `daily-sheet-logs:${params?.date || 'TODAY'}::${(params?.maName || '').trim().toLowerCase()}::${(params?.search || '').trim().toLowerCase()}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.DAILY_SHEET_LOGS,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.date) q.set('date', params.date);
+        if (params?.maName) q.set('maName', params.maName);
+        if (params?.search) q.set('search', params.search);
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient(`/api/task-map/sheets/logs${qs}`);
+      },
+      { force: params?.force }
+    );
   },
 
   createDailySheetLog: async (payload: {
@@ -1446,21 +1778,31 @@ export const taskMapApi = {
     taskUpdateAndDeliverables?: string | null;
     taskLink?: string | null;
   }): Promise<{ success: boolean; log: DailySheetLogItem }> => {
-    return apiClient('/api/task-map/sheets/logs', {
+    const res = await apiClient<{ success: boolean; log: DailySheetLogItem }>('/api/task-map/sheets/logs', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    invalidateTaskMapCache(['data:', 'daily-sheet-logs:', 'user-sheet-activity:']);
+    return res;
   },
 
-  getDailyScheduleConfig: async (userId?: string): Promise<{
+  getDailyScheduleConfig: async (userId?: string, options?: { force?: boolean }): Promise<{
     success: boolean;
     userId: string;
     userName: string | null;
     dailySheetUrl: string | null;
     spreadsheetId: string | null;
   }> => {
-    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
-    return apiClient(`/api/task-map/sheets/user-config${q}`);
+    const cacheKey = `daily-schedule-config:${userId || 'SELF'}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.DAILY_SCHEDULE_CONFIG,
+      () => {
+        const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+        return apiClient(`/api/task-map/sheets/user-config${q}`);
+      },
+      { force: options?.force }
+    );
   },
 
   checkSuperviseSession: async (payload: {
@@ -1472,21 +1814,30 @@ export const taskMapApi = {
     client?: string | null;
     note?: string | null;
   }): Promise<{ success: boolean; check: SuperviseCheckItem }> => {
-    return apiClient('/api/task-map/supervise/check', {
+    const res = await apiClient<{ success: boolean; check: SuperviseCheckItem }>('/api/task-map/supervise/check', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    invalidateTaskMapCache(['data:']);
+    return res;
   },
 
   uncheckSuperviseSession: async (sessionKey: string): Promise<{ success: boolean; sessionKey: string }> => {
-    return apiClient('/api/task-map/supervise/uncheck', {
+    const res = await apiClient<{ success: boolean; sessionKey: string }>('/api/task-map/supervise/uncheck', {
       method: 'POST',
       body: JSON.stringify({ sessionKey }),
     });
+    invalidateTaskMapCache(['data:']);
+    return res;
   },
 
-  checkUserSheetActivity: async (userId: string): Promise<UserSheetActivityStatus> => {
-    return apiClient<UserSheetActivityStatus>(`/api/task-map/users/${encodeURIComponent(userId)}/sheet-activity?_t=${Date.now()}`);
+  checkUserSheetActivity: async (userId: string, options?: { force?: boolean }): Promise<UserSheetActivityStatus> => {
+    return cachedRequest(
+      `user-sheet-activity:${userId}`,
+      TASK_MAP_CACHE_TTL.USER_SHEET_ACTIVITY,
+      () => apiClient<UserSheetActivityStatus>(`/api/task-map/users/${encodeURIComponent(userId)}/sheet-activity`),
+      { force: options?.force }
+    );
   },
 };
 
@@ -2453,9 +2804,12 @@ export function createEmptyUserBlock(params?: {
       timeOut: cleanTimeOut,
       isLive: isLiveAssumed,
       isMissingTime: Boolean(
-        params?.rowNumber &&
         !cleanTimeIn &&
-        (cleanTimeOut || (params?.status && params?.status.toLowerCase() !== 'in progress'))
+        !cleanTimeOut &&
+        (Boolean(params?.rowNumber) ||
+          assumedClient !== 'No client inputted' ||
+          assumedTitle !== 'No task inputted' ||
+          Boolean(params?.status))
       ),
       isUpwork: Boolean(params?.isUpwork),
       client: assumedClient,

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 're
 import { createPortal } from 'react-dom';
 import { Flag, ChevronDown, Check, CheckCircle2, Clock, Infinity as InfinityIcon } from 'lucide-react';
 import { DEFAULT_ESTIMATED_HOURS, formatEstimatedHours } from '@/components/modals/EstimatedHoursField';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, isHiddenBoardStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
 import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
@@ -642,7 +642,7 @@ export const CardStatusDropdown: React.FC<{
       ? fetchedStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
       : ALL_STATUSES;
     const excludeSet = new Set(excludeStatuses.map((s) => s.toUpperCase().trim()));
-    const filtered = raw.filter((s: string) => !excludeSet.has(s.toUpperCase().trim()));
+    const filtered = raw.filter((s: string) => !isHiddenBoardStatus(s) && !excludeSet.has(s.toUpperCase().trim()));
     return sortStatusesWithClosedAndKycAtEnd(filtered);
   }, [fetchedStatuses, excludeStatuses]);
 
@@ -1206,15 +1206,19 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
       hasManualUpworkTag
     );
 
-  // 1. Missing Time Alert: Red badge with infinity icon (only for active live working sessions, never on handed-over or available pool tasks)
-  if (prog?.isMissingTime && isLive && !isTaskHandedOver(task)) {
+  // 1. Missing Time Alert: Red badge with crossed-out time (when user started/entered task without Time In)
+  if (prog?.isMissingTime && !prog?.timeOut && isLive && !isTaskHandedOver(task)) {
     return (
       <div
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-400 font-bold text-[10px] shadow-xs select-none"
-        title="Missing Time! Status/Client entered without Time In"
+        className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/50 text-red-400 font-bold text-[10px] shadow-[0_0_8px_rgba(239,68,68,0.18)] select-none truncate max-w-full"
+        title="Missing Time In — user did not input a Time In on their Daily Schedule"
       >
-        <InfinityIcon className="size-3 text-red-500 animate-pulse shrink-0" />
-        <span className="font-mono">∞</span>
+        <span className="relative flex size-1.5 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+          <span className="relative inline-flex rounded-full size-1.5 bg-red-500" />
+        </span>
+        <span className="font-mono line-through decoration-red-400 decoration-[1.5px] opacity-90">--:--</span>
+        <span className="text-[9px] font-semibold text-red-300 truncate">No Time In</span>
       </div>
     );
   }

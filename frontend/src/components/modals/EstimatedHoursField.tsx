@@ -61,8 +61,8 @@ export function EstimatedHoursField({ hours, canEdit, onSave }: EstimatedHoursFi
   };
 
   return (
-    <div className="flex items-center gap-3 min-h-[32px]">
-      <div className="flex items-center gap-2 w-28 shrink-0">
+    <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-6">
+      <div className="flex items-center gap-2 w-24 shrink-0">
         <Clock className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
         <span className="text-[12px] text-zinc-500">Est. time</span>
       </div>

@@ -4,7 +4,7 @@ import { spacesApi, tasksApi } from '@/api';
 import { getRoles } from '@/api/roles';
 import { usersApi } from '@/api/users';
 import { draftsApi, TaskDraft } from '@/api/drafts';
-import { UpworkSession } from '@/api/taskMap';
+import { clearTaskMapApiCache, UpworkSession } from '@/api/taskMap';
 
 const SPACES_CACHE_KEY = 'nexus_spaces_cache';
 const TASKS_CACHE_KEY = 'nexus_tasks_cache';
@@ -33,6 +33,7 @@ export function clearAllCaches() {
       }
     }
     keysToRemove.forEach((k) => localStorage.removeItem(k));
+    clearTaskMapApiCache();
   } catch {}
 }
 

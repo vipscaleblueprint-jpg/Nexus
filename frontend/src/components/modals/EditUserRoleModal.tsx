@@ -28,6 +28,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
 
   const [starRating, setStarRating] = useState<number>(1);
   const [isActive, setIsActive] = useState(true);
+  const [shiftSchedule, setShiftSchedule] = useState('');
 
   const [availableRoles, setAvailableRoles] = useState<WorkspaceRole[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
@@ -53,6 +54,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
       setRoles(user.roles || []);
       setStarRating(user.starRating || 1);
       setIsActive(user.isActive ?? true);
+      setShiftSchedule(user.shiftSchedule || '');
       setError(null);
       setSuccess(false);
     }
@@ -112,6 +114,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
         roles,
         starRating,
         isActive,
+        shiftSchedule: shiftSchedule.trim(),
       });
 
       setSuccess(true);
@@ -461,6 +464,20 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
                 {isActive ? 'Active' : 'Deactivated'}
               </button>
             </div>
+          </div>
+
+          {/* Shift Schedule */}
+          <div>
+            <label className="block text-[11px] font-medium text-zinc-300 mb-1.5">
+              Shift Schedule <span className="text-zinc-500 font-normal">(e.g. M-F 8AM to 5PM, T-S 5PM to 2AM)</span>
+            </label>
+            <input
+              type="text"
+              value={shiftSchedule}
+              onChange={(e) => setShiftSchedule(e.target.value)}
+              placeholder="M-F 9AM to 4PM"
+              className="w-full h-[38px] px-3 rounded-xl bg-background border border-zinc-800 focus:border-indigo-500/60 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none transition-colors"
+            />
           </div>
 
           {/* Footer Actions */}

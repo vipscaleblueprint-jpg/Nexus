@@ -343,7 +343,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
       const pool = [...(allUsers || []), ...(shiftUsers || [])];
       candidates = pool.filter((u) => u && selectedCustomMAs.includes(u.id));
     } else if (!isAllShifts && !isCustomShift) {
-      candidates = [...(shiftUsers || [])];
+      candidates = [
+        ...(currentUser?.id && (isCrmUser(currentUser) || hasCrmAccess(currentUser)) ? [currentUser] : []),
+        ...(shiftUsers || []),
+      ];
     } else {
       candidates = [
         ...(currentUser ? [currentUser] : []),
@@ -358,7 +361,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       if (
         isCrmUser(u) ||
         (isCustomShift && selectedCustomMAs.includes(u.id)) ||
-        (isAllShifts && currentUser?.id === u.id && hasCrmAccess(currentUser))
+        (currentUser?.id === u.id && hasCrmAccess(currentUser))
       ) {
         map.set(u.id, u);
       }
@@ -455,6 +458,16 @@ export const TaskMapCrmView: React.FC<Props> = ({
     if (isCrmCompleted(t)) return false;
     const s = (t.status || '').toUpperCase().trim();
     if (s !== 'WAITING' && s !== 'SENT') return false;
+    const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
+      st.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    if (
+      mapStatusesNorm.includes('FOLLOWUP') ||
+      mapStatusesNorm.includes('CRMNEEDEDTOFOLLOWUP') ||
+      mapStatusesNorm.includes('CRMFOLLOWUP')
+    ) {
+      return false;
+    }
     return isTaskInClientDashboard(t, clients);
   };
 
@@ -490,9 +503,49 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return false;
   };
 
-  // General CRM Pool: tasks needing client outreach / CRM / Ask Client that are not yet assigned to a specific CRM member
+  // Helper: check if a task is assigned to any CRM member
+  const isAssignedToAnyCrmMember = (t: TaskMapItem) =>
+    crmUsers.some((u) => isTaskAssignedToCrmMember(t, u)) ||
+    (allUsers || []).some((u) => isCrmUser(u) && isTaskAssignedToCrmMember(t, u));
+
+  // Check if task belongs in "CRM Needed to Follow Up" column
+  const isCrmNeededToFollowUp = (t: TaskMapItem) => {
+    if (isCrmCompleted(t)) return false;
+    if (isAssignedToAnyCrmMember(t)) return false;
+    const s = (t.status || '').toUpperCase().trim();
+    const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
+      st.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    return (
+      s === 'CRM NEEDED TO FOLLOW UP' ||
+      s === 'CRM_FOLLOW_UP' ||
+      mapStatusesNorm.includes('FOLLOWUP') ||
+      mapStatusesNorm.includes('CRMNEEDEDTOFOLLOWUP') ||
+      mapStatusesNorm.includes('CRMFOLLOWUP')
+    );
+  };
+
+  // Check if task belongs in "CRM Needed to Send" column
+  const isCrmNeededToSend = (t: TaskMapItem) => {
+    if (isCrmCompleted(t) || isCrmSent(t) || isCrmNeededToFollowUp(t)) return false;
+    if (isAssignedToAnyCrmMember(t)) return false;
+    const s = (t.status || '').toUpperCase().trim();
+    const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
+      st.toUpperCase().replace(/[\s_-]+/g, '')
+    );
+    return (
+      s === 'CRM NEEDED TO SEND' ||
+      s === 'CRM_TO_SEND' ||
+      mapStatusesNorm.includes('TOSEND') ||
+      mapStatusesNorm.includes('READYTOSEND') ||
+      mapStatusesNorm.includes('CRMNEEDEDTOSEND') ||
+      mapStatusesNorm.includes('CRMTOSEND')
+    );
+  };
+
+  // General CRM Pool: tasks needing client outreach / CRM / Ask Client not yet in To Send, Follow Up, or a CRM member
   const isGeneralCrmPool = (t: TaskMapItem) => {
-    if (isCrmCompleted(t) || isCrmSent(t)) return false;
+    if (isCrmCompleted(t) || isCrmSent(t) || isCrmNeededToSend(t) || isCrmNeededToFollowUp(t)) return false;
     const s = (t.status || '').toUpperCase().trim();
     const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
       st.toUpperCase().replace(/[\s_-]+/g, '')
@@ -505,10 +558,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       s === 'CRM NEEDED TO FOLLOW UP' ||
       s === 'CRM_FOLLOW_UP';
     if (!isCrm && !hasAskClient) return false;
-    if (
-      crmUsers.some((u) => isTaskAssignedToCrmMember(t, u)) ||
-      (allUsers || []).some((u) => isCrmUser(u) && isTaskAssignedToCrmMember(t, u))
-    ) {
+    if (isAssignedToAnyCrmMember(t)) {
       return false;
     }
 
@@ -516,6 +566,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
   };
 
   const poolTasks = filteredCrmTasks.filter(isGeneralCrmPool);
+  const toSendTasks = filteredCrmTasks.filter(isCrmNeededToSend);
+  const followUpTasks = filteredCrmTasks.filter(isCrmNeededToFollowUp);
   const sentTasks = filteredCrmTasks.filter(isCrmSent);
   const completedTasks = filteredCrmTasks.filter((t) => isCrmCompleted(t));
 
@@ -551,7 +603,19 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
     if (targetColumnId === 'col-crm-pool') {
       updatedStatuses = updatedStatuses.filter(
-        (s) => !['SENT', 'SENT BUT WAITING', 'OUTREACH SENT', 'CLIENT SENT', 'WAITING'].includes(s.toUpperCase().trim())
+        (s) =>
+          ![
+            'SENT',
+            'SENT BUT WAITING',
+            'OUTREACH SENT',
+            'CLIENT SENT',
+            'WAITING',
+            'TO SEND',
+            'READY TO SEND',
+            'FOLLOW UP',
+            'CRM NEEDED TO SEND',
+            'CRM NEEDED TO FOLLOW UP',
+          ].includes(s.toUpperCase().trim())
       );
       if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
       toast.info('Task moved to General CRM Pool');
@@ -597,6 +661,61 @@ export const TaskMapCrmView: React.FC<Props> = ({
           return;
         }
       }
+      if (onTaskUpdate) {
+        await onTaskUpdate(taskId, { assigneeId: null, status: 'CRM' });
+      } else {
+        await tasksApi.updateTask(taskId, { assigneeId: null, status: 'CRM' } as any).catch(console.error);
+        onDataRefresh();
+      }
+    } else if (targetColumnId === 'col-crm-to-send' || targetColumnId === 'col-crm-follow-up') {
+      const isToSendCol = targetColumnId === 'col-crm-to-send';
+      const targetSubLabel = isToSendCol ? 'To send' : 'Follow up';
+      const colDisplayName = isToSendCol ? 'CRM Needed to Send' : 'CRM Needed to Follow Up';
+
+      if ((task.status || '').toUpperCase() !== 'CRM') {
+        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
+        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
+        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+          try {
+            const fresh = await tasksApi.getTask(task.id);
+            if (fresh?.task) {
+              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
+              if (freshCheck.allowed) {
+                transitionCheck = freshCheck;
+                useAppStore.getState().updateTask(fresh.task);
+              }
+            }
+          } catch {
+            // fallback
+          }
+        }
+        if (!transitionCheck.allowed) {
+          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
+            window.dispatchEvent(
+              new CustomEvent('task:highlight-audits', {
+                detail: {
+                  taskId: task.id,
+                  targetStatus: 'CRM',
+                  uncheckedAudits: transitionCheck.uncheckedAudits,
+                  openSubtasks: transitionCheck.openSubtasks,
+                },
+              })
+            );
+          }
+          setBlockedAuditAlert({
+            isOpen: true,
+            task,
+            targetStatus: 'CRM',
+            uncheckedAudits: transitionCheck.uncheckedAudits,
+            openSubtasks: transitionCheck.openSubtasks,
+          });
+          toast.error(transitionCheck.reason || `Cannot move task to ${colDisplayName}`);
+          return;
+        }
+      }
+
+      toast.success(`Task moved to ${colDisplayName}`);
+      onStatusChange(taskId, [targetSubLabel]);
       if (onTaskUpdate) {
         await onTaskUpdate(taskId, { assigneeId: null, status: 'CRM' });
       } else {
@@ -1280,6 +1399,24 @@ export const TaskMapCrmView: React.FC<Props> = ({
       dotColor: 'bg-[#22A3AE]',
       tasks: poolTasks,
     },
+    {
+      id: 'col-crm-to-send',
+      title: 'CRM Needed to Send',
+      subtitle: 'Client outreach ready & needed to send',
+      badgeLabel: 'To Send',
+      badgeClass: 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+      dotColor: 'bg-[#0284c7]',
+      tasks: toSendTasks,
+    },
+    {
+      id: 'col-crm-follow-up',
+      title: 'CRM Needed to Follow Up',
+      subtitle: 'Client outreach needing follow up',
+      badgeLabel: 'Follow Up',
+      badgeClass: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
+      dotColor: 'bg-[#6366F1]',
+      tasks: followUpTasks,
+    },
     ...crmUsers.map((member) => {
       const memberTasks = filteredCrmTasks.filter((t) => isTaskAssignedToCrmMember(t, member));
       return {
@@ -1330,6 +1467,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
   };
 
   const poolCol = allColumns.find((c) => c.id === 'col-crm-pool') || allColumns[0];
+  const toSendCol = allColumns.find((c) => c.id === 'col-crm-to-send');
+  const followUpCol = allColumns.find((c) => c.id === 'col-crm-follow-up');
   const sentCol = allColumns.find((c) => c.id === 'col-crm-sent');
   const closedCol = allColumns.find((c) => c.id === 'col-crm-closed');
   const memberCols = allColumns.filter((c) => c.isMember);
@@ -1366,6 +1505,8 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
   const orderedColumns: CrmColumnDef[] = [
     ...(poolCol ? [poolCol] : []),
+    ...(toSendCol ? [toSendCol] : []),
+    ...(followUpCol ? [followUpCol] : []),
     ...(sentCol ? [sentCol] : []),
     ...sortedMemberCols,
     ...(closedCol ? [closedCol] : []),
@@ -1788,7 +1929,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                 ? 'No sent tasks'
                                 : col.id === 'col-crm-closed'
                                   ? 'No closed tasks'
-                                  : 'No CRM tasks'}
+                                  : col.id === 'col-crm-to-send'
+                                    ? 'No tasks needed to send'
+                                    : col.id === 'col-crm-follow-up'
+                                      ? 'No follow-up tasks'
+                                      : 'No CRM tasks'}
                             </span>
                             <span className="text-[11px] text-zinc-500">
                               {searchQuery || activePriority !== 'ALL'
@@ -1797,7 +1942,11 @@ export const TaskMapCrmView: React.FC<Props> = ({
                                   ? 'Drop tasks here when outreach has been sent to client'
                                   : col.id === 'col-crm-closed'
                                     ? 'Closed and verified tasks appear here'
-                                    : `Drop client communication tasks here to assign to ${col.title}`}
+                                    : col.id === 'col-crm-to-send'
+                                      ? 'Drop tasks here that are ready and needed to send'
+                                      : col.id === 'col-crm-follow-up'
+                                        ? 'Drop tasks here that need client follow up'
+                                        : `Drop client communication tasks here to assign to ${col.title}`}
                             </span>
                             {searchMatches.length > 0 && (
                               <div className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 p-2 text-left space-y-1">

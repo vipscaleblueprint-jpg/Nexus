@@ -334,8 +334,28 @@ export const getAuditEligibility = async (req: Request, res: Response) => {
     const onShiftUserIds = auditors.filter((u) => isUserInShift(u, activeShift, configs)).map((u) => u.id);
 
     const blocked: Record<string, string[]> = {};
+    const subtaskTokens = taskIds.filter((id) => id.startsWith('subtask:'));
+    const subtaskParentMap = new Map<string, string>();
+    if (subtaskTokens.length > 0) {
+      const subIds = subtaskTokens.map((id) => id.slice('subtask:'.length));
+      const subs = await prisma.subtask.findMany({
+        where: { id: { in: subIds } },
+        select: { id: true, taskId: true },
+      });
+      for (const s of subs) {
+        subtaskParentMap.set(s.id, s.taskId);
+      }
+    }
     for (const taskId of taskIds) {
-      const { isUserBlocked } = await getTaskCollaboratorBlock(taskId);
+      let resolvedTaskId = taskId;
+      let resolvedSubtaskId: string | undefined;
+      if (taskId.startsWith('subtask:')) {
+        resolvedSubtaskId = taskId.slice('subtask:'.length);
+        const parentId = subtaskParentMap.get(resolvedSubtaskId);
+        if (!parentId) continue;
+        resolvedTaskId = parentId;
+      }
+      const { isUserBlocked } = await getTaskCollaboratorBlock(resolvedTaskId, resolvedSubtaskId);
       const ids = auditors.filter((u) => isUserBlocked(u)).map((u) => u.id);
       if (ids.length) blocked[taskId] = ids;
     }

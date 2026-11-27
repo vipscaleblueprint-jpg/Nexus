@@ -32,6 +32,7 @@ import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { tasksApi } from '@/api/tasks';
+import { isHiddenBoardStatus } from '@/lib/taskTokens';
 const EMPTY_ARRAY: any[] = [];
 
 interface Props {
@@ -803,12 +804,15 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const tasksByStatus = useMemo(() => {
     const canonicalStatus: Record<string, string> = {};
     localStatuses.forEach((s: any) => {
-      if (s.name) canonicalStatus[s.name.trim().toUpperCase()] = s.name;
+      if (s.name && !isHiddenBoardStatus(s.name)) {
+        canonicalStatus[s.name.trim().toUpperCase()] = s.name;
+      }
     });
     const filteredTasks = isGalaxyFilterActive ? localTasks.filter((t) => isGalaxyTask(t)) : localTasks;
     const map = filteredTasks.reduce((acc: Record<string, Task[]>, task) => {
       const raw = task.status || 'PENDING';
-      const status = canonicalStatus[raw.trim().toUpperCase()] || raw;
+      const normalizedRaw = isHiddenBoardStatus(raw) ? 'CRM' : raw;
+      const status = canonicalStatus[normalizedRaw.trim().toUpperCase()] || normalizedRaw;
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);
       return acc;
@@ -841,7 +845,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     // 1. Process customGroups in exact order from DB
     customGroups.forEach((groupName) => {
       const groupStatuses = localStatuses
-        .filter((s: any) => s.groupName === groupName)
+        .filter((s: any) => s.groupName === groupName && !isHiddenBoardStatus(s.name))
         .map((s: any) => s.name);
 
       const styles = GROUP_STYLES[groupName] || {
@@ -868,8 +872,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     // 2. Catch-all for any task status or db status that doesn't belong to any group at all
     const activeCustom = Array.from(
       new Set([
-        ...Object.keys(tasksByStatus).filter((s) => !processedStatuses.has(s)),
-        ...localStatuses.filter((s: any) => !processedStatuses.has(s.name)).map((s: any) => s.name),
+        ...Object.keys(tasksByStatus).filter((s) => !processedStatuses.has(s) && !isHiddenBoardStatus(s)),
+        ...localStatuses.filter((s: any) => !processedStatuses.has(s.name) && !isHiddenBoardStatus(s.name)).map((s: any) => s.name),
       ])
     );
 

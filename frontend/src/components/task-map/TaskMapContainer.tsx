@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   taskMapApi,
   TaskMapItem,
@@ -84,20 +84,116 @@ const getTodayDateStr = () => {
   }
 };
 
+interface TaskMapCacheEntry {
+  timestamp: number;
+  tasks: TaskMapItem[];
+  availablePool: TaskMapItem[];
+  options: TaskMapOption[];
+  shifts: TaskMapShift[];
+  activeShift: string;
+  allUsers: any[];
+  shiftUsers: any[];
+  activeUpworkSessions: UpworkSession[];
+  dailySheetLogs: any[];
+  superviseChecks: any[];
+  allDbClients: Array<{ id: string; name: string }>;
+  isHistory: boolean;
+  maActiveSessions?: Record<string, any>;
+}
+
+const TASK_MAP_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+const TASK_MAP_MEMORY_CACHE_LIMIT = 10;
+const TASK_MAP_SESSION_PREFIX = 'nexus_taskmap_swr_v1:';
+const taskMapMemoryCache = new Map<string, TaskMapCacheEntry>();
+let cachedHistoryDates: string[] | null = null;
+
+const normalizeShiftForCache = (shift: string): string => {
+  const tokens = (shift || '')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  if (tokens.length === 0) return 'DEFAULT';
+  if (tokens.length === 1 && tokens[0] === 'CUSTOM') return 'ALL';
+  return tokens.filter((s) => s !== 'CUSTOM').join(',') || 'ALL';
+};
+
+const getTaskMapCacheKey = (shift: string, date: string): string =>
+  `${normalizeShiftForCache(shift)}::${date}`;
+
+const readTaskMapCache = (key: string): TaskMapCacheEntry | null => {
+  const now = Date.now();
+  const mem = taskMapMemoryCache.get(key);
+  if (mem && now - mem.timestamp < TASK_MAP_CACHE_MAX_AGE_MS) {
+    return mem;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = sessionStorage.getItem(`${TASK_MAP_SESSION_PREFIX}${key}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as TaskMapCacheEntry;
+        if (parsed && typeof parsed.timestamp === 'number' && now - parsed.timestamp < TASK_MAP_CACHE_MAX_AGE_MS) {
+          taskMapMemoryCache.set(key, parsed);
+          return parsed;
+        }
+        sessionStorage.removeItem(`${TASK_MAP_SESSION_PREFIX}${key}`);
+      }
+    } catch {
+      // Ignore storage access / parse errors
+    }
+  }
+  return null;
+};
+
+const writeTaskMapCache = (key: string, entry: TaskMapCacheEntry, persistToSession = true) => {
+  taskMapMemoryCache.set(key, entry);
+  if (taskMapMemoryCache.size > TASK_MAP_MEMORY_CACHE_LIMIT) {
+    const oldestKey = taskMapMemoryCache.keys().next().value;
+    if (oldestKey) taskMapMemoryCache.delete(oldestKey);
+  }
+  if (persistToSession && typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem(`${TASK_MAP_SESSION_PREFIX}${key}`, JSON.stringify(entry));
+    } catch {
+      // Quota exceeded or private mode — keep in-memory cache only
+    }
+  }
+};
+
 export const TaskMapContainer: React.FC = () => {
-  const [tasks, setTasks] = useState<TaskMapItem[]>([]);
-  const [availablePool, setAvailablePool] = useState<TaskMapItem[]>([]);
-  const availablePoolRef = useRef<TaskMapItem[]>([]);
+  const initialQueryParams = useMemo(() => {
+    let qShift = '';
+    let qDate = '';
+    if (typeof window !== 'undefined') {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        qShift = (urlParams.get('shift') || '').trim().toUpperCase();
+        qDate = (urlParams.get('date') || '').trim();
+      } catch { }
+    }
+    const date = qDate || getTodayDateStr();
+    const cached = readTaskMapCache(getTaskMapCacheKey(qShift, date));
+    return { qShift, qDate, date, cached };
+  }, []);
+
+  const initialCache = initialQueryParams.cached;
+
+  const [tasks, setTasks] = useState<TaskMapItem[]>(() => initialCache?.tasks || []);
+  const [availablePool, setAvailablePool] = useState<TaskMapItem[]>(() => initialCache?.availablePool || []);
+  const availablePoolRef = useRef<TaskMapItem[]>(initialCache?.availablePool || []);
   useEffect(() => {
     availablePoolRef.current = availablePool;
   }, [availablePool]);
-  const [options, setOptions] = useState<TaskMapOption[]>([]);
-  const [shifts, setShifts] = useState<TaskMapShift[]>([]);
-  const [activeShift, setActiveShift] = useState<string>('');
-  const [allUsers, setAllUsers] = useState<any[]>([]);
-  const [shiftUsers, setShiftUsers] = useState<any[]>([]);
-  const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>(() => useAppStore.getState().activeUpworkSessions || []);
-  const [allDbClients, setAllDbClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [options, setOptions] = useState<TaskMapOption[]>(() => initialCache?.options || []);
+  const [shifts, setShifts] = useState<TaskMapShift[]>(() => initialCache?.shifts || []);
+  const [activeShift, setActiveShift] = useState<string>(() => initialCache?.activeShift || '');
+  const [allUsers, setAllUsers] = useState<any[]>(() => initialCache?.allUsers || []);
+  const [shiftUsers, setShiftUsers] = useState<any[]>(() => initialCache?.shiftUsers || []);
+  const [activeUpworkSessions, setActiveUpworkSessions] = useState<UpworkSession[]>(
+    () => initialCache?.activeUpworkSessions || useAppStore.getState().activeUpworkSessions || []
+  );
+  const [allDbClients, setAllDbClients] = useState<Array<{ id: string; name: string }>>(
+    () => initialCache?.allDbClients || []
+  );
   const currentUser = useAppStore((s) => s.currentUser);
   const upworkClients = useAppStore((s) => s.upworkClients);
   const upworkProjectClients = useAppStore((s) => s.upworkProjectClients);
@@ -149,44 +245,23 @@ export const TaskMapContainer: React.FC = () => {
   >(new Map());
 
   // User manual selection tracker: ensures automatic latest-date navigation & initial active-shift sync only apply before manual change
-  const userSelectedDateRef = useRef<boolean>(false);
-  const hasManuallySelectedShiftRef = useRef<boolean>(false);
+  const userSelectedDateRef = useRef<boolean>(Boolean(initialQueryParams.qDate));
+  const hasManuallySelectedShiftRef = useRef<boolean>(Boolean(initialQueryParams.qShift));
 
   // Shift, Date, Client & View mode state (defaults to live Audit Shift from Manila Time unless ?shift= is passed)
-  const [currentShift, setCurrentShift] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const qShift = new URLSearchParams(window.location.search).get('shift');
-        if (qShift) {
-          hasManuallySelectedShiftRef.current = true;
-          return qShift.trim().toUpperCase();
-        }
-      } catch { }
-    }
-    return '';
-  });
+  const [currentShift, setCurrentShift] = useState<string>(
+    () => initialQueryParams.qShift || initialCache?.activeShift || ''
+  );
 
   const handleShiftChange = useCallback((nextShift: string) => {
     hasManuallySelectedShiftRef.current = true;
     setCurrentShift(nextShift);
   }, []);
-  const [currentDate, setCurrentDate] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const qDate = urlParams.get('date');
-        if (qDate) {
-          userSelectedDateRef.current = true;
-          return qDate.trim();
-        }
-      } catch { }
-    }
-    return getTodayDateStr();
-  });
+  const [currentDate, setCurrentDate] = useState<string>(() => initialQueryParams.date);
   const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS'>('BOARD');
   const [hasOpenedDailyTracker, setHasOpenedDailyTracker] = useState(false);
-  const [dailySheetLogs, setDailySheetLogs] = useState<any[]>([]);
-  const [superviseChecks, setSuperviseChecks] = useState<any[]>([]);
+  const [dailySheetLogs, setDailySheetLogs] = useState<any[]>(() => initialCache?.dailySheetLogs || []);
+  const [superviseChecks, setSuperviseChecks] = useState<any[]>(() => initialCache?.superviseChecks || []);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
   const [showAdminTasks, setShowAdminTasks] = useState<boolean>(false);
@@ -206,13 +281,13 @@ export const TaskMapContainer: React.FC = () => {
   }, []);
 
   // Daily Rollover & Historical Archive State
-  const [isHistoryView, setIsHistoryView] = useState<boolean>(false);
-  const [historyDates, setHistoryDates] = useState<string[]>([]);
+  const [isHistoryView, setIsHistoryView] = useState<boolean>(() => Boolean(initialCache?.isHistory));
+  const [historyDates, setHistoryDates] = useState<string[]>(() => cachedHistoryDates || []);
   const [isRollingOver, setIsRollingOver] = useState<boolean>(false);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => !initialCache);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const hasLoadedOnceRef = useRef<boolean>(false);
+  const hasLoadedOnceRef = useRef<boolean>(Boolean(initialCache));
   const loadAbortRef = useRef<AbortController | null>(null);
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const retryAttemptRef = useRef<number>(0);
@@ -377,7 +452,7 @@ export const TaskMapContainer: React.FC = () => {
   // Track pending optimistic drag-and-drop assignments so background refreshes never snap cards back
   const pendingAssignRef = useRef<Map<string, { task: TaskMapItem; targetUserId: string | null; timestamp: number }>>(new Map());
 
-  // Fetch data
+  // Fetch data (Stale-While-Revalidate: hydrates instantly from cache, revalidates silently in background)
   const loadData = useCallback(async (silent = false) => {
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
@@ -390,26 +465,51 @@ export const TaskMapContainer: React.FC = () => {
     const controller = new AbortController();
     loadAbortRef.current = controller;
 
+    const shiftTokens = (currentShift || '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const isCustomOnly = shiftTokens.length === 1 && shiftTokens[0] === 'CUSTOM';
+    const apiShift = shiftTokens.length === 0
+      ? undefined
+      : isCustomOnly
+      ? 'ALL'
+      : shiftTokens.filter((s) => s !== 'CUSTOM').join(',') || 'ALL';
+
+    const cacheKey = getTaskMapCacheKey(currentShift, currentDate);
+    const cachedEntry = readTaskMapCache(cacheKey);
+    if (cachedEntry && !silent) {
+      hasLoadedOnceRef.current = true;
+      setTasks(cachedEntry.tasks);
+      setAvailablePool(cachedEntry.availablePool);
+      setOptions(cachedEntry.options);
+      setShifts(cachedEntry.shifts);
+      if (cachedEntry.activeShift) setActiveShift(cachedEntry.activeShift);
+      setAllUsers(cachedEntry.allUsers);
+      setShiftUsers(cachedEntry.shiftUsers);
+      setActiveUpworkSessions(cachedEntry.activeUpworkSessions);
+      setDailySheetLogs(cachedEntry.dailySheetLogs);
+      setSuperviseChecks(cachedEntry.superviseChecks);
+      setAllDbClients(cachedEntry.allDbClients);
+      setIsHistoryView(cachedEntry.isHistory);
+      if (cachedEntry.maActiveSessions && Object.keys(useAppStore.getState().maActiveSessions || {}).length === 0) {
+        useAppStore.getState().setMaActiveSessions(cachedEntry.maActiveSessions);
+      }
+      setLoading(false);
+      // Revalidate silently in the background without flashing any loader
+      silent = true;
+    }
+
     if (!silent) {
       setLoading(true);
     }
     try {
-      const shiftTokens = (currentShift || '')
-        .split(',')
-        .map((s) => s.trim().toUpperCase())
-        .filter(Boolean);
-      const isCustomOnly = shiftTokens.length === 1 && shiftTokens[0] === 'CUSTOM';
-      const apiShift = shiftTokens.length === 0
-        ? undefined
-        : isCustomOnly
-        ? 'ALL'
-        : shiftTokens.filter((s) => s !== 'CUSTOM').join(',') || 'ALL';
-
       const res = await taskMapApi.getData({
         ...(apiShift ? { shift: apiShift } : {}),
         date: currentDate,
         signal: controller.signal,
         timeoutMs: 25000,
+        force: silent,
       });
 
       if (controller.signal.aborted || loadAbortRef.current !== controller) {
@@ -428,64 +528,61 @@ export const TaskMapContainer: React.FC = () => {
         };
 
         // Merge with local pending optimistic updates so background refreshes never flicker or uncheck
-        setTasks(() => {
-          const serverTasks = res.tasks || [];
-          const nowTs = Date.now();
-          const mapped = serverTasks.map((st) => {
-            const pendingAssign = pendingAssignRef.current.get(st.id);
-            if (pendingAssign && nowTs - pendingAssign.timestamp < 3500) {
-              return pendingAssign.task;
-            }
-            const pending = pendingUpdatesRef.current.get(st.id);
-            const rawStatuses = pending && nowTs - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
-            const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
-            return applyLiveWorkingTaskStatus({
-              ...st,
-              taskMap: {
-                ...st.taskMap,
-                statuses: sanitizeStatuses(rawStatuses, st.status, isAssigned),
-              },
-            });
+        const nowTs = Date.now();
+        const serverTasks = res.tasks || [];
+        const nextMappedTasks = serverTasks.map((st) => {
+          const pendingAssign = pendingAssignRef.current.get(st.id);
+          if (pendingAssign && nowTs - pendingAssign.timestamp < 3500) {
+            return pendingAssign.task;
+          }
+          const pending = pendingUpdatesRef.current.get(st.id);
+          const rawStatuses = pending && nowTs - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
+          const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
+          return applyLiveWorkingTaskStatus({
+            ...st,
+            taskMap: {
+              ...st.taskMap,
+              statuses: sanitizeStatuses(rawStatuses, st.status, isAssigned),
+            },
           });
-          // Preserve tasks optimistically dragged out of Available Pool that aren't in serverTasks yet
-          pendingAssignRef.current.forEach((pendingAssign, pId) => {
-            if (
-              nowTs - pendingAssign.timestamp < 3500 &&
-              pendingAssign.targetUserId !== null &&
-              !mapped.some((t) => t.id === pId)
-            ) {
-              mapped.unshift(pendingAssign.task);
-            }
-          });
-          return mapped;
         });
+        // Preserve tasks optimistically dragged out of Available Pool that aren't in serverTasks yet
+        pendingAssignRef.current.forEach((pendingAssign, pId) => {
+          if (
+            nowTs - pendingAssign.timestamp < 3500 &&
+            pendingAssign.targetUserId !== null &&
+            !nextMappedTasks.some((t) => t.id === pId)
+          ) {
+            nextMappedTasks.unshift(pendingAssign.task);
+          }
+        });
+        setTasks(nextMappedTasks);
 
-        setAvailablePool(() => {
-          const serverPool = res.availablePool || [];
-          const filteredServerPool = serverPool.filter((st) => {
-            const pendingAssign = pendingAssignRef.current.get(st.id);
-            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500 && pendingAssign.targetUserId !== null) {
-              return false;
-            }
-            return true;
-          });
-          return filteredServerPool.map((st) => {
-            const pendingAssign = pendingAssignRef.current.get(st.id);
-            if (pendingAssign && Date.now() - pendingAssign.timestamp < 3500) {
-              return pendingAssign.task;
-            }
-            const pending = pendingUpdatesRef.current.get(st.id);
-            const rawStatuses = pending && Date.now() - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
-            const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
-            return applyLiveWorkingTaskStatus({
-              ...st,
-              taskMap: {
-                ...st.taskMap,
-                statuses: sanitizeStatuses(rawStatuses, st.status, isAssigned),
-              },
-            });
+        const serverPool = res.availablePool || [];
+        const filteredServerPool = serverPool.filter((st) => {
+          const pendingAssign = pendingAssignRef.current.get(st.id);
+          if (pendingAssign && nowTs - pendingAssign.timestamp < 3500 && pendingAssign.targetUserId !== null) {
+            return false;
+          }
+          return true;
+        });
+        const nextMappedPool = filteredServerPool.map((st) => {
+          const pendingAssign = pendingAssignRef.current.get(st.id);
+          if (pendingAssign && nowTs - pendingAssign.timestamp < 3500) {
+            return pendingAssign.task;
+          }
+          const pending = pendingUpdatesRef.current.get(st.id);
+          const rawStatuses = pending && nowTs - pending.timestamp < 4000 ? pending.statuses : st.taskMap?.statuses;
+          const isAssigned = Boolean(getEffectiveTaskMapHandlerId(st));
+          return applyLiveWorkingTaskStatus({
+            ...st,
+            taskMap: {
+              ...st.taskMap,
+              statuses: sanitizeStatuses(rawStatuses, st.status, isAssigned),
+            },
           });
         });
+        setAvailablePool(nextMappedPool);
 
         setOptions(res.options || []);
         setShifts(res.shifts || []);
@@ -616,6 +713,29 @@ export const TaskMapContainer: React.FC = () => {
           setCurrentShift(res.activeShift);
         }
         setIsHistoryView(Boolean(res.isHistory));
+
+        // Persist into SWR cache so navigating back or switching shifts/dates renders instantaneously
+        const nextCacheEntry: TaskMapCacheEntry = {
+          timestamp: Date.now(),
+          tasks: nextMappedTasks,
+          availablePool: nextMappedPool,
+          options: res.options || [],
+          shifts: res.shifts || [],
+          activeShift: res.activeShift || '',
+          allUsers: res.allUsers || [],
+          shiftUsers: res.shiftUsers || [],
+          activeUpworkSessions: res.activeUpworkSessions || [],
+          dailySheetLogs: Array.isArray(res.dailySheetLogs) ? res.dailySheetLogs : [],
+          superviseChecks: Array.isArray((res as any).superviseChecks) ? (res as any).superviseChecks : [],
+          allDbClients: res.allClients || [],
+          isHistory: Boolean(res.isHistory),
+          maActiveSessions: enrichedSessions,
+        };
+        writeTaskMapCache(cacheKey, nextCacheEntry);
+        if (!hasManuallySelectedShiftRef.current && res.activeShift) {
+          writeTaskMapCache(getTaskMapCacheKey('', currentDate), nextCacheEntry);
+          writeTaskMapCache(getTaskMapCacheKey(res.activeShift, currentDate), nextCacheEntry);
+        }
       } else {
         throw new Error((res as any)?.error || 'Task Map returned an unsuccessful response.');
       }
@@ -653,10 +773,28 @@ export const TaskMapContainer: React.FC = () => {
     loadData();
   }, [loadData, currentShift, currentDate]);
 
+  // Keep in-memory cache synced with optimistic/socket task updates so returning to Task Map shows latest state
+  useEffect(() => {
+    if (!hasLoadedOnceRef.current) return;
+    const key = getTaskMapCacheKey(currentShift, currentDate);
+    const existing = taskMapMemoryCache.get(key);
+    if (existing) {
+      taskMapMemoryCache.set(key, {
+        ...existing,
+        tasks,
+        availablePool,
+        dailySheetLogs,
+        superviseChecks,
+        activeUpworkSessions,
+      });
+    }
+  }, [tasks, availablePool, dailySheetLogs, superviseChecks, activeUpworkSessions, currentShift, currentDate]);
+
   // Load history dates for journal & ensure Task Map stays on today's operational date unless explicitly chosen
   useEffect(() => {
     taskMapApi.getHistoryDates().then((res) => {
       if (res.success && res.dates) {
+        cachedHistoryDates = res.dates;
         setHistoryDates(res.dates);
         const latest = res.currentDate || res.latestDate || getTodayDateStr();
         if (latest && !userSelectedDateRef.current) {
@@ -831,8 +969,9 @@ export const TaskMapContainer: React.FC = () => {
         return;
       }
 
-      // If an assignment, handover, or clock-out occurred and a full re-bucket may be needed, trigger a silent sync
-      if (data.assigneeId !== undefined || data.handedOver !== undefined || isClockOutBroadcast) {
+      // If an assignment, handover, live-work start, or clock-out occurred and a full re-bucket may be needed, trigger a silent sync
+      const isLiveStartBroadcast = Boolean(data.progress?.timeIn && !data.progress?.timeOut && !data.progress?.isMissingTime);
+      if (data.assigneeId !== undefined || data.handedOver !== undefined || isClockOutBroadcast || isLiveStartBroadcast) {
         scheduleReload();
       }
 
@@ -1057,10 +1196,42 @@ export const TaskMapContainer: React.FC = () => {
         setTasks((prev) => prev.map(patchTimedOut));
         setAvailablePool((prev) => prev.map(patchTimedOut));
         scheduleReload();
+      } else if (data?.active && data?.timeIn && !data?.timeOut) {
+        const targetId = data?.subtaskId ? `subtask:${data.subtaskId}` : data?.taskId;
+        if (targetId) {
+          const liveProgress = {
+            maName: data.maName || null,
+            timeIn: data.timeIn,
+            timeOut: null,
+            date: data.date || currentDate,
+            client: data.client || null,
+            status: data.status || 'In progress',
+            sheetRow: data.rowNumber || undefined,
+            isMissingTime: Boolean(data.isMissingTime),
+            isUpwork: Boolean(data.isUpwork),
+            timeTracker: data.isUpwork ? 'Upwork' : null,
+            isLive: true,
+            startedAt: data.startedAt || data.updatedAt || new Date().toISOString(),
+            updatedAt: data.updatedAt || new Date().toISOString(),
+          };
+          const patchLive = (t: TaskMapItem): TaskMapItem =>
+            t.id === targetId ? applyLiveWorkingTaskStatus({ ...t, progress: liveProgress }) : t;
+          setTasks((prev) => {
+            const mapped = prev.map(patchLive);
+            if (!mapped.some((t) => t.id === targetId)) {
+              const fromPool = availablePoolRef.current.find((t) => t.id === targetId);
+              if (fromPool) return [patchLive(fromPool), ...mapped];
+            }
+            return mapped;
+          });
+          setAvailablePool((prev) => prev.filter((t) => t.id !== targetId));
+        }
+        scheduleReload();
       }
     };
 
-    const handleShiftsUpdated = () => {
+    const handleShiftsUpdated = (e?: any) => {
+      const data = e?.detail || e;
       scheduleReload({ fromDbWatcher: Boolean(data?.fromDbWatcher) });
     };
 
@@ -2114,7 +2285,7 @@ export const TaskMapContainer: React.FC = () => {
     for (const t of allPoolAndTasks) {
       if (seenIds.has(t.id)) continue;
       seenIds.add(t.id);
-      if (t.isSubtask || t.isClosed || isTaskMapItemOnHold(t) || isTaskHandedOver(t)) continue;
+      if (t.isClosed || isTaskMapItemOnHold(t) || isTaskHandedOver(t)) continue;
       if (getEffectiveTaskMapHandlerId(t) !== userId) continue;
       const s = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
       const mapStatuses = (t.taskMap?.statuses || []).map((x) =>
@@ -2368,10 +2539,10 @@ export const TaskMapContainer: React.FC = () => {
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
-              tasks={displayedTasks.filter((t) => !t.isSubtask)}
-              availablePool={displayedPool.filter((t) => !t.isSubtask)}
-              allAvailablePool={availablePool.filter((t) => !t.isSubtask)}
-              allTasks={tasks.filter((t) => !t.isSubtask)}
+              tasks={displayedTasks}
+              availablePool={displayedPool}
+              allAvailablePool={availablePool}
+              allTasks={tasks}
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}

@@ -24,14 +24,30 @@ export const ALL_STATUSES = [
   'WAITING',
   'IN REVIEW',
   'CHECKING',
-  'CRM Needed to Send',
-  'CRM Needed to Follow Up',
   'CRM',
   'ON-HOLD',
   'CLOSED',
   'KYC',
   'PIN BOARD',
 ];
+
+const HIDDEN_BOARD_STATUS_KEYS = new Set([
+  'CRMNEEDEDTOSEND',
+  'CRMTOSEND',
+  'CRMNEEDEDTOFOLLOWUP',
+  'CRMFOLLOWUP',
+]);
+
+/**
+ * Returns true for CRM Map-only column labels that must not appear as columns on
+ * KanbanBoard or options in task status dropdowns (they live as columns inside CRM Map).
+ */
+export const isHiddenBoardStatus = (status: any): boolean => {
+  if (!status) return false;
+  const raw = typeof status === 'string' ? status : (status.name || status.status || status.title || '');
+  const compact = String(raw).trim().toUpperCase().replace(/[\s_-]+/g, '');
+  return HIDDEN_BOARD_STATUS_KEYS.has(compact);
+};
 
 export const isClosedStatus = (status: any): boolean => {
   if (!status) return false;

@@ -9,7 +9,7 @@ import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck, Link2, PauseCircle } from 'lucide-react';
 import { getNexusTaskUrl } from '@/lib/links';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isHiddenBoardStatus, isSystemUser } from '@/lib/taskTokens';
 import {
   RecurrencePicker,
   formatTimeDisplay,
@@ -150,7 +150,9 @@ const CardContent = memo(({
   }, [workspaceTeams.length, hydrateTeamsFromCache]);
 
   const orderedListStatuses = useMemo(() => {
-    const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sortedInternals = [...(listStatuses || [])]
+      .filter((s) => !isHiddenBoardStatus(s))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === (task as any)?.listId || l.id === (task as any)?.listId);
     const list = listObj?.list || listObj;
 

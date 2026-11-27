@@ -16,11 +16,11 @@ import { HIDE_DESIGN_AUDIT, HIDE_INSTRUCTIONS_AUDIT, normalizeAuditName } from '
  * HIDE_DESIGN_AUDIT === true) are automatically skipped unless explicitly
  * present on the task's active checklist items.
  */
-// Review-stage audits (UI/UX, Design, Production) come first: moving to Checking needs all Level 1 audits checked.
+// Review-stage audits (Design, Production, UI/UX) come first; Design Audit must be completed before UI/UX Audit.
 export const AUDIT_HIERARCHY_ORDER: readonly string[] = [
-  'UI/UX Audit',
   'Design Audit',
   'Production Audit',
+  'UI/UX Audit',
   'Funnel Audit',
   'Instructions Audit',
 ];

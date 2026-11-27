@@ -326,12 +326,14 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
   const statuses = (task.taskMap?.statuses || []).map((s) => s.toUpperCase().trim());
   if (statuses.includes('CLOSED') || statuses.includes('DONE')) return false;
 
-  // 0. Live synthetic assumption block strictly takes the In Progress slot (clocked-out held blocks sit below dropzone until 12 AM)
+  // 0. Live or missing-time synthetic assumption block strictly takes the In Progress slot (clocked-out held blocks sit below dropzone until 12 AM)
   if (task.isAssumptionBlock) {
     const hasTimeIn = Boolean(task.progress?.timeIn && String(task.progress.timeIn).trim());
     const hasTimeOut = Boolean(task.progress?.timeOut && String(task.progress.timeOut).trim());
-    if (hasTimeOut || task.progress?.isLive === false) return false;
-    return Boolean(hasTimeIn && !hasTimeOut && !task.progress?.isMissingTime);
+    if (hasTimeOut) return false;
+    if (task.progress?.isMissingTime) return true;
+    if (task.progress?.isLive === false) return false;
+    return Boolean(hasTimeIn && !hasTimeOut);
   }
 
   // On-hold or paused tasks belong out of In Progress unless live clocked in right now
@@ -1745,16 +1747,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
       });
     }
 
-    // Ensure the logged-in user, live-working users, active sessions, and searched users from allUsers
+    // Always ensure the logged-in user's own profile column is visible even when viewing a specific shift (e.g. Night)
+    if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
+      userColumnsMap[currentUser.id] = {
+        user: getUserProfile(currentUser.id, currentUser),
+        tasks: [],
+      };
+    }
+
+    // Live-working users, active sessions, and searched users from allUsers
     // are only injected when not strictly scoped to a specific Audit Shift.
     if (allowNonShiftColumns) {
-      if (currentUser?.id && !isSystemAccount(currentUser) && !userColumnsMap[currentUser.id]) {
-        userColumnsMap[currentUser.id] = {
-          user: getUserProfile(currentUser.id, currentUser),
-          tasks: [],
-        };
-      }
-
       [...tasks, ...availablePool].forEach((t) => {
         if (t.progress?.maName && !t.progress?.timeOut && isTaskLiveWorking(t, t.progress.maName, boardTime) && allUsers) {
           const matchingUser = findBestUserMatch(t.progress.maName, allUsers, (u) => !isSystemAccount(u));
@@ -1951,8 +1954,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
         return false;
       });
 
-      // Enrich existing card in col.tasks if it lacks live progress
-      if (hasAlreadyInColumn && activeSession && (activeSession.timeIn || activeSession.timeOut)) {
+      // Enrich existing card in col.tasks if it lacks live or missing-time progress
+      if (hasAlreadyInColumn && activeSession && (activeSession.timeIn || activeSession.timeOut || activeSession.isMissingTime)) {
         const existing = col.tasks.find((t) =>
           (activeSession?.taskId && (t.id === activeSession.taskId || t.subtaskId === activeSession.taskId)) ||
           (activeSession?.subtaskId && t.subtaskId === activeSession.subtaskId) ||
@@ -1967,7 +1970,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             client: activeSession.client || existing.list?.name || null,
             status: activeSession.status || null,
             sheetRow: activeSession.rowNumber ? Number(activeSession.rowNumber) : undefined,
-            isMissingTime: false,
+            isMissingTime: Boolean(activeSession.isMissingTime || (!activeSession.timeIn && !activeSession.timeOut)),
             isUpwork: Boolean(activeSession.isUpwork),
             timeTracker: null,
           };
@@ -4419,7 +4422,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       task.list?.name?.toLowerCase().includes('upwork') ||
                       hasManualUpworkTag
                     );
-                  const isMissingTime = Boolean(effectiveProgress?.isMissingTime);
+                  const isMissingTime = Boolean(effectiveProgress?.isMissingTime && !effectiveProgress?.timeOut);
+                  const isMissingTimeInProgress = Boolean(
+                    task.id === activeInProgTask?.id && isMissingTime
+                  );
                   // Live working when the MA actively clocked in (Time In) and has not clocked out (and not stale)
                   // STRICT RULE: Only the single task in the In Progress slot (activeInProgTask) can EVER be Live Working!
                   const isLiveWorking = Boolean(
@@ -4436,19 +4442,21 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   );
                   const isUpworkLiveWorking = Boolean(isUpwork && isLiveWorking);
                   const isCustomLiveWorkingBorder = isLiveWorking && !isUpworkLiveWorking && !isMissingTime;
-                  // Only highlight tasks that are actively live working (with a counting timer);
+                  // Highlight tasks that are actively live working or in-progress with missing Time In;
                   // the breathing animation is rendered on a border-only overlay so card contents stay at full opacity.
                   const cardBorderClass = isUpworkLiveWorking
                     ? 'border-indigo-500/35 dark:border-white/35 shadow-sm'
-                    : isMissingTime
-                      ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
-                      : isLiveWorking
-                        ? 'shadow-sm'
-                        : isSubtask && hasParentInColumn
-                          ? 'border-indigo-500/35 not-has-[[data-card-control]:hover]:hover:border-indigo-400/60 shadow-sm'
-                          : isSeparatedSubtask
-                            ? 'border-amber-500/30 not-has-[[data-card-control]:hover]:hover:border-amber-400/55 shadow-sm'
-                            : 'border-border dark:border-zinc-800/90 hover:border-zinc-700 shadow-sm';
+                    : isMissingTimeInProgress
+                      ? 'border-red-500/45 shadow-sm'
+                      : isMissingTime
+                        ? 'border-red-500/60 ring-1 ring-red-500/25 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
+                        : isLiveWorking
+                          ? 'shadow-sm'
+                          : isSubtask && hasParentInColumn
+                            ? 'border-indigo-500/35 not-has-[[data-card-control]:hover]:hover:border-indigo-400/60 shadow-sm'
+                            : isSeparatedSubtask
+                              ? 'border-amber-500/30 not-has-[[data-card-control]:hover]:hover:border-amber-400/55 shadow-sm'
+                              : 'border-border dark:border-zinc-800/90 hover:border-zinc-700 shadow-sm';
 
                   const canDragThisCard = cardOptions?.forceNonDraggable
                     ? false
@@ -4564,13 +4572,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               : undefined
                           }
                         >
-                          {(isUpworkLiveWorking || isCustomLiveWorkingBorder) && (
+                          {(isUpworkLiveWorking || isCustomLiveWorkingBorder || isMissingTimeInProgress) && (
                             <div
                               aria-hidden="true"
                               className={
-                                isUpworkLiveWorking
-                                  ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
-                                  : 'pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe'
+                                isMissingTimeInProgress
+                                  ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-red-500/80 ring-2 ring-red-500/35 shadow-[0_0_18px_rgba(239,68,68,0.3)] animate-border-glow-breathe'
+                                  : isUpworkLiveWorking
+                                    ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
+                                    : 'pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe'
                               }
                               style={
                                 isCustomLiveWorkingBorder
@@ -4767,7 +4777,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           {/* RIGHT: Section where Sub-Status is (with Time Progress in top right corner) */}
                           <div className="w-[130px] sm:w-[145px] shrink-0 flex flex-col justify-between py-0.5">
                             <div className="flex flex-col items-end gap-0.5">
-                              <TaskTimeProgressSlot task={{ ...task, progress: effectiveProgress }} isLive={isLiveWorking} />
+                              <TaskTimeProgressSlot
+                                task={{ ...task, progress: effectiveProgress }}
+                                isLive={isLiveWorking || isMissingTimeInProgress}
+                              />
                               <TaskEstimateLabel task={task} />
                             </div>
 
@@ -4853,28 +4866,40 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           const isColumnLiveWorking = Boolean(
                             activeInProgTask && isTaskLiveWorking(activeInProgTask, user.name, boardTime)
                           );
+                          const isColumnMissingTime = Boolean(
+                            !isColumnLiveWorking &&
+                            activeInProgTask &&
+                            (activeInProgTask.isAssumptionBlock || doesProgressMatchUser(activeInProgTask.progress?.maName, user.name)) &&
+                            activeInProgTask.progress?.isMissingTime &&
+                            !activeInProgTask.progress?.timeOut
+                          );
+                          const isColumnActive = isColumnLiveWorking || isColumnMissingTime;
                           const liveSlotLabel =
-                            isColumnLiveWorking && activeInProgTask
-                              ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
-                              : 'In Progress';
+                            isColumnMissingTime
+                              ? 'In Progress (No Time In)'
+                              : isColumnLiveWorking && activeInProgTask
+                                ? (toCanonicalTaskStatus(activeInProgTask.status) || activeInProgTask.status || 'In Progress')
+                                : 'In Progress';
                           const liveSlotColor =
-                            isColumnLiveWorking && activeInProgTask
-                              ? resolveTaskStatusColor(
-                                  liveSlotLabel,
-                                  activeInProgTask.listId || activeInProgTask.list?.id,
-                                  activeInProgTask.list?.statuses
-                                )
-                              : '#D04A7C';
+                            isColumnMissingTime
+                              ? '#ef4444'
+                              : isColumnLiveWorking && activeInProgTask
+                                ? resolveTaskStatusColor(
+                                    liveSlotLabel,
+                                    activeInProgTask.listId || activeInProgTask.list?.id,
+                                    activeInProgTask.list?.statuses
+                                  )
+                                : '#D04A7C';
                           return (
                             <>
                               <div className="flex items-center gap-1.5">
                                 <span
-                                  className={`size-2 rounded-full ${isColumnLiveWorking ? 'animate-pulse' : 'bg-zinc-600'}`}
-                                  style={isColumnLiveWorking ? { backgroundColor: liveSlotColor } : undefined}
+                                  className={`size-2 rounded-full ${isColumnActive ? 'animate-pulse' : 'bg-zinc-600'}`}
+                                  style={isColumnActive ? { backgroundColor: liveSlotColor } : undefined}
                                 />
                                 <span
-                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnLiveWorking ? '' : 'text-zinc-400'}`}
-                                  style={isColumnLiveWorking ? { color: liveSlotColor } : undefined}
+                                  className={`text-[10px] font-bold uppercase tracking-wider ${isColumnActive ? '' : 'text-zinc-400'}`}
+                                  style={isColumnActive ? { color: liveSlotColor } : undefined}
                                 >
                                   {liveSlotLabel}
                                 </span>

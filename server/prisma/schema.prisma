@@ -91,6 +91,7 @@ model User {
   subtasksAssignedMulti Subtask[]             @relation("SubtaskMultiAssignees")
   assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
   pageVersions          PageVersion[]
+  shiftTime             UserShiftTime?
 
   @@index([email])
   @@index([systemRole])
@@ -815,4 +816,17 @@ model SuperviseCheck {
 
   @@index([dateKey])
   @@index([reappearAt])
+}
+
+model UserShiftTime {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  schedule  String   // Canonical format e.g. "M-F 9AM to 4PM", "T-S 5PM to 2AM"
+  updatedBy String?
+  source    String   @default("NEXUS") // "NEXUS" | "VIPSCALE" | "GOOGLE_SHEET"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

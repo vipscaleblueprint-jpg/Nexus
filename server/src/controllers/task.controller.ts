@@ -549,17 +549,27 @@ export async function getTask(req: Request, res: Response) {
 
     if (!task) return res.status(404).json({ error: 'Task not found' });
 
-    const { inProgressMovedBy, maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(task.id);
-    const enrichedTask = { ...task, inProgressMovedBy, maUpdaterIds, maUpdaterNames };
+    const [{ inProgressMovedBy, maUpdaterIds, maUpdaterNames }, taskMapRecord] = await Promise.all([
+      getTaskMoverAndUpdaters(task.id),
+      prisma.taskMapRecord.findUnique({ where: { taskId: task.id } }).catch(() => null),
+    ]);
+    const enrichedTask = {
+      ...task,
+      inProgressMovedBy,
+      maUpdaterIds,
+      maUpdaterNames,
+      taskMap: taskMapRecord || null,
+    };
 
     res.json({ task: enrichedTask, subtask: foundSubtask, cached: false });
     // Cache under the task ID
-    setCache(`task:${task.id}`, task, 300, generation).catch(() => {});
+    const cacheableTask = { ...task, taskMap: taskMapRecord || null };
+    setCache(`task:${task.id}`, cacheableTask, 300, generation).catch(() => {});
     // When a subtask was requested or found, cache under the subtask ID with both task and subtask
     if (foundSubtask) {
-      setCache(`task:${taskId}`, { task, subtask: foundSubtask }, 300, generation).catch(() => {});
+      setCache(`task:${taskId}`, { task: cacheableTask, subtask: foundSubtask }, 300, generation).catch(() => {});
       if (foundSubtask.id !== taskId) {
-        setCache(`task:${foundSubtask.id}`, { task, subtask: foundSubtask }, 300, generation).catch(() => {});
+        setCache(`task:${foundSubtask.id}`, { task: cacheableTask, subtask: foundSubtask }, 300, generation).catch(() => {});
       }
     }
   } catch (err: any) {
@@ -3927,8 +3937,9 @@ function itemAssigneeIds(assigneeId: unknown, assigneeIds: unknown): string[] | 
 const isAuditChecklistName = (name: string | null | undefined) => (name || '').trim().toLowerCase() === 'audit';
 
 /**
- * Enforces audit hierarchy order: UI/UX Audit and Design Audit share Level 1 and must
- * be completed before Instructions Audit or Funnel Audit can be checked.
+ * Enforces audit hierarchy order:
+ * - Design Audit must be completed before UI/UX Audit can be checked.
+ * - Level 1 audits (Design, Production, UI/UX) must be completed before Instructions Audit or Funnel Audit can be checked.
  */
 async function validateAuditHierarchyOrder(params: {
   taskId: string;
@@ -3937,7 +3948,7 @@ async function validateAuditHierarchyOrder(params: {
 }): Promise<string | null> {
   const norm = (params.auditText || '').trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
   const normalized = norm === 'instruction audit' ? 'instructions audit' : norm;
-  if (normalized !== 'instructions audit' && normalized !== 'funnel audit') {
+  if (normalized !== 'ui ux audit' && normalized !== 'instructions audit' && normalized !== 'funnel audit') {
     return null;
   }
 
@@ -4003,6 +4014,17 @@ async function validateAuditHierarchyOrder(params: {
       const n = (it.text || '').trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
       completedNorms.add(n === 'instruction audit' ? 'instructions audit' : n);
     }
+  }
+
+  if (normalized === 'ui ux audit') {
+    const requiresDesign = required.some((reqName) => {
+      const n = reqName.trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
+      return n === 'design audit';
+    });
+    if (requiresDesign && !completedNorms.has('design audit')) {
+      return 'Cannot complete UI/UX Audit: Design Audit must be completed first.';
+    }
+    return null;
   }
 
   const missingLevel1 = required.filter((reqName) => {

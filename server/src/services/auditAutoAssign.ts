@@ -230,11 +230,11 @@ export interface AuditUserRef {
  * People who worked on a task (MA daily tracker collaborators) may not audit it. Matches by
  * id, and by name or email because tracker rows often carry only a name.
  */
-export async function getTaskCollaboratorBlock(taskId: string): Promise<{
+export async function getTaskCollaboratorBlock(taskId: string, subtaskId?: string): Promise<{
   blockedUserIds: Set<string>;
   isUserBlocked: (u: AuditUserRef) => boolean;
 }> {
-  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId);
+  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId, subtaskId);
   const blockedUserIds = new Set<string>(maUpdaterIds);
   const blockedNames = new Set<string>(maUpdaterNames.map((n) => n.trim().toLowerCase()));
 

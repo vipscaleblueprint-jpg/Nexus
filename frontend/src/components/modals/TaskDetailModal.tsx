@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info, PauseCircle, Play } from 'lucide-react';
+import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, ArrowRightLeft, Search, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info, PauseCircle, Play } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -187,6 +187,7 @@ import {
   CustomCircleDot,
   ALL_STATUSES,
   isClosedStatus,
+  isHiddenBoardStatus,
   sortStatusesWithClosedAndKycAtEnd,
   activityCache,
   prefetchTaskActivities,
@@ -211,6 +212,7 @@ export {
   CustomCircleDot,
   ALL_STATUSES,
   isClosedStatus,
+  isHiddenBoardStatus,
   sortStatusesWithClosedAndKycAtEnd,
   activityCache,
   prefetchTaskActivities,
@@ -478,6 +480,228 @@ export function normalizeCommentSearchText(str: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+function extractPmAssignedUserId(pmReviews: any, subtaskId?: string | null): string | null {
+  let reviewsList = pmReviews;
+  if (typeof reviewsList === 'string') {
+    try {
+      reviewsList = JSON.parse(reviewsList);
+    } catch {
+      reviewsList = [];
+    }
+  }
+  if (!Array.isArray(reviewsList)) return null;
+  const match = reviewsList.find(
+    (r: any) =>
+      r?.type === 'PM_ASSIGNMENT' &&
+      r?.assignedTo &&
+      (subtaskId ? r?.subtaskId === subtaskId : !r?.subtaskId)
+  );
+  return match?.assignedTo || null;
+}
+
+function TaskMapAssignDropdown({
+  targetId,
+  assignedUserId,
+  users,
+  disabled,
+  disabledReason,
+  onAssigned,
+}: {
+  targetId: string;
+  assignedUserId: string | null;
+  users: any[];
+  disabled?: boolean;
+  disabledReason?: string;
+  onAssigned?: (nextUserId: string | null, taskMap?: any) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localAssignedId, setLocalAssignedId] = useState<string | null>(assignedUserId);
+
+  useEffect(() => {
+    setLocalAssignedId(assignedUserId);
+  }, [assignedUserId, targetId]);
+
+  const nonSystemUsers = useMemo(() => {
+    return (users || [])
+      .filter((u) => u && u.id && !isSystemUser(u))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    const clean = searchQuery.trim().toLowerCase();
+    if (!clean) return nonSystemUsers;
+    return nonSystemUsers.filter(
+      (u) =>
+        (u.name || '').toLowerCase().includes(clean) ||
+        (u.email || '').toLowerCase().includes(clean)
+    );
+  }, [nonSystemUsers, searchQuery]);
+
+  const assignedUser = useMemo(
+    () => (localAssignedId ? nonSystemUsers.find((u) => u.id === localAssignedId) || null : null),
+    [nonSystemUsers, localAssignedId]
+  );
+
+  const handleSelectUser = async (nextUserId: string | null) => {
+    if (isSubmitting) return;
+    setIsOpen(false);
+    setSearchQuery('');
+    setIsSubmitting(true);
+    try {
+      const res = await taskMapApi.assignTask(targetId, nextUserId, 'QUEUE');
+      setLocalAssignedId(nextUserId);
+      onAssigned?.(nextUserId, res?.taskMap);
+      if (nextUserId) {
+        const picked = nonSystemUsers.find((u) => u.id === nextUserId);
+        toast.success(`Assigned to ${picked?.name || 'user'}'s Task Map column`);
+      } else {
+        toast.info('Returned to Available Tasks on Task Map');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update Task Map column');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Popover.Root
+      open={isOpen && !disabled}
+      onOpenChange={(open) => {
+        if (disabled) return;
+        setIsOpen(open);
+        if (!open) setSearchQuery('');
+      }}
+    >
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={(e) => {
+            if (disabled) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (disabledReason) toast.error(disabledReason);
+            }
+          }}
+          title={
+            disabled && disabledReason
+              ? disabledReason
+              : assignedUser
+                ? `Task Map column: ${assignedUser.name} (click to reassign)`
+                : 'Assign to a Task Map column (lands in To Do)'
+          }
+          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold border transition-all select-none leading-none whitespace-nowrap ${
+            disabled
+              ? 'opacity-50 cursor-not-allowed bg-blue-500/10 text-blue-300/60 border-blue-500/20'
+              : isOpen
+                ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/30 cursor-pointer'
+                : 'bg-blue-500/15 text-blue-300 border-blue-500/35 hover:bg-blue-500/25 hover:text-white hover:border-blue-400/70 cursor-pointer'
+          }`}
+        >
+          {isSubmitting ? (
+            <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+          ) : (
+            <ArrowRightLeft className="w-3 h-3 shrink-0" />
+          )}
+          <span>Task Map</span>
+          {assignedUser && (
+            <span className="max-w-[90px] truncate text-[10px] font-medium opacity-90 pl-1.5 ml-0.5 border-l border-blue-400/35">
+              {assignedUser.name?.split(' ')[0] || assignedUser.name}
+            </span>
+          )}
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="start"
+          sideOffset={4}
+          onClick={(e) => e.stopPropagation()}
+          className="z-[100000] w-60 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-75 outline-none"
+        >
+          <div className="px-2 pt-1 pb-1 border-b border-zinc-800/80 flex items-center justify-between">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+              Task Map Column
+            </span>
+            <span className="text-[9px] text-zinc-500">Lands in To Do</span>
+          </div>
+
+          <div className="px-1 pt-0.5">
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg">
+              <Search className="w-3 h-3 text-zinc-500 shrink-0" />
+              <input
+                autoFocus
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search member..."
+                className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+              />
+            </div>
+          </div>
+
+          {localAssignedId && (
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleSelectUser(null)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800/80 hover:text-rose-300 transition-colors cursor-pointer border-b border-zinc-800/60"
+            >
+              <X className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Return to Available Tasks</span>
+            </button>
+          )}
+
+          <div className="max-h-52 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 p-0.5">
+            {filteredUsers.length === 0 ? (
+              <p className="text-[11px] text-zinc-500 italic text-center py-4">No matching users</p>
+            ) : (
+              filteredUsers.map((u) => {
+                const isCurrent = Boolean(localAssignedId && localAssignedId === u.id);
+                const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+                const avatarBg = getAssigneeAvatarColor(u.name || 'U');
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    disabled={isCurrent || isSubmitting}
+                    onClick={() => handleSelectUser(u.id)}
+                    className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors ${
+                      isCurrent
+                        ? 'bg-blue-500/15 text-blue-300 cursor-default font-semibold'
+                        : 'text-zinc-200 hover:bg-zinc-800/80 hover:text-white cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {u.avatarUrl ? (
+                        <img
+                          src={u.avatarUrl}
+                          alt={u.name}
+                          className="w-5 h-5 rounded-full object-cover shrink-0 border border-zinc-700/80"
+                        />
+                      ) : (
+                        <span
+                          className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${avatarBg}`}
+                        >
+                          {initials}
+                        </span>
+                      )}
+                      <span className="truncate font-medium">{u.name}</span>
+                    </div>
+                    {isCurrent && <Check className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
 }
 
 export function TaskDetailModalContent({
@@ -2692,7 +2916,9 @@ export function TaskDetailModalContent({
   }, [localStatus, internalListStatuses, task]);
 
   const orderedListStatuses = React.useMemo(() => {
-    const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sortedInternals = [...(internalListStatuses || [])]
+      .filter((s) => !isHiddenBoardStatus(s))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
     const list = listObj?.list || listObj;
 
@@ -2953,14 +3179,21 @@ export function TaskDetailModalContent({
   };
 
   const handleStatusClick = () => {
-    const statuses = (internalListStatuses && internalListStatuses.length > 0)
-      ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+    const statuses = (orderedListStatuses && orderedListStatuses.length > 0)
+      ? orderedListStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
       : ALL_STATUSES;
     const currentIndex = statuses.indexOf(localStatus || 'Pending');
     const nextIndex = (currentIndex + 1) % statuses.length;
     const newStatus = statuses[nextIndex];
     handleStatusChangeAction(newStatus);
   };
+
+  const [localTaskMapAssigneeId, setLocalTaskMapAssigneeId] = useState<string | null>(() =>
+    extractPmAssignedUserId((task as any)?.taskMap?.pmReviews, null)
+  );
+  useEffect(() => {
+    setLocalTaskMapAssigneeId(extractPmAssignedUserId((task as any)?.taskMap?.pmReviews, null));
+  }, [task?.id, (task as any)?.taskMap?.pmReviews]);
 
   const [localAssignees, setLocalAssignees] = useState<UserModel[]>(() => {
     return (task?.assignees && task.assignees.length > 0)
@@ -3958,11 +4191,11 @@ export function TaskDetailModalContent({
               </div>
 
               {/* Properties Stack â€” row layout */}
-              <div className="flex flex-col gap-2 mb-8 mt-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 mb-8 mt-2">
 
                 {/* Status Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-1">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     {(() => {
                       const isClosed = localStatus === 'Closed' || localStatus === 'CLOSED' || localStatus === 'DONE';
                       return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((localStatus || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
@@ -4104,8 +4337,8 @@ export function TaskDetailModalContent({
                 </div>
 
                 {/* Assignees Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-3">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                     <span className="text-[12px] text-zinc-500">Assignees</span>
                   </div>
@@ -4407,14 +4640,39 @@ export function TaskDetailModalContent({
                   </div>
                 </div>
 
+                {/* Task Map Row */}
+                {task?.id && (
+                  <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-5">
+                    <div className="flex items-center gap-2 w-24 shrink-0">
+                      <ArrowRightLeft className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                      <span className="text-[12px] text-zinc-500">Task Map</span>
+                    </div>
+                    <TaskMapAssignDropdown
+                      targetId={task.id}
+                      assignedUserId={localTaskMapAssigneeId}
+                      users={workspaceUsers}
+                      disabled={!canAssignTask}
+                      disabledReason={assignDeniedMessage}
+                      onAssigned={(nextUserId, nextTaskMap) => {
+                        setLocalTaskMapAssigneeId(nextUserId);
+                        if (nextTaskMap && task) {
+                          const updatedTask = { ...task, taskMap: nextTaskMap } as any;
+                          onUpdateTask?.(updatedTask);
+                          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
 
 
 
 
 
                 {/* Priority Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-2">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                     <span className="text-[12px] text-zinc-500">Priority</span>
                   </div>
@@ -4467,8 +4725,8 @@ export function TaskDetailModalContent({
                 </div>
 
                 {/* Dates / Due Date & Recurrence Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-4">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     <Calendar className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                     <span className="text-[12px] text-zinc-500">Dates</span>
                   </div>
@@ -8918,11 +9176,11 @@ export function SubtaskDetailView({
             </div>
 
             {/* Properties Stack â€” row layout */}
-            <div className="flex flex-col gap-2 mb-8 mt-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 mb-8 mt-2">
 
               {/* Status Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-1">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   {(() => {
                     const isClosed = localCompleted || (localStatus || '').toLowerCase() === 'closed' || (localStatus || '').toLowerCase() === 'done';
                     return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((localStatus || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
@@ -8932,7 +9190,11 @@ export function SubtaskDetailView({
                   <div className="flex items-center gap-1.5">
                     {(() => {
                       const orderedStatuses = (listStatuses && listStatuses.length > 0)
-                        ? sortStatusesWithClosedAndKycAtEnd(listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')))
+                        ? sortStatusesWithClosedAndKycAtEnd(
+                            listStatuses
+                              .filter((s: any) => !isHiddenBoardStatus(s))
+                              .map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+                          )
                         : ALL_STATUSES;
 
                       const statusName = localStatus || 'No Status';
@@ -9078,8 +9340,8 @@ export function SubtaskDetailView({
 
 
               {/* Assignees Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-3">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Assignees</span>
                 </div>
@@ -9372,9 +9634,32 @@ export function SubtaskDetailView({
                 </div>
               </div>
 
+              {/* Task Map Row */}
+              {subtask?.id && (
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-5">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
+                    <ArrowRightLeft className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                    <span className="text-[12px] text-zinc-500">Task Map</span>
+                  </div>
+                  <TaskMapAssignDropdown
+                    targetId={`subtask:${subtask.id}`}
+                    assignedUserId={extractPmAssignedUserId((parentTask as any)?.taskMap?.pmReviews, subtask.id)}
+                    users={workspaceUsers || []}
+                    disabled={!canAssignTask}
+                    disabledReason={assignDeniedMessage}
+                    onAssigned={(_nextUserId, nextTaskMap) => {
+                      if (nextTaskMap && parentTask) {
+                        const updatedParent = { ...parentTask, taskMap: nextTaskMap } as any;
+                        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
+                      }
+                    }}
+                  />
+                </div>
+              )}
+
               {/* Priority Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-2">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Priority</span>
                 </div>
@@ -9427,8 +9712,8 @@ export function SubtaskDetailView({
               </div>
 
               {/* Dates / Due Date Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-4">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   <Calendar className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Dates</span>
                 </div>

@@ -31,6 +31,7 @@ import { emojiRouter } from './routes/emoji.routes';
 import draftRoutes from './routes/draft.routes';
 import { auditShiftRouter } from './routes/auditShift.routes';
 import { taskMapRouter } from './routes/taskMap.routes';
+import { shiftTimeRouter } from './routes/shiftTime.routes';
 import { prisma } from './config/prisma';
 import { invalidateCache } from './services/redisService';
 
@@ -399,6 +400,7 @@ app.use('/api/drafts', draftRoutes);
 app.use('/api/admin/audit-shifts', auditShiftRouter);
 app.use('/api/audit-shifts', auditShiftRouter);
 app.use('/api/task-map', taskMapRouter);
+app.use('/api/shift-times', shiftTimeRouter);
 
 // Catch-all error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

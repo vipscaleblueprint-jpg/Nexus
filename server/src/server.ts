@@ -124,7 +124,7 @@ const server = http.createServer(app);
     removeOnFail: 50,
   });
 
-  // Task Map AI PM auto-queue checkpoints (5 AM / 1 PM / 5 PM Manila). All are no-ops unless AUTO_QUEUE_MODE is set.
+  // Task Map AI PM auto-queue checkpoints (5 AM / 1 PM / 5 PM Manila). Active by default unless AUTO_QUEUE_MODE=off.
   try {
     for (const job of await autoQueueQueue.getRepeatableJobs()) {
       if (job.name === AUTO_QUEUE_JOB) await autoQueueQueue.removeRepeatableByKey(job.key);

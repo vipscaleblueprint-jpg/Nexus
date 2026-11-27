@@ -1,9 +1,9 @@
 import type { OllamaConfig } from './ollamaPicker';
 
 /**
- *   AUTO_QUEUE_MODE=off      (default) does nothing; Galaxy assigns tasks to the whole picked role as before
+ *   AUTO_QUEUE_MODE=on       (default) assigns, as the "Nexus AI" system user; Galaxy tasks wait in Available tasks
  *   AUTO_QUEUE_MODE=dry_run  decides and logs what it would assign, changes nothing
- *   AUTO_QUEUE_MODE=on       assigns, as the "Nexus AI" system user; Galaxy tasks wait in Available tasks
+ *   AUTO_QUEUE_MODE=off      does nothing; Galaxy assigns tasks to the whole picked role as before
  */
 export type AutoQueueMode = 'off' | 'dry_run' | 'on';
 
@@ -22,8 +22,8 @@ const numEnv = (name: string, fallback: number, min: number) => {
 };
 
 export function getAutoQueueConfig(): AutoQueueConfig {
-  const rawMode = (process.env.AUTO_QUEUE_MODE || 'off').trim().toLowerCase();
-  const mode: AutoQueueMode = rawMode === 'on' || rawMode === 'dry_run' ? rawMode : 'off';
+  const rawMode = (process.env.AUTO_QUEUE_MODE || 'on').trim().toLowerCase();
+  const mode: AutoQueueMode = rawMode === 'off' || rawMode === 'dry_run' ? rawMode : 'on';
   const url = (process.env.OLLAMA_URL || '').trim();
   return {
     mode,

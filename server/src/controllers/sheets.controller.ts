@@ -795,6 +795,89 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
       },
     });
 
+    const taskIds = tasks.map((t) => t.id);
+    const taskMapRecords = taskIds.length
+      ? await prisma.taskMapRecord.findMany({
+          where: { taskId: { in: taskIds } },
+          select: { taskId: true, statuses: true, handedOver: true, pmReviews: true },
+        })
+      : [];
+    const taskMapByTaskId = new Map(taskMapRecords.map((r) => [r.taskId, r]));
+
+    const CANONICAL_TASK_MAP_SUBSTATUSES: Record<string, string> = {
+      HANDOVEROUT: 'Hand-over Out',
+      HANDOVERIN: 'Hand-over In',
+      HANDOVER: 'Hand-over',
+      PAUSED: 'Paused',
+      AVAILABLETASK: 'Available Task',
+      INPROGRESS: 'In progress',
+      ONHOLD: 'On-hold',
+      REVISION: 'Revision',
+      REVISIONS: 'Revision',
+      TOREVIEW: 'To Review',
+      INREVIEW: 'To Review',
+      DESIGNAUDIT: 'Design Audit',
+      UIUXAUDIT: 'UI/UX Audit',
+      INSTRUCTIONAUDIT: 'Instruction Audit',
+      INSACTIONAUDIT: 'Instruction Audit',
+      FUNNELAUDIT: 'Funnel Audit',
+      READYTOSEND: 'Ready to Send',
+      ASKCLIENT: 'Ask Client',
+      TOSEND: 'To send',
+      CRMTOSEND: 'To send',
+      CRMNEEDEDTOSEND: 'To send',
+      SENTBUTWAITING: 'Sent but Waiting',
+      SENT: 'Sent but Waiting',
+      WAITING: 'Waiting',
+      FOLLOWUP: 'Follow up',
+      CRMFOLLOWUP: 'Follow up',
+      CRMNEEDEDTOFOLLOWUP: 'Follow up',
+      CRM: 'CRM',
+      CLOSED: 'Closed',
+    };
+
+    const resolveTaskMapSheetSubStatus = (
+      statuses?: string[] | null,
+      handedOver?: boolean | null
+    ): string => {
+      const list = Array.isArray(statuses) ? statuses : [];
+      const norms = list.map((s) => String(s || '').trim().toUpperCase().replace(/[\s_-]+/g, ''));
+      // Prioritize actionable Task Map queue/pool statuses first so MA sheet filtering stays exact
+      if (norms.includes('HANDOVEROUT')) return 'Hand-over Out';
+      if (norms.includes('HANDOVERIN')) return 'Hand-over In';
+      if (norms.includes('HANDOVER')) return 'Hand-over';
+      if (norms.includes('PAUSED')) return 'Paused';
+      if (norms.includes('AVAILABLETASK')) return 'Available Task';
+      for (const n of norms) {
+        if (CANONICAL_TASK_MAP_SUBSTATUSES[n]) return CANONICAL_TASK_MAP_SUBSTATUSES[n];
+      }
+      if (handedOver) return 'Hand-over';
+      return list[0] ? String(list[0]).trim() : '';
+    };
+
+    const parseSubtaskStateMap = (pmReviews: any): Map<string, { statuses?: string[]; handedOver?: boolean }> => {
+      let arr = pmReviews;
+      if (typeof arr === 'string') {
+        try {
+          arr = JSON.parse(arr);
+        } catch {
+          arr = [];
+        }
+      }
+      const map = new Map<string, { statuses?: string[]; handedOver?: boolean }>();
+      if (Array.isArray(arr)) {
+        for (const r of arr) {
+          if (r?.type === 'SUBTASK_STATE' && r?.subtaskId) {
+            map.set(String(r.subtaskId), {
+              statuses: Array.isArray(r.statuses) ? r.statuses : [],
+              handedOver: Boolean(r.handedOver),
+            });
+          }
+        }
+      }
+      return map;
+    };
+
     const names = (one: { name: string } | null | undefined, many: { name: string }[] = []) =>
       Array.from(new Set([...(one ? [one.name] : []), ...many.map((u) => u.name)].filter(Boolean))).join(', ') || 'Unassigned';
     const statusLabel = (s: string | null | undefined) => sheetStatusLabel(s) ?? (s ? titleCase(s) : '');
@@ -805,6 +888,8 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
     for (const t of tasks) {
       const cuId = clickUpIdOf(t.externalId!);
       if (!cuId || isOffSheetStatus(t.status)) continue;
+      const tmRec = taskMapByTaskId.get(t.id);
+      const subStateMap = tmRec ? parseSubtaskStateMap(tmRec.pmReviews) : null;
       if (!isClosedSheetStatus(t.status) || t.updatedAt >= closedSince) {
         items.push({
           clickup_link: `https://app.clickup.com/t/${cuId}`,
@@ -812,6 +897,7 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
           list_name: listName.get(t.listId) || '',
           task_name: t.title,
           status: statusLabel(t.status),
+          task_map_status: tmRec ? resolveTaskMapSheetSubStatus(tmRec.statuses, tmRec.handedOver) : '',
           priority: NFT_PRIORITY_LABELS[t.priority] || '',
           assigned: names(t.assignee, t.assignees),
           start_date: manilaDate(t.createdAt),
@@ -826,12 +912,14 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
         // closing a subtask always reaches the sheet) or the parent changed recently.
         const parentActive = !isClosedSheetStatus(t.status) || t.updatedAt >= closedSince;
         if (!subId || isOffSheetStatus(status) || (isClosedSheetStatus(status) && !parentActive)) continue;
+        const subTm = subStateMap?.get(s.id);
         items.push({
           clickup_link: `https://app.clickup.com/t/${subId}`,
           nexus_link: `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}&subtask=${s.id}`,
           list_name: listName.get(t.listId) || '',
           task_name: s.title,
           status: statusLabel(status),
+          task_map_status: subTm ? resolveTaskMapSheetSubStatus(subTm.statuses, subTm.handedOver) : '',
           priority: NFT_PRIORITY_LABELS[s.priority] || '',
           assigned: names(s.User, s.assignees),
           start_date: manilaDate(s.createdAt),
@@ -1943,7 +2031,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     );
     const isWorkflowOrReviewTask = existingRecordStatuses.some((s) => {
       const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-      return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+      return [
+        'TOREVIEW',
+        'INREVIEW',
+        'REVIEW',
+        'CHECKING',
+        'INCHECKING',
+        'DESIGNAUDIT',
+        'UIUXAUDIT',
+        'INSTRUCTIONAUDIT',
+        'FUNNELAUDIT',
+        'WAITING',
+        'SENTBUTWAITING',
+        'READYTOSEND',
+        'TOSEND',
+        'ASKCLIENT',
+      ].includes(sn);
     });
     const isResumableFromSheet = existingRecordStatuses.some((s) => {
       const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
@@ -2275,13 +2378,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
 
       if (!isOlderRowEdit && (!isHandedOverTask || Boolean(cleanTimeOut))) {
+        const preservedSessionSubStatuses = Array.isArray(record.statuses)
+          ? record.statuses.filter((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS')
+          : [];
         const maSession = {
           maName: maNameStr,
           taskId: target.taskId,
           listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
           taskStatus: targetTaskMeta?.status || null,
           priority: targetTaskMeta?.priority || null,
-          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? ['Hand-over'] : (Array.isArray(record.statuses) ? record.statuses : undefined)),
+          subStatuses: incomingIsLive
+            ? ['In progress']
+            : preservedSessionSubStatuses.length > 0
+              ? preservedSessionSubStatuses
+              : cleanTimeOut
+                ? ['Hand-over']
+                : undefined,
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
@@ -2552,16 +2664,87 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         nextHandedOver = false;
       }
     } else if (cleanTimeOut) {
-      // Time-Out: auto Hand-over unless MA changed it to To Review / completed / CRM
-      const isAlreadyReviewedOrFinished =
-        ['DONE', 'CLOSED', 'CRM', 'WAITING'].includes(currentTaskStatusNorm) ||
-        (statusStr && ['TO REVIEW', 'TO_REVIEW', 'DONE', 'CLOSED'].includes(statusStr.toUpperCase())) ||
+      // Time-Out: auto Hand-over ONLY if the task is not already in a preserved/review/paused/finished state.
+      // Never clobber parent task status/assignee when timing out a subtask row.
+      const normalizedIncomingSheetStatus = (statusStr || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const shouldPreserveStatusOnTimeout =
+        Boolean(target.subtaskId) ||
+        [
+          'DONE',
+          'CLOSED',
+          'COMPLETED',
+          'COMPLETE',
+          'RESOLVED',
+          'CANCELLED',
+          'CRM',
+          'WAITING',
+          'SENT',
+          'INREVIEW',
+          'TOREVIEW',
+          'REVIEW',
+          'CHECKING',
+          'INCHECKING',
+          'ONHOLD',
+          'REVISION',
+          'REVISIONS',
+        ].includes(currentTaskStatusNorm) ||
+        [
+          'TOREVIEW',
+          'INREVIEW',
+          'REVIEW',
+          'CHECKING',
+          'INCHECKING',
+          'DONE',
+          'CLOSED',
+          'COMPLETED',
+          'COMPLETE',
+          'RESOLVED',
+          'PAUSED',
+          'ONHOLD',
+          'AVAILABLETASK',
+          'WAITING',
+          'CRM',
+          'REVISION',
+          'REVISIONS',
+        ].includes(normalizedIncomingSheetStatus) ||
         existingRecordStatuses.some((s) => {
           const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return ['READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+          return [
+            'PAUSED',
+            'AVAILABLETASK',
+            'ONHOLD',
+            'TOREVIEW',
+            'INREVIEW',
+            'REVIEW',
+            'CHECKING',
+            'INCHECKING',
+            'DESIGNAUDIT',
+            'UIUXAUDIT',
+            'INSTRUCTIONAUDIT',
+            'FUNNELAUDIT',
+            'READYTOSEND',
+            'TOSEND',
+            'ASKCLIENT',
+            'SENTBUTWAITING',
+            'WAITING',
+            'CRM',
+            'REVISION',
+            'REVISIONS',
+            'CLOSED',
+            'DONE',
+          ].includes(sn);
         });
 
-      if (!isAlreadyReviewedOrFinished) {
+      if (shouldPreserveStatusOnTimeout) {
+        if (!target.subtaskId) {
+          const withoutInProgress = existingRecordStatuses.filter(
+            (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+          );
+          if (withoutInProgress.length !== existingRecordStatuses.length && withoutInProgress.length > 0) {
+            nextRecordStatuses = withoutInProgress;
+          }
+        }
+      } else {
         const wasAlreadyHandedOver =
           Boolean(record.handedOver) &&
           existingRecordStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');

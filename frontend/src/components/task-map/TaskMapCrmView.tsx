@@ -525,27 +525,10 @@ export const TaskMapCrmView: React.FC<Props> = ({
     );
   };
 
-  // Check if task belongs in "CRM Needed to Send" column
+  // CRM Needed to Send (replaces CRM Pool 1:1): all unassigned CRM / Ask Client / To Send tasks not in Follow Up, Sent, or Closed
   const isCrmNeededToSend = (t: TaskMapItem) => {
     if (isCrmCompleted(t) || isCrmSent(t) || isCrmNeededToFollowUp(t)) return false;
     if (isAssignedToAnyCrmMember(t)) return false;
-    const s = (t.status || '').toUpperCase().trim();
-    const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
-      st.toUpperCase().replace(/[\s_-]+/g, '')
-    );
-    return (
-      s === 'CRM NEEDED TO SEND' ||
-      s === 'CRM_TO_SEND' ||
-      mapStatusesNorm.includes('TOSEND') ||
-      mapStatusesNorm.includes('READYTOSEND') ||
-      mapStatusesNorm.includes('CRMNEEDEDTOSEND') ||
-      mapStatusesNorm.includes('CRMTOSEND')
-    );
-  };
-
-  // General CRM Pool: tasks needing client outreach / CRM / Ask Client not yet in To Send, Follow Up, or a CRM member
-  const isGeneralCrmPool = (t: TaskMapItem) => {
-    if (isCrmCompleted(t) || isCrmSent(t) || isCrmNeededToSend(t) || isCrmNeededToFollowUp(t)) return false;
     const s = (t.status || '').toUpperCase().trim();
     const mapStatusesNorm = (t.taskMap?.statuses || []).map((st) =>
       st.toUpperCase().replace(/[\s_-]+/g, '')
@@ -556,16 +539,14 @@ export const TaskMapCrmView: React.FC<Props> = ({
       s === 'CRM NEEDED TO SEND' ||
       s === 'CRM_TO_SEND' ||
       s === 'CRM NEEDED TO FOLLOW UP' ||
-      s === 'CRM_FOLLOW_UP';
-    if (!isCrm && !hasAskClient) return false;
-    if (isAssignedToAnyCrmMember(t)) {
-      return false;
-    }
-
-    return true;
+      s === 'CRM_FOLLOW_UP' ||
+      mapStatusesNorm.includes('TOSEND') ||
+      mapStatusesNorm.includes('READYTOSEND') ||
+      mapStatusesNorm.includes('CRMNEEDEDTOSEND') ||
+      mapStatusesNorm.includes('CRMTOSEND');
+    return isCrm || hasAskClient;
   };
 
-  const poolTasks = filteredCrmTasks.filter(isGeneralCrmPool);
   const toSendTasks = filteredCrmTasks.filter(isCrmNeededToSend);
   const followUpTasks = filteredCrmTasks.filter(isCrmNeededToFollowUp);
   const sentTasks = filteredCrmTasks.filter(isCrmSent);
@@ -601,73 +582,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
       });
     });
 
-    if (targetColumnId === 'col-crm-pool') {
-      updatedStatuses = updatedStatuses.filter(
-        (s) =>
-          ![
-            'SENT',
-            'SENT BUT WAITING',
-            'OUTREACH SENT',
-            'CLIENT SENT',
-            'WAITING',
-            'TO SEND',
-            'READY TO SEND',
-            'FOLLOW UP',
-            'CRM NEEDED TO SEND',
-            'CRM NEEDED TO FOLLOW UP',
-          ].includes(s.toUpperCase().trim())
-      );
-      if (!updatedStatuses.includes('CRM')) updatedStatuses.push('CRM');
-      toast.info('Task moved to General CRM Pool');
-      onStatusChange(taskId, updatedStatuses);
-      if ((task.status || '').toUpperCase() !== 'CRM') {
-        const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
-        let transitionCheck = canTransitionTaskStatus(currentTask, 'CRM');
-        if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-          try {
-            const fresh = await tasksApi.getTask(task.id);
-            if (fresh?.task) {
-              const freshCheck = canTransitionTaskStatus(fresh.task, 'CRM');
-              if (freshCheck.allowed) {
-                transitionCheck = freshCheck;
-                useAppStore.getState().updateTask(fresh.task);
-              }
-            }
-          } catch {
-            // fallback
-          }
-        }
-        if (!transitionCheck.allowed) {
-          if (transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0) {
-            window.dispatchEvent(
-              new CustomEvent('task:highlight-audits', {
-                detail: {
-                  taskId: task.id,
-                  targetStatus: 'CRM',
-                  uncheckedAudits: transitionCheck.uncheckedAudits,
-                  openSubtasks: transitionCheck.openSubtasks,
-                },
-              })
-            );
-          }
-          setBlockedAuditAlert({
-            isOpen: true,
-            task,
-            targetStatus: 'CRM',
-            uncheckedAudits: transitionCheck.uncheckedAudits,
-            openSubtasks: transitionCheck.openSubtasks,
-          });
-          toast.error(transitionCheck.reason || 'Cannot move task to CRM');
-          return;
-        }
-      }
-      if (onTaskUpdate) {
-        await onTaskUpdate(taskId, { assigneeId: null, status: 'CRM' });
-      } else {
-        await tasksApi.updateTask(taskId, { assigneeId: null, status: 'CRM' } as any).catch(console.error);
-        onDataRefresh();
-      }
-    } else if (targetColumnId === 'col-crm-to-send' || targetColumnId === 'col-crm-follow-up') {
+    if (targetColumnId === 'col-crm-to-send' || targetColumnId === 'col-crm-follow-up') {
       const isToSendCol = targetColumnId === 'col-crm-to-send';
       const targetSubLabel = isToSendCol ? 'To send' : 'Follow up';
       const colDisplayName = isToSendCol ? 'CRM Needed to Send' : 'CRM Needed to Follow Up';
@@ -1338,7 +1253,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                           await tasksApi.updateTask(task.id, { assigneeId: null, status: 'CRM' } as any).catch(console.error);
                           onDataRefresh();
                         }
-                        toast.info('Task handed over — returned to CRM Pool');
+                        toast.info('Task handed over — returned to CRM Needed to Send');
                       }
                     } else if (label === 'To Review' || label === 'To review') {
                       if (isSelecting) {
@@ -1391,18 +1306,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
 
   const allColumns: CrmColumnDef[] = [
     {
-      id: 'col-crm-pool',
-      title: 'CRM Pool',
-      subtitle: 'Incoming client outreach & communication pool',
-      badgeLabel: 'Pool',
-      badgeClass: 'bg-[#22A3AE]/20 text-[#22A3AE] border-[#22A3AE]/30',
-      dotColor: 'bg-[#22A3AE]',
-      tasks: poolTasks,
-    },
-    {
       id: 'col-crm-to-send',
       title: 'CRM Needed to Send',
-      subtitle: 'Client outreach ready & needed to send',
+      subtitle: 'Incoming client outreach & communication ready to send',
       badgeLabel: 'To Send',
       badgeClass: 'bg-sky-500/15 text-sky-400 border-sky-500/30',
       dotColor: 'bg-[#0284c7]',
@@ -1466,7 +1372,6 @@ export const TaskMapCrmView: React.FC<Props> = ({
     return false;
   };
 
-  const poolCol = allColumns.find((c) => c.id === 'col-crm-pool') || allColumns[0];
   const toSendCol = allColumns.find((c) => c.id === 'col-crm-to-send');
   const followUpCol = allColumns.find((c) => c.id === 'col-crm-follow-up');
   const sentCol = allColumns.find((c) => c.id === 'col-crm-sent');
@@ -1504,7 +1409,6 @@ export const TaskMapCrmView: React.FC<Props> = ({
   });
 
   const orderedColumns: CrmColumnDef[] = [
-    ...(poolCol ? [poolCol] : []),
     ...(toSendCol ? [toSendCol] : []),
     ...(followUpCol ? [followUpCol] : []),
     ...(sentCol ? [sentCol] : []),
@@ -1871,7 +1775,7 @@ export const TaskMapCrmView: React.FC<Props> = ({
                               <TaskMapInProgressDropCard
                                 userId={col.memberUser.id}
                                 userName={col.memberUser.name}
-                                availableTasks={poolTasks}
+                                availableTasks={toSendTasks}
                                 allAvailableTasks={allAvailablePool}
                                 allTasks={allTasks || tasks}
                                 queuedTasks={queuedTasks}

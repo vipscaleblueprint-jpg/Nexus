@@ -5725,7 +5725,9 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       }
     }
 
-    const cleanTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
+    const parsedTaskId = taskId ? parseTaskMapTargetId(taskId).entityId : null;
+    // Never treat synthetic frontend assumption-block IDs (general-slot-*) as real DB Task IDs
+    const cleanTaskId = parsedTaskId && !parsedTaskId.startsWith('general-slot-') ? parsedTaskId : null;
     const nowTimeOut = targetRow?.timeOut || new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Manila',
       hour: 'numeric',
@@ -5734,6 +5736,27 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     }).format(new Date());
     const effectiveTimeOut = mode === 'STOP' ? nowTimeOut : (targetRow?.timeOut || null);
     let resolvedSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+    let resolvedTimeIn: string | null = targetRow?.timeIn || null;
+
+    // On STOP, if sheetRow or timeIn wasn't supplied by the frontend, look up the MA's open DailySheetLog for today
+    if (mode === 'STOP' && (!resolvedSheetRow || !resolvedTimeIn)) {
+      const maKey = actorDisplayName.trim().toLowerCase();
+      const dateKey = getManilaDateStr();
+      const openLog = await prisma.dailySheetLog.findFirst({
+        where: {
+          dateKey,
+          isLive: true,
+          ...(actorUser?.id ? { OR: [{ maKey }, { userId: actorUser.id }] } : { maKey }),
+          ...(cleanTaskId ? { taskId: cleanTaskId } : {}),
+        },
+        orderBy: { submittedAt: 'desc' },
+        select: { sheetRow: true, timeIn: true },
+      }).catch(() => null);
+      if (openLog) {
+        if (!resolvedSheetRow && openLog.sheetRow) resolvedSheetRow = Number(openLog.sheetRow);
+        if (!resolvedTimeIn && openLog.timeIn) resolvedTimeIn = openLog.timeIn;
+      }
+    }
 
     if (cleanTaskId && targetRow) {
       const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
@@ -5785,7 +5808,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
         sheetRow: resolvedSheetRow,
         client: targetRow.client || 'General',
         taskName: targetRow.task || 'Task',
-        timeIn: targetRow.timeIn || null,
+        timeIn: resolvedTimeIn || targetRow.timeIn || null,
         timeOut: effectiveTimeOut,
         isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
         timeTracker: targetRow.timeTracker || null,
@@ -5807,12 +5830,13 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       await invalidateCache('task_map:*').catch(() => {});
     }
 
-    if (cleanTaskId && mode === 'STOP') {
-      await deleteMaActiveSession(actorDisplayName).catch(() => {});
-      const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId };
+    if (mode === 'STOP') {
+      const maSessionKey = actorDisplayName.trim().toLowerCase();
+      await deleteMaActiveSession(maSessionKey).catch(() => {});
+      const clearedPayload = { maName: actorDisplayName, cleared: true, taskId: cleanTaskId || null };
       io.emit('ma:session_updated', clearedPayload);
       io.emit('task_map:ma_progress_changed', clearedPayload);
-      io.emit('task_map:updated', { maSession: clearedPayload, taskId: cleanTaskId });
+      io.emit('task_map:updated', { maSession: clearedPayload, ...(cleanTaskId ? { taskId: cleanTaskId } : {}) });
     }
 
     // Forward to n8n webhook to update the user's personal Google Spreadsheet (with STOP deduplication)
@@ -5848,7 +5872,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
           status: targetRow.taskStatus || mode,
           date: targetRow.date,
-          timeIn: targetRow.timeIn,
+          timeIn: resolvedTimeIn || targetRow.timeIn,
           timeOut: effectiveTimeOut,
           timeTracker: targetRow.timeTracker || null,
           taskDeliverablesDescription: targetRow.taskDeliverablesDescription,

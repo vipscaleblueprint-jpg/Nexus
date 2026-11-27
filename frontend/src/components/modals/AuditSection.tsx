@@ -16,6 +16,7 @@ import {
   hasUiUxOrDesignAudit,
   isUiUxAudit,
   isDesignAudit,
+  isProductionAudit,
   AuditPermissionCheck,
   normalizeAuditName,
   HIDE_DESIGN_AUDIT,
@@ -512,10 +513,11 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
     const getOrder = (name: string): number => {
       const n = normalizeAuditName(name);
       if (n === 'design audit') return 0;
-      if (n === 'ui ux audit') return 1;
-      if (n === 'funnel audit') return 2;
-      if (n === 'instructions audit') return 3;
-      return 4;
+      if (n === 'production audit') return 1;
+      if (n === 'ui ux audit') return 2;
+      if (n === 'funnel audit') return 3;
+      if (n === 'instructions audit') return 4;
+      return 5;
     };
     return Array.from(new Set([
       ...(hasAiPickedAudits ? [] : getRequiredAudits(title, auditorRoles)),
@@ -771,7 +773,7 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
       if (!subtaskId) {
         const taskStatusUpper = (task.status || '').toUpperCase().trim();
         if (newCompleted && (taskStatusUpper === 'IN REVIEW' || taskStatusUpper === 'INREVIEW')) {
-          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text);
+          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text) || isProductionAudit(text);
           if (isLevel1) {
             const dummyTask = { ...task, checklists: localChecklistsRef.current };
             if (areLevel1AuditsComplete(dummyTask)) {
@@ -779,17 +781,17 @@ function AuditSectionComponent({ task, subtask, title, subtaskId, users, checkli
               const updatedTask = { ...task, status: 'Checking', checklists: localChecklistsRef.current };
               useAppStore.getState().updateTask(updatedTask);
               window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-              toast.success('✓ UI/UX and Design audits completed — task moved to Checking');
+              toast.success('✓ Level 1 audits completed — task moved to Checking');
             }
           }
         } else if (!newCompleted && (taskStatusUpper === 'CHECKING' || taskStatusUpper === 'IN CHECKING')) {
-          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text);
+          const isLevel1 = isUiUxAudit(text) || isDesignAudit(text) || isProductionAudit(text);
           if (isLevel1 && hasUiUxOrDesignAudit(task)) {
             await tasksApi.updateTask(task.id, { status: 'In Review' } as any).catch(console.error);
             const updatedTask = { ...task, status: 'In Review', checklists: localChecklistsRef.current };
             useAppStore.getState().updateTask(updatedTask);
             window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
-            toast.info('UI/UX or Design audit unchecked — task returned to In Review');
+            toast.info('Level 1 audit unchecked — task returned to In Review');
           }
         }
       }

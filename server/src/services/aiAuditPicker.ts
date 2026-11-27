@@ -65,7 +65,10 @@ export function fallbackAudits(title: string): string[] {
   const designOnly = DESIGN_ONLY_TITLE.test(t) && !BUILD_TITLE.test(t);
   const migration = /\bmigrat/.test(t);
 
-  if (/graphic|reel|video|sample|design|mock\s?-?up|carousel|flyer|banner|logo|thumbnail|pdf|ebook|lead magnet/.test(t)) {
+  if (/\breel\b|\breels\b|\bvideo\b|\bvideos\b|\bvsl\b|\banimation\b|\bmotion\b|\b3d\b|\bpodcast\b|\bvoiceover\b|\bproduction\b/.test(t)) {
+    audits.add('Production Audit');
+  }
+  if (/graphic|sample|design|mock\s?-?up|carousel|flyer|banner|logo|thumbnail|pdf|ebook|lead magnet/.test(t)) {
     audits.add('Design Audit');
   }
   if (/email|newsletter|social media/.test(t)) {

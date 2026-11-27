@@ -229,7 +229,7 @@ export function evaluateAuditProgressTransition(
     isCheckingStatus(taskStatus) ||
     ['TOREVIEW', 'INREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING'].includes(statusNorm) ||
     mapNorms.some((st) =>
-      ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'UIUXAUDIT', 'FUNNELAUDIT', 'INSTRUCTIONAUDIT', 'INSTRUCTIONSAUDIT', 'DESIGNAUDIT'].includes(st)
+      ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'UIUXAUDIT', 'FUNNELAUDIT', 'INSTRUCTIONAUDIT', 'INSTRUCTIONSAUDIT', 'DESIGNAUDIT', 'PRODUCTIONAUDIT'].includes(st)
     );
 
   if (isTerminalOrOtherBoard || !isAuditPhase) {
@@ -318,7 +318,7 @@ export function evaluateAuditProgressTransition(
 
   const hasRemainingLevel1 = remainingAudits.some((label) => {
     const norm = normalizeAuditName(label);
-    return norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+    return norm.includes('ui') || norm.includes('ux') || norm.includes('design') || norm.includes('production');
   });
 
   return {
@@ -378,6 +378,7 @@ const WORKFLOW_STATUS_TOKENS_TO_STRIP = new Set([
   'INSTRUCTIONAUDIT',
   'INSTRUCTIONSAUDIT',
   'DESIGNAUDIT',
+  'PRODUCTIONAUDIT',
 ]);
 
 /**

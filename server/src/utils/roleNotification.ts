@@ -310,6 +310,7 @@ export function isAuditItem(
     lowerText.includes('audit') ||
     lowerText === 'funnel audit' ||
     lowerText === 'design audit' ||
+    lowerText === 'production audit' ||
     lowerText === 'ui ux audit' ||
     lowerText === 'instructions audit'
   );
@@ -332,6 +333,9 @@ export function formatChecklistNotificationTitle(
     }
     if (lower.includes('design')) {
       return `${actorName} has checked Design auditing on task ${taskTitle}`;
+    }
+    if (lower.includes('production')) {
+      return `${actorName} has checked Production auditing on task ${taskTitle}`;
     }
     if (lower.includes('ui') && lower.includes('ux')) {
       return `${actorName} has checked UI UX auditing on task ${taskTitle}`;

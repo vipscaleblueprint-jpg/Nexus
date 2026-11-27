@@ -598,7 +598,12 @@ export function isCadenceTaskMapItem(
  * (clocked in with no timeOut and not flagged as missing time).
  */
 export function isLiveWorkingProgress(progress?: TaskProgress | null): boolean {
-  return Boolean(progress?.timeIn && !progress?.timeOut && !progress?.isMissingTime);
+  if (!progress) return false;
+  const hasTimeIn = Boolean(progress.timeIn && String(progress.timeIn).trim());
+  const hasTimeOut = Boolean(progress.timeOut && String(progress.timeOut).trim());
+  if (!hasTimeIn || hasTimeOut || progress.isMissingTime) return false;
+  if (progress.isLive === false) return false;
+  return true;
 }
 
 /**
@@ -1809,6 +1814,7 @@ export const ROLE_SHORT_NAMES: Record<string, string> = {
   'UI UX Auditor': 'UI UX Aud',
   'Instruction Auditor': 'Instruction Aud',
   'Design Auditor': 'Design Aud',
+  'Production Auditor': 'Prod Aud',
   'Motion Graphics': 'Motion Graphics',
   '3D Design': '3D Design',
   'Design': 'Design',
@@ -1883,7 +1889,7 @@ export function extractAuditorRoles(
     allUsers.length === 0 &&
     (workspaceRoles || []).length === 0
   ) {
-    for (const r of ['UI UX Auditor', 'Design Auditor', 'Instruction Auditor', 'Funnel Auditor']) {
+    for (const r of ['UI UX Auditor', 'Design Auditor', 'Production Auditor', 'Instruction Auditor', 'Funnel Auditor']) {
       roleNameMap.set(r.toLowerCase(), r);
     }
   }
@@ -1892,6 +1898,7 @@ export function extractAuditorRoles(
     const clean = roleName.trim();
     if (/^ui\s*\/?\s*ux\s*(auditor|audit)?$/i.test(clean)) return 'UI/UX';
     if (/^design\s*(auditor|audit)$/i.test(clean)) return 'Design';
+    if (/^prod(?:uction)?\s*(auditor|audit)$/i.test(clean)) return 'Production';
     if (/^instruction\s*(auditor|audit)$/i.test(clean)) return 'Instruction';
     if (/^funnel\s*(auditor|audit)$/i.test(clean)) return 'Funnel Audit';
     return clean.replace(/\s+(auditor|audit)$/i, '').trim() || clean;
@@ -1905,6 +1912,7 @@ export function extractAuditorRoles(
     const l = k.toLowerCase();
     if (l.includes('ui') || l.includes('ux')) return 1;
     if (l.includes('design')) return 1;
+    if (l.includes('prod')) return 1;
     if (l.includes('instruction')) return 2;
     if (l.includes('funnel')) return 3;
     return 10;
@@ -2359,14 +2367,16 @@ export function createEmptyUserBlock(params?: {
   const rawTitle = (params?.taskTitle || '').trim();
   const assumedTitle =
     rawTitle && rawTitle.toLowerCase() !== 'general task' ? rawTitle : 'No task inputted';
+  const cleanTimeIn = params?.timeIn && String(params.timeIn).trim() ? String(params.timeIn).trim() : null;
+  const cleanTimeOut = params?.timeOut && String(params.timeOut).trim() ? String(params.timeOut).trim() : null;
   const assumedDay = params?.day || getManilaDateKey(new Date()) || new Date().toISOString().split('T')[0];
-  const assumedStatus = params?.status || (params?.timeOut ? 'Done' : 'In progress');
+  const assumedStatus = params?.status || (cleanTimeOut ? 'Done' : 'In progress');
   const rawEffectiveStatus = params?.taskStatus || assumedStatus;
   const rawNorm = rawEffectiveStatus.trim().toUpperCase().replace(/[\s_-]+/g, '');
   const isCadenceAssumed = ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].some(
     (c) => rawNorm === c || rawNorm.includes(c)
   );
-  const isLiveAssumed = Boolean(params?.timeIn && !params?.timeOut);
+  const isLiveAssumed = Boolean(cleanTimeIn && !cleanTimeOut);
   const effectiveStatus =
     isLiveAssumed && !isCadenceAssumed && rawNorm !== 'CLOSED' && rawNorm !== 'DONE'
       ? 'IN PROGRESS'
@@ -2426,12 +2436,13 @@ export function createEmptyUserBlock(params?: {
     linkedTaskId: params?.taskId || null,
     progress: {
       type: 'SHEET_PROGRESS',
-      timeIn: params?.timeIn || null,
-      timeOut: params?.timeOut || null,
+      timeIn: cleanTimeIn,
+      timeOut: cleanTimeOut,
+      isLive: isLiveAssumed,
       isMissingTime: Boolean(
         params?.rowNumber &&
-        !params?.timeIn &&
-        (params?.timeOut || (params?.status && params?.status.toLowerCase() !== 'in progress'))
+        !cleanTimeIn &&
+        (cleanTimeOut || (params?.status && params?.status.toLowerCase() !== 'in progress'))
       ),
       isUpwork: Boolean(params?.isUpwork),
       client: assumedClient,
@@ -2457,6 +2468,7 @@ export {
   getTaskAuditStatus,
   isUiUxAudit,
   isDesignAudit,
+  isProductionAudit,
   isInstructionAudit,
   isFunnelAudit,
 } from '@/lib/auditChecklist';
@@ -2853,7 +2865,7 @@ export function getSubStatusTransitionGuide(
           : 'Restores the task’s prior queue/workflow placement.',
       ],
       requiresDeliverablesClockOut: isLiveSession,
-      requiresConfirmModal: true,
+      requiresConfirmModal: boardScope !== 'AUDITOR_MAP',
       accentColor: getTaskMapSubStatusStyle(label).color,
     };
   }
@@ -2875,7 +2887,7 @@ export function getSubStatusTransitionGuide(
         'Stamps Time Out if an active audit timer is running.',
       ],
       requiresDeliverablesClockOut: false,
-      requiresConfirmModal: true,
+      requiresConfirmModal: false,
       accentColor: getTaskMapSubStatusStyle(label).color,
     };
   }
@@ -2931,6 +2943,7 @@ export function getSubStatusTransitionGuide(
       boardScope,
       isReverting: false,
       requiresDeliverablesClockOut: preset.requiresDeliverablesClockOut || isLiveSession,
+      requiresConfirmModal: boardScope === 'AUDITOR_MAP' ? false : preset.requiresConfirmModal,
     };
   }
 
@@ -2962,7 +2975,7 @@ export function getSubStatusTransitionGuide(
         ]
       : [`Sets sub-status pill to "${label}".`],
     requiresDeliverablesClockOut: isLiveSession,
-    requiresConfirmModal: true,
+    requiresConfirmModal: boardScope !== 'AUDITOR_MAP',
     accentColor: getTaskMapSubStatusStyle(label).color,
   };
 }
@@ -3568,4 +3581,113 @@ export function attachDragToScroll(container: HTMLElement): () => void {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   };
+}
+
+export interface SearchedTaskLocation {
+  taskId: string;
+  title: string;
+  isSubtask: boolean;
+  parentTaskTitle?: string;
+  locationText: string;
+}
+
+/**
+ * Finds where a searched task/subtask currently lives across Task Map, Auditor Map,
+ * and CRM Map (and who it is assigned to) when a column's search returns empty.
+ */
+export function findSearchedTaskLocations(
+  query: string | undefined,
+  allItems: TaskMapItem[],
+  allUsers: Array<{ id: string; name?: string | null }> = [],
+  maxResults = 3
+): SearchedTaskLocation[] {
+  const raw = (query || '').trim();
+  if (!raw || !Array.isArray(allItems) || allItems.length === 0) return [];
+  const q = raw.toLowerCase();
+
+  const usersById = new Map<string, string>();
+  for (const u of allUsers) {
+    if (u?.id && u?.name) usersById.set(u.id, u.name);
+  }
+
+  const results: SearchedTaskLocation[] = [];
+  const seen = new Set<string>();
+
+  for (const t of allItems) {
+    if (!t || seen.has(t.id)) continue;
+    const isMatch =
+      matchesTaskLinkOrId(t, raw) ||
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.parentTaskTitle || '').toLowerCase().includes(q) ||
+      (t.list?.name || '').toLowerCase().includes(q) ||
+      (t.list?.folder?.name || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q) ||
+      (t.taskMap?.statuses || []).some((s) => (s || '').toLowerCase().includes(q));
+
+    if (!isMatch) continue;
+    seen.add(t.id);
+
+    const statusNorm = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    const mapStatusesNorm = (t.taskMap?.statuses || []).map((s) =>
+      (s || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+    );
+
+    const handlerId = getEffectiveTaskMapHandlerId(t);
+    const liveMaName =
+      t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime
+        ? t.progress?.maName
+        : null;
+    const assignedName =
+      (handlerId ? usersById.get(handlerId) : null) ||
+      liveMaName ||
+      t.assignee?.name ||
+      t.assignees?.[0]?.name ||
+      null;
+
+    const isCrmTag = mapStatusesNorm.some((s) =>
+      ['ASKCLIENT', 'READYTOSEND', 'TOSEND', 'SENTBUTWAITING', 'SENT', 'FOLLOWUP'].includes(s)
+    );
+    const isReview =
+      ['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING'].includes(statusNorm) ||
+      mapStatusesNorm.some((s) =>
+        ['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING'].includes(s)
+      );
+    const isCrm =
+      statusNorm === 'CRM' ||
+      statusNorm === 'WAITING' ||
+      statusNorm.includes('CRM') ||
+      statusNorm.includes('WAITING') ||
+      isCrmTag;
+
+    let locationText: string;
+    if (t.isClosed || ['CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED', 'CANCELLED'].includes(statusNorm)) {
+      locationText = assignedName ? `Closed (was assigned to ${assignedName})` : 'Closed';
+    } else if (isCrm && !mapStatusesNorm.includes('REVISION') && statusNorm !== 'REVISION') {
+      locationText = assignedName
+        ? `CRM Map — assigned to ${assignedName}`
+        : `CRM Map (${t.status || 'CRM'} / Pool)`;
+    } else if (isReview && !isCrmTag && statusNorm !== 'REVISION' && !mapStatusesNorm.includes('REVISION')) {
+      locationText =
+        handlerId && assignedName
+          ? `Auditor Map — assigned to ${assignedName}`
+          : 'Auditor Map (To Review queue)';
+    } else if (handlerId && assignedName) {
+      locationText = `Task Map — assigned to ${assignedName}${liveMaName ? ' (In Progress)' : ' (Queue)'}`;
+    } else if (liveMaName) {
+      locationText = `Task Map — assigned to ${liveMaName} (In Progress)`;
+    } else {
+      locationText = `Task Map — Available Tasks${isTaskUnderAdmin(t) ? ' (Admin)' : ''}`;
+    }
+
+    results.push({
+      taskId: t.id,
+      title: t.title,
+      isSubtask: Boolean(t.isSubtask),
+      parentTaskTitle: t.parentTaskTitle,
+      locationText,
+    });
+    if (results.length >= maxResults) break;
+  }
+
+  return results;
 }

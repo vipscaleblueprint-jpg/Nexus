@@ -20,6 +20,7 @@ import {
   formatManilaTime,
   getSubStatusTransitionGuide,
   SubStatusTransitionGuide,
+  findSearchedTaskLocations,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
@@ -1737,24 +1738,44 @@ export const TaskMapCrmView: React.FC<Props> = ({
                 ) : (
                   <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
                     {visibleTasks.length === 0 ? (
-                      <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
-                        <span className="text-xs font-semibold text-zinc-400">
-                          {col.id === 'col-crm-sent'
-                            ? 'No sent tasks'
-                            : col.id === 'col-crm-closed'
-                              ? 'No closed tasks'
-                              : 'No CRM tasks'}
-                        </span>
-                        <span className="text-[11px] text-zinc-500 mt-1">
-                          {searchQuery || activePriority !== 'ALL'
-                            ? 'No tasks match filter'
-                            : col.id === 'col-crm-sent'
-                              ? 'Drop tasks here when outreach has been sent to client'
-                              : col.id === 'col-crm-closed'
-                                ? 'Closed and verified tasks appear here'
-                                : `Drop client communication tasks here to assign to ${col.title}`}
-                        </span>
-                      </div>
+                      (() => {
+                        const searchMatches = searchQuery.trim()
+                          ? findSearchedTaskLocations(searchQuery, combinedTasks, allUsers)
+                          : [];
+                        return (
+                          <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80 space-y-2">
+                            <span className="text-xs font-semibold text-zinc-400">
+                              {col.id === 'col-crm-sent'
+                                ? 'No sent tasks'
+                                : col.id === 'col-crm-closed'
+                                  ? 'No closed tasks'
+                                  : 'No CRM tasks'}
+                            </span>
+                            <span className="text-[11px] text-zinc-500">
+                              {searchQuery || activePriority !== 'ALL'
+                                ? 'No tasks match filter'
+                                : col.id === 'col-crm-sent'
+                                  ? 'Drop tasks here when outreach has been sent to client'
+                                  : col.id === 'col-crm-closed'
+                                    ? 'Closed and verified tasks appear here'
+                                    : `Drop client communication tasks here to assign to ${col.title}`}
+                            </span>
+                            {searchMatches.length > 0 && (
+                              <div className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 p-2 text-left space-y-1">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                                  Found elsewhere:
+                                </p>
+                                {searchMatches.map((m) => (
+                                  <div key={m.taskId} className="text-[11px] leading-snug text-zinc-300">
+                                    <span className="font-medium text-white">{m.title}</span>
+                                    <span className="text-zinc-400"> — {m.locationText}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     ) : (
                       (col.id === 'col-crm-sent'
                         ? sortCrmSentTasks(visibleTasks, activeFollowUpSort, sortTasksUrgentFirst)

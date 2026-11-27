@@ -1610,10 +1610,17 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (sheetProg?.maName && sheetProg.timeIn && !sheetProg.timeOut && !sheetProg.isMissingTime) {
         const maKey = sheetProg.maName.toLowerCase().trim();
         const existing = maActiveSessions[maKey];
-        const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+        const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
+        const existingRowNum = existing?.rowNumber ? Number(existing.rowNumber) : -1;
+        const incomingRowNum = sheetProg.sheetRow ? Number(sheetProg.sheetRow) : -1;
         const incomingUpdatedMs = sheetProg.updatedAt ? new Date(sheetProg.updatedAt).getTime() : 0;
         const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-        if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+        const isStaleComparedToTimedOut =
+          existingHasTimeOut &&
+          ((incomingRowNum > 0 && existingRowNum > 0 && incomingRowNum <= existingRowNum) ||
+            incomingUpdatedMs <= existingUpdatedMs);
+        const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existingHasTimeOut && !existing.isMissingTime);
+        if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
           maActiveSessions[maKey] = {
             maName: sheetProg.maName,
             taskId: t.id,
@@ -1643,10 +1650,17 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (!log?.maName || !log.isLive || !log.timeIn || log.timeOut || log.isMissingTime) continue;
       const maKey = log.maKey || log.maName.toLowerCase().trim();
       const existing = maActiveSessions[maKey];
-      const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+      const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
+      const existingRowNum = existing?.rowNumber ? Number(existing.rowNumber) : -1;
+      const incomingRowNum = log.sheetRow ? Number(log.sheetRow) : -1;
       const incomingUpdatedMs = log.submittedAt ? new Date(log.submittedAt).getTime() : 0;
       const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-      if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+      const isStaleComparedToTimedOut =
+        existingHasTimeOut &&
+        ((incomingRowNum > 0 && existingRowNum > 0 && incomingRowNum <= existingRowNum) ||
+          incomingUpdatedMs <= existingUpdatedMs);
+      const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existingHasTimeOut && !existing.isMissingTime);
+      if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
         maActiveSessions[maKey] = {
           maName: log.maName,
           taskId: log.taskId || null,

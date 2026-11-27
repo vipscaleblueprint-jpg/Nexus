@@ -160,6 +160,7 @@ export function auditorRoleFromTitle(title: string | undefined): string | null {
   const head = t.replace(/^--\s*audit[\s—–-]*/, '').split(/\s[—–-]\s/)[0];
   if (/ui\s*\/?\s*ux/.test(head)) return 'UI UX Auditor';
   if (/funnel|automation|kajabi/.test(head)) return 'Funnel Auditor';
+  if (/production|\bprod\b/.test(head)) return 'Production Auditor';
   if (/design/.test(head)) return 'Design Auditor';
   return null;
 }

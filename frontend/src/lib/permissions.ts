@@ -220,13 +220,13 @@ export function canTransitionTaskStatus(
       const auditStatus = getTaskAuditStatus(task);
       const incompleteLevel1 = auditStatus.uncheckedAudits.filter((a) => {
         const norm = (a || '').toLowerCase();
-        return norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+        return norm.includes('ui') || norm.includes('ux') || norm.includes('design') || norm.includes('production');
       });
 
       if (incompleteLevel1.length > 0) {
         return {
           allowed: false,
-          reason: `Cannot move to Checking: UI/UX and Design audits must be completed first (${incompleteLevel1.join(', ')}).`,
+          reason: `Cannot move to Checking: UI/UX, Design, and Production audits must be completed first (${incompleteLevel1.join(', ')}).`,
           uncheckedAudits: incompleteLevel1,
           openSubtasks: [],
           targetStatus: newStatus,

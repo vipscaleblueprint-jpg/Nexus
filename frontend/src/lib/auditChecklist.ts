@@ -13,7 +13,8 @@ export interface AuditOption {
 export const ALL_AUDIT_OPTIONS: AuditOption[] = [
   { id: 'Instructions Audit', label: 'Instructions Audit', role: null, description: 'Review against task briefing & instructions' },
   { id: 'UI UX Audit', label: 'UI/UX Audit', role: 'UI/UX', description: 'Review user experience & interaction design' },
-  { id: 'Design Audit', label: 'Design Audit', role: 'Designer', description: 'Review visual aesthetics, assets & layouts' },
+  { id: 'Design Audit', label: 'Design Audit', role: 'Designer', description: 'Review visual aesthetics, static assets & layouts' },
+  { id: 'Production Audit', label: 'Production Audit', role: 'Production', description: 'Review video, motion, audio & production deliverables' },
   { id: 'Funnel Audit', label: 'Funnel Audit', role: 'Funnel/Backend', description: 'Review funnel flow, tracking & backend setup' },
 ];
 
@@ -21,6 +22,7 @@ export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
   const replaced = clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
   if (replaced === 'instruction audit') return 'instructions audit';
+  if (replaced === 'prod audit') return 'production audit';
   return replaced;
 };
 
@@ -28,6 +30,7 @@ const NEXUS_AUDIT_ITEMS = new Set([
   'instructions audit',
   'instruction audit',
   'design audit',
+  'production audit',
   'ui ux audit',
   'funnel audit',
 ]);
@@ -63,6 +66,7 @@ const AUDIT_ROLE_MATCHERS: Record<string, (role: string) => boolean> = {
   'instructions audit': (r) => r.includes('instruction'),
   'ui ux audit': (r) => /ui\s*\/?\s*ux/.test(r),
   'design audit': (r) => r.includes('design'),
+  'production audit': (r) => r.includes('production') || /\bprod\b/.test(r),
   'funnel audit': (r) => r.includes('funnel'),
 };
 
@@ -155,7 +159,10 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
   }
 
   // Same title rules as the server's getRequiredAudits, so every audit it requires is shown here.
-  if (!HIDE_DESIGN_AUDIT && /graphic|reel|video|sample/.test(title)) audits.add('Design Audit');
+  if (/\breel\b|\breels\b|\bvideo\b|\bvideos\b|\bvsl\b|\banimation\b|\bmotion\b|\b3d\b|\bpodcast\b|\bvoiceover\b|\bproduction\b/.test(title)) {
+    audits.add('Production Audit');
+  }
+  if (!HIDE_DESIGN_AUDIT && /graphic|sample/.test(title)) audits.add('Design Audit');
   if (/email|newsletter|social media/.test(title)) {
     if (!HIDE_DESIGN_AUDIT) audits.add('Design Audit');
     audits.add('Funnel Audit');
@@ -172,6 +179,7 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
     const r = (role || '').toLowerCase();
     if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
     if (!HIDE_DESIGN_AUDIT && r.includes('design')) audits.add('Design Audit');
+    if (r.includes('production') || /\bprod\b/.test(r)) audits.add('Production Audit');
     if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
   });
 
@@ -344,6 +352,11 @@ export const isDesignAudit = (name: string): boolean => {
   return norm === 'design audit';
 };
 
+export const isProductionAudit = (name: string): boolean => {
+  const norm = normalizeAuditName(name);
+  return norm === 'production audit';
+};
+
 export const isInstructionAudit = (name: string): boolean => {
   const norm = normalizeAuditName(name);
   return norm === 'instructions audit' || norm === 'instruction audit';
@@ -389,19 +402,19 @@ export function hasUiUxOrDesignAudit(task: any, subtaskId?: string): boolean {
   if (!task) return false;
   const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
   const status = getTaskAuditStatus(targetTask);
-  return status.requiredAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a));
+  return status.requiredAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a) || isProductionAudit(a));
 }
 
 /**
- * Checks whether all required Level 1 audits (UI UX Audit and Design Audit) are complete.
+ * Checks whether all required Level 1 audits (UI UX Audit, Design Audit, and Production Audit) are complete.
  */
 export function areLevel1AuditsComplete(task: any, subtaskId?: string): boolean {
   if (!task) return true;
   const targetTask = resolveTargetTaskOrSubtask(task, subtaskId);
   const status = getTaskAuditStatus(targetTask);
-  const requiredLevel1 = status.requiredAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a));
+  const requiredLevel1 = status.requiredAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a) || isProductionAudit(a));
   if (requiredLevel1.length === 0) return true;
-  return !status.uncheckedAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a));
+  return !status.uncheckedAudits.some((a) => isUiUxAudit(a) || isDesignAudit(a) || isProductionAudit(a));
 }
 
 /**
@@ -483,7 +496,7 @@ export function canPerformAudit(
   }
 
   // Level 1 audits have no hierarchy prerequisites
-  if (isUiUxAudit(norm) || isDesignAudit(norm)) {
+  if (isUiUxAudit(norm) || isDesignAudit(norm) || isProductionAudit(norm)) {
     return { allowed: true, missingPrerequisites: [] };
   }
 
@@ -491,12 +504,15 @@ export function canPerformAudit(
   const status = getTaskAuditStatus(targetTask);
 
   // Uncompleted Level 1 audits
-  const missingLevel1 = status.uncheckedAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a));
+  const missingLevel1 = status.uncheckedAudits.filter((a) => isUiUxAudit(a) || isDesignAudit(a) || isProductionAudit(a));
+
+  const formatLevel1Label = (a: string) =>
+    isUiUxAudit(a) ? 'UI/UX Audit' : isProductionAudit(a) ? 'Production Audit' : 'Design Audit';
 
   // Level 2: Instruction Audit
   if (isInstructionAudit(norm)) {
     if (missingLevel1.length > 0) {
-      const labels = missingLevel1.map((a) => (isUiUxAudit(a) ? 'UI/UX Audit' : 'Design Audit')).join(' and ');
+      const labels = missingLevel1.map(formatLevel1Label).join(' and ');
       return {
         allowed: false,
         reason: `Cannot do Instruction Audit: ${labels} must be completed first.`,
@@ -509,7 +525,7 @@ export function canPerformAudit(
   // Level 3: Funnel Audit
   if (isFunnelAudit(norm)) {
     if (missingLevel1.length > 0) {
-      const labels = missingLevel1.map((a) => (isUiUxAudit(a) ? 'UI/UX Audit' : 'Design Audit')).join(' and ');
+      const labels = missingLevel1.map(formatLevel1Label).join(' and ');
       return {
         allowed: false,
         reason: `Cannot do Funnel Audit: ${labels} must be completed first.`,

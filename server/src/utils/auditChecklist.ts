@@ -10,12 +10,13 @@ export const HIDE_DESIGN_AUDIT = false;
 export const HIDE_INSTRUCTIONS_AUDIT = true;
 
 /** The order audit items are listed in. */
-export const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'UI UX Audit', 'Funnel Audit'];
+export const AUDIT_ITEM_ORDER = ['Instructions Audit', 'Design Audit', 'Production Audit', 'UI UX Audit', 'Funnel Audit'];
 
 export const normalizeAuditName = (name: string) => {
   const clean = (name || '').trim().toLowerCase();
   const replaced = clean.replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
   if (replaced === 'instruction audit') return 'instructions audit';
+  if (replaced === 'prod audit') return 'production audit';
   return replaced;
 };
 
@@ -34,11 +35,17 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
     const r = (role || '').toLowerCase();
     if (r.includes('ui') || r.includes('ux')) audits.add('UI UX Audit');
     if (!HIDE_DESIGN_AUDIT && r.includes('design')) audits.add('Design Audit');
+    if (r.includes('production') || /\bprod\b/.test(r)) audits.add('Production Audit');
     if (r.includes('funnel') || r.includes('backend')) audits.add('Funnel Audit');
   });
 
-  // 1. Graphics, Reels, Video, Samples -> ONLY Design
-  if (!HIDE_DESIGN_AUDIT && t.match(/graphic|reel|video|sample/)) {
+  // 1a. Video, Reels, Motion, Animation, 3D, Audio/Podcast -> Production Audit (separate from Design Audit)
+  if (t.match(/\breel\b|\breels\b|\bvideo\b|\bvideos\b|\bvsl\b|\banimation\b|\bmotion\b|\b3d\b|\bpodcast\b|\bvoiceover\b|\bproduction\b/)) {
+    audits.add('Production Audit');
+  }
+
+  // 1b. Static Graphics, Samples -> Design Audit
+  if (!HIDE_DESIGN_AUDIT && t.match(/graphic|sample/)) {
     audits.add('Design Audit');
   }
 
@@ -62,6 +69,7 @@ const NEXUS_AUDIT_ITEMS = new Set([
   'instructions audit',
   'instruction audit',
   'design audit',
+  'production audit',
   'ui ux audit',
   'funnel audit',
 ]);

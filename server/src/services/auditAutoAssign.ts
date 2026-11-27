@@ -23,6 +23,7 @@ const AUDIT_ROLE_MATCHERS: Record<string, (role: string) => boolean> = {
   'instructions audit': (r) => r.includes('instruction'),
   'ui ux audit': (r) => /ui\s*\/?\s*ux/.test(r),
   'design audit': (r) => r.includes('design'),
+  'production audit': (r) => r.includes('production') || /\bprod\b/.test(r),
   'funnel audit': (r) => r.includes('funnel'),
 };
 

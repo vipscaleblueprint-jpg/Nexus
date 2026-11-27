@@ -23,6 +23,7 @@ import {
   formatManilaTime,
   getSubStatusTransitionGuide,
   SubStatusTransitionGuide,
+  findSearchedTaskLocations,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
@@ -202,6 +203,9 @@ const getAuditorBadge = (user: any) => {
   if (roles.some((r: string) => r.includes('ui') || r.includes('ux'))) {
     return { label: 'UI/UX Auditor', color: 'bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-950/80 dark:text-cyan-300 dark:border-cyan-800/60' };
   }
+  if (roles.some((r: string) => r.includes('production') || /\bprod\b/.test(r))) {
+    return { label: 'Production Auditor', color: 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-950/80 dark:text-orange-300 dark:border-orange-800/60' };
+  }
   if (roles.some((r: string) => r.includes('design') || r.includes('graphic'))) {
     return { label: 'Design Auditor', color: 'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/80 dark:text-pink-300 dark:border-pink-800/60' };
   }
@@ -227,6 +231,9 @@ export const getDesignatedAuditType = (user: any): string => {
   }
   if (roles.some((r: string) => r.includes('ui') || r.includes('ux'))) {
     return 'UI UX Audit';
+  }
+  if (roles.some((r: string) => r.includes('production') || /\bprod\b/.test(r))) {
+    return 'Production Audit';
   }
   if (roles.some((r: string) => r.includes('design') || r.includes('graphic'))) {
     return 'Design Audit';
@@ -1182,11 +1189,15 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                     };
 
                     const guide = getSubStatusTransitionGuide(label, 'AUDITOR_MAP', { isSelecting });
-                    setSubStatusGuideTarget({
-                      task,
-                      guide,
-                      onConfirm: executeAuditingSubStatusTransition,
-                    });
+                    if (guide.requiresConfirmModal) {
+                      setSubStatusGuideTarget({
+                        task,
+                        guide,
+                        onConfirm: executeAuditingSubStatusTransition,
+                      });
+                    } else {
+                      void executeAuditingSubStatusTransition();
+                    }
                   }}
                   onOptionsUpdated={onOptionsUpdated}
                   readOnly={false}
@@ -1668,16 +1679,36 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                 ) : (
                   <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-3 px-1.5 py-1 min-h-0">
                     {visibleTasks.length === 0 ? (
-                      <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80">
-                        <span className="text-xs font-semibold text-zinc-400">
-                          No tasks to review
-                        </span>
-                        <span className="text-[11px] text-zinc-500 mt-1">
-                          {searchQuery || activePriority !== 'ALL'
-                            ? 'No tasks match filter'
-                            : `Drop tasks here to assign to ${col.title}`}
-                        </span>
-                      </div>
+                      (() => {
+                        const searchMatches = searchQuery.trim()
+                          ? findSearchedTaskLocations(searchQuery, combinedTasks, allUsers)
+                          : [];
+                        return (
+                          <div className="p-4 bg-zinc-900/40 border border-dashed border-zinc-800 rounded-xl min-h-[112px] flex flex-col items-center justify-center text-center transition-all hover:border-zinc-700/80 space-y-2">
+                            <span className="text-xs font-semibold text-zinc-400">
+                              No tasks to review
+                            </span>
+                            <span className="text-[11px] text-zinc-500">
+                              {searchQuery || activePriority !== 'ALL'
+                                ? 'No tasks match filter'
+                                : `Drop tasks here to assign to ${col.title}`}
+                            </span>
+                            {searchMatches.length > 0 && (
+                              <div className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 p-2 text-left space-y-1">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                                  Found elsewhere:
+                                </p>
+                                {searchMatches.map((m) => (
+                                  <div key={m.taskId} className="text-[11px] leading-snug text-zinc-300">
+                                    <span className="font-medium text-white">{m.title}</span>
+                                    <span className="text-zinc-400"> — {m.locationText}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     ) : (
                       sortTasksUrgentFirst(visibleTasks).map((task) => renderAuditorCard(task, true))
                     )}

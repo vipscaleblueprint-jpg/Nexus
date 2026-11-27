@@ -37,69 +37,7 @@ import { toNotificationPreview } from '../utils/mentionNotification';
 import { getOrCreateTaskMapRecord, updateTaskMapRecord, getUpworkClients, getUpworkProjectClients, isProjectBasedUpwork, parseManilaTimeToIso, syncTaskMapOnDirectAssign, cascadeParentOnHoldToSubtasks, isOnHoldStatus, isHiddenAdminOrInternalTask, getManilaDateStr } from '../services/taskMapService';
 import { upsertDailySheetLog, clearDailySheetLogRow } from '../services/dailySheetLogService';
 import { verifyDailyOtp, setClientUnlockedToday, notifyAdminsOfClientOtpUnlock } from '../utils/dailyOtp';
-import { getTaskMoverAndUpdaters } from './task.controller';
-
-function parseIsRoleFlags(isRole: unknown): { isRole: string | null; isAuditRole: boolean; isCollaborated: boolean } {
-  const isRoleStr = isRole !== undefined && isRole !== null ? String(isRole).trim() || null : null;
-  const s = (isRoleStr || '').toLowerCase();
-  const isCollaborated = s.includes('collab');
-  const isAuditRole = !isCollaborated && (s === 'true' || s.includes('audit'));
-  return { isRole: isRoleStr, isAuditRole, isCollaborated };
-}
-
-/**
- * Records an MA_UPDATE AuditLog when a sheet row is marked IsCollaborated=true,
- * so getTaskMoverAndUpdaters blocks that user from checking audits on the task.
- */
-async function recordSheetCollaborationIfNeeded(params: {
-  taskId: string;
-  subtaskId?: string | null;
-  listId?: string | null;
-  userId?: string | null;
-  userName?: string | null;
-  isRole: string | null;
-  isAuditRole: boolean;
-  isCollaborated: boolean;
-}) {
-  if (!params.isCollaborated || !params.taskId || (!params.userId && !params.userName)) return;
-  try {
-    const currentMovers = await getTaskMoverAndUpdaters(params.taskId, params.subtaskId || undefined);
-    const alreadyListed = Boolean(
-      (params.userId && currentMovers.maUpdaterIds.includes(params.userId)) ||
-      (params.userName && currentMovers.maUpdaterNames.some((n) => n.trim().toLowerCase() === params.userName!.trim().toLowerCase()))
-    );
-    if (!alreadyListed) {
-      const actorId = params.userId || (await getOrCreateVipScaleUser()).id;
-      await prisma.auditLog.create({
-        data: {
-          action: 'MA_UPDATE',
-          entity: 'TASK',
-          entityId: params.taskId,
-          userId: actorId,
-          details: {
-            subtaskId: params.subtaskId || null,
-            source: 'sheets',
-            movedByName: params.userName || 'Unknown',
-            movedById: params.userId || null,
-            isMaUpdate: true,
-            isRole: params.isRole,
-            isAuditRole: params.isAuditRole,
-            isCollaborated: true,
-            maUpdaterIds: params.userId ? [params.userId] : [],
-            maUpdaterNames: params.userName ? [params.userName] : [],
-          },
-        },
-      });
-    }
-    const freshMovers = await getTaskMoverAndUpdaters(params.taskId, params.subtaskId || undefined);
-    io.emit('task:updated', { id: params.taskId, ...freshMovers });
-    if (params.listId) {
-      io.to(`list:${params.listId}`).emit('task:updated', { id: params.taskId, ...freshMovers });
-    }
-  } catch (err) {
-    console.warn('[Sheets] Failed to record sheet collaboration:', err);
-  }
-}
+import { checkClientLockStatus } from '../services/clientLockService';
 
 interface LinkedTarget {
   taskId: string;
@@ -868,7 +806,6 @@ export const handleSheetComment = async (req: Request, res: Response) => {
     }
 
     const author = (await findUserByName(body.name)) ?? (await getOrCreateVipScaleUser());
-    const { isRole: isRoleStr, isAuditRole, isCollaborated } = parseIsRoleFlags(body.is_role);
     const comment = await prisma.taskComment.create({
       data: {
         taskId: target.taskId,
@@ -886,28 +823,9 @@ export const handleSheetComment = async (req: Request, res: Response) => {
         entity: 'TASK',
         entityId: target.taskId,
         userId: author.id,
-        details: {
-          text: content.trim(),
-          commentId: comment.id,
-          subtaskId: target.subtaskId || null,
-          source: 'sheets',
-          isRole: isRoleStr,
-          isAuditRole,
-          isCollaborated,
-        },
+        details: { text: content.trim(), commentId: comment.id, subtaskId: target.subtaskId || null, source: 'sheets' },
       },
     }).catch(() => null);
-
-    await recordSheetCollaborationIfNeeded({
-      taskId: target.taskId,
-      subtaskId: target.subtaskId,
-      listId: target.listId,
-      userId: author.id,
-      userName: author.name || body.name,
-      isRole: isRoleStr,
-      isAuditRole,
-      isCollaborated,
-    });
 
     const activity = {
       id: log ? log.id : comment.id,
@@ -1728,7 +1646,7 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   return false;
                 }
                 const isOlderRow = sheet_row && r.sheetRow && incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum;
-                if (matchesMa && staleRec.taskId !== task.id && r.timeIn && !r.timeOut && isOlderRow) {
+                if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
                   r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
                   mod = true;
                   if (r.isUpwork) {
@@ -1951,8 +1869,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     // Filter out previous SHEET_PROGRESS entry
     reviewsList = reviewsList.filter((r: any) => r.type !== 'SHEET_PROGRESS');
 
-    const { isRole: isRoleStr, isAuditRole, isCollaborated } = parseIsRoleFlags(body.is_role);
-
     const startedAtIso = cleanTimeIn ? parseManilaTimeToIso(date, cleanTimeIn) : null;
     const progressObj = {
       type: 'SHEET_PROGRESS',
@@ -1969,9 +1885,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       subtaskId: target.subtaskId || null,
       taskDeliverables: task_deliverables_description ? String(task_deliverables_description).trim() : null,
       taskUpdateAndDeliverables: task_update_and_deliverables ? String(task_update_and_deliverables).trim() : null,
-      isRole: isRoleStr,
-      isAuditRole,
-      isCollaborated,
       startedAt: startedAtIso,
       updatedAt: new Date().toISOString(),
     };
@@ -2125,29 +2038,14 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         }
       }
 
-      if (!isOlderRowEdit && !isHandedOverTask) {
-        const compactStatusStr = (statusStr || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
-        const existingPausedOrAvailable = existingRecordStatuses.find((s) => {
-          const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return ['PAUSED', 'AVAILABLETASK', 'TOREVIEW', 'INREVIEW', 'ONHOLD', 'ASKCLIENT', 'WAITING'].includes(sn);
-        });
-        const timeoutSubStatuses =
-          compactStatusStr === 'PAUSED'
-            ? ['Paused']
-            : compactStatusStr === 'AVAILABLETASK'
-              ? ['Available Task']
-              : compactStatusStr === 'TOREVIEW' || compactStatusStr === 'INREVIEW'
-                ? ['To Review']
-                : existingPausedOrAvailable
-                  ? [existingPausedOrAvailable]
-                  : ['Hand-over'];
+      if (!isOlderRowEdit && (!isHandedOverTask || Boolean(cleanTimeOut))) {
         const maSession = {
           maName: maNameStr,
           taskId: target.taskId,
           listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
           taskStatus: targetTaskMeta?.status || null,
           priority: targetTaskMeta?.priority || null,
-          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? timeoutSubStatuses : (Array.isArray(record.statuses) ? record.statuses : undefined)),
+          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? ['Hand-over'] : (Array.isArray(record.statuses) ? record.statuses : undefined)),
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
@@ -2418,26 +2316,13 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         nextHandedOver = false;
       }
     } else if (cleanTimeOut) {
-      // Time-Out: auto Hand-over ONLY if the task wasn't intentionally timed out to Paused / Available Task / To Review / completed / CRM / On-hold
-      const compactIncomingStatus = (statusStr || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      // Time-Out: auto Hand-over unless MA changed it to To Review / completed / CRM
       const isAlreadyReviewedOrFinished =
-        ['DONE', 'CLOSED', 'CRM', 'WAITING', 'INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING', 'REVISION', 'ONHOLD'].includes(currentTaskStatusNorm) ||
-        ['PAUSED', 'AVAILABLETASK', 'TOREVIEW', 'INREVIEW', 'DONE', 'CLOSED', 'ASKCLIENT', 'WAITING', 'ONHOLD', 'REVISION', 'REVISIONS', 'READYTOSEND', 'TOSEND'].includes(compactIncomingStatus) ||
+        ['DONE', 'CLOSED', 'CRM', 'WAITING'].includes(currentTaskStatusNorm) ||
+        (statusStr && ['TO REVIEW', 'TO_REVIEW', 'DONE', 'CLOSED'].includes(statusStr.toUpperCase())) ||
         existingRecordStatuses.some((s) => {
           const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return [
-            'PAUSED',
-            'AVAILABLETASK',
-            'TOREVIEW',
-            'INREVIEW',
-            'READYTOSEND',
-            'TOSEND',
-            'ASKCLIENT',
-            'WAITING',
-            'ONHOLD',
-            'REVISION',
-            'REVISIONS',
-          ].includes(sn);
+          return ['READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
         });
 
       if (!isAlreadyReviewedOrFinished) {
@@ -2493,17 +2378,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       pmReviews: reviewsList,
       ...(nextRecordStatuses !== existingRecordStatuses ? { statuses: nextRecordStatuses } : {}),
       ...(nextHandedOver !== undefined ? { handedOver: nextHandedOver } : {}),
-    });
-
-    await recordSheetCollaborationIfNeeded({
-      taskId: target.taskId,
-      subtaskId: target.subtaskId,
-      listId: targetTaskMeta?.listId || target.listId,
-      userId: maUserRecord?.id || null,
-      userName: maUserRecord?.name || maNameStr,
-      isRole: isRoleStr,
-      isAuditRole,
-      isCollaborated,
     });
 
     // Invalidate caches
@@ -2692,5 +2566,25 @@ export const verifyClientOtp = async (req: Request, res: Response) => {
     pmEmail: pm.email,
     message: `Client "${cleanClient}" successfully authorized and unlocked by PM ${pm.name}.`,
   });
+};
+
+/**
+ * GET /api/webhooks/sheets/client-lock-status?client=<ClientName>
+ * Protected by x-api-key. Returns client pacing & overhours OTP lock status
+ * (including whether a PM already unlocked the client today in Nexus or another sheet).
+ */
+export const getSheetClientLockStatus = async (req: Request, res: Response) => {
+  if (!requireApiKey(req, res)) return;
+  try {
+    const clientName = String(req.query.client || '').trim();
+    if (!clientName) {
+      return res.status(400).json({ success: false, error: 'client query parameter is required' });
+    }
+    const status = await checkClientLockStatus(clientName);
+    return res.status(200).json({ success: true, ...status });
+  } catch (error: any) {
+    console.error('[Sheets] getSheetClientLockStatus failed:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
 };
 

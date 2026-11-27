@@ -1051,11 +1051,11 @@ export async function updateTask(req: Request, res: Response) {
         );
         const uncheckedLevel1 = requiredTaskAudits.filter(r => {
           const norm = normalizeAuditName(r);
-          const isL1 = norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+          const isL1 = norm.includes('ui') || norm.includes('ux') || norm.includes('design') || norm.includes('production');
           return isL1 && !completedTexts.has(norm);
         });
         if (uncheckedLevel1.length > 0) {
-          return res.status(400).json({ error: `Cannot move to ${status}: UI/UX and Design audits must be completed first (${uncheckedLevel1.join(', ')}).` });
+          return res.status(400).json({ error: `Cannot move to ${status}: UI/UX, Design, and Production audits must be completed first (${uncheckedLevel1.join(', ')}).` });
         }
       }
 
@@ -1691,11 +1691,11 @@ export async function moveTask(req: Request, res: Response) {
         );
         const uncheckedLevel1 = requiredTaskAudits.filter(r => {
           const norm = normalizeAuditName(r);
-          const isL1 = norm.includes('ui') || norm.includes('ux') || norm.includes('design');
+          const isL1 = norm.includes('ui') || norm.includes('ux') || norm.includes('design') || norm.includes('production');
           return isL1 && !completedTexts.has(norm);
         });
         if (uncheckedLevel1.length > 0) {
-          return res.status(400).json({ error: `Cannot move to ${status}: UI/UX and Design audits must be completed first (${uncheckedLevel1.join(', ')}).` });
+          return res.status(400).json({ error: `Cannot move to ${status}: UI/UX, Design, and Production audits must be completed first (${uncheckedLevel1.join(', ')}).` });
         }
       }
 
@@ -3950,7 +3950,7 @@ async function validateAuditHierarchyOrder(params: {
 
   const missingLevel1 = required.filter((reqName) => {
     const n = reqName.trim().toLowerCase().replace(/[\/\-_]/g, ' ').replace(/\s+/g, ' ');
-    return (n === 'ui ux audit' || n === 'design audit') && !completedNorms.has(n);
+    return (n === 'ui ux audit' || n === 'design audit' || n === 'production audit') && !completedNorms.has(n);
   });
   if (missingLevel1.length > 0) {
     return `Cannot complete ${params.auditText}: ${missingLevel1.join(' and ')} must be completed first.`;

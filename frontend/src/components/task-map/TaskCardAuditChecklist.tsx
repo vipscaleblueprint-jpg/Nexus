@@ -71,16 +71,18 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     if (norm === 'funnel audit') subStatusAudits.push('Funnel Audit');
     if (norm === 'ui ux audit' || norm === 'ui/ux audit') subStatusAudits.push('UI UX Audit');
     if (norm === 'design audit') subStatusAudits.push('Design Audit');
+    if (norm === 'production audit') subStatusAudits.push('Production Audit');
     if (norm === 'instruction audit' || norm === 'instructions audit') subStatusAudits.push('Instructions Audit');
   });
 
   const getAuditSortOrder = (name: string): number => {
     const norm = normalizeAuditName(name);
     if (norm === 'design audit') return 0;
-    if (norm === 'ui ux audit' || norm === 'ui/ux audit') return 1;
-    if (norm === 'funnel audit') return 2;
-    if (norm === 'instructions audit' || norm === 'instruction audit') return 3;
-    return 4;
+    if (norm === 'production audit') return 1;
+    if (norm === 'ui ux audit' || norm === 'ui/ux audit') return 2;
+    if (norm === 'funnel audit') return 3;
+    if (norm === 'instructions audit' || norm === 'instruction audit') return 4;
+    return 5;
   };
 
   const allAuditNames = Array.from(

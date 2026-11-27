@@ -283,12 +283,14 @@ export const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   if (matchesTaskLinkOrId(task, query)) return true;
   const q = query.trim().toLowerCase();
   const title = (task.title || '').toLowerCase();
+  const parentTitle = (task.parentTaskTitle || '').toLowerCase();
   const clientName = (task.list?.name || '').toLowerCase();
   const folderName = (task.list?.folder?.name || '').toLowerCase();
   const desc = (task.description || '').toLowerCase();
   const statuses = (task.taskMap?.statuses || []).map((s: string) => (s || '').toLowerCase());
   return (
     title.includes(q) ||
+    parentTitle.includes(q) ||
     clientName.includes(q) ||
     folderName.includes(q) ||
     desc.includes(q) ||

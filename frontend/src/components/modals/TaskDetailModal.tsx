@@ -2338,7 +2338,7 @@ export function TaskDetailModalContent({
 
       if (!payload.subtaskId) {
         const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
-        const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
+        const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(itemNorm);
         const checklists = (currentTask.checklists || []).map((c: any) => {
           const isAudit = isAuditItem && (isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit');
           if (c.id === payload.checklistId || isAudit) {
@@ -2367,7 +2367,7 @@ export function TaskDetailModalContent({
         if (onUpdateTaskRef.current) onUpdateTaskRef.current(updatedTask);
       } else {
         const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
-        const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
+        const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(itemNorm);
         const subtasks = (currentTask.subtasks || []).map((st: any) => {
           if (st.id === payload.subtaskId) {
             const checklists = (st.checklists || []).map((c: any) => {
@@ -2410,7 +2410,7 @@ export function TaskDetailModalContent({
       if (!payload.subtaskId) {
         let found = false;
         const checklists = (currentTask.checklists || []).map((c: any) => {
-          if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+          if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
             found = true;
             if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
             const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -2423,7 +2423,7 @@ export function TaskDetailModalContent({
           }
           return c;
         });
-        const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+        const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
         const finalChecklists = found ? checklists : [
           ...(currentTask.checklists || []),
           {
@@ -2442,7 +2442,7 @@ export function TaskDetailModalContent({
           if (st.id === payload.subtaskId) {
             let found = false;
             const checklists = (st.checklists || []).map((c: any) => {
-              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+              if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
                 found = true;
                 if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
                 const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -2455,7 +2455,7 @@ export function TaskDetailModalContent({
               }
               return c;
             });
-            const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+            const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
             const finalChecklists = found ? checklists : [
               ...(st.checklists || []),
               {
@@ -7451,7 +7451,7 @@ export function SubtaskDetailView({
 
       let found = false;
       const itemNorm = normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''));
-      const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(itemNorm);
+      const isAuditItem = payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(itemNorm);
       const checklists = (currentSub.checklists || []).map((c: any) => {
         const isAudit = isNexusAuditChecklist(c) || c.name?.trim().toLowerCase() === 'audit' || isAuditItem;
         if (c.id === payload.checklistId || isAudit) {
@@ -7496,7 +7496,7 @@ export function SubtaskDetailView({
 
       let found = false;
       const checklists = (currentSub.checklists || []).map((c: any) => {
-        if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
+        if (c.id === payload.checklistId || (isNexusAuditChecklist(c) && (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, '')))))) {
           found = true;
           if ((c.items || []).some((i: any) => i.id === payload.item.id)) return c;
           const tempIdx = (c.items || []).findIndex((i: any) => typeof i.id === 'string' && i.id.startsWith('temp-') && i.text === payload.item.text);
@@ -7509,7 +7509,7 @@ export function SubtaskDetailView({
         }
         return c;
       });
-      const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
+      const isAudit = (payload.item?.text?.startsWith('!') || ['instructions audit','design audit','production audit','ui ux audit','funnel audit'].includes(normalizeAuditName((payload.item?.text || '').replace(/^!\s*/, ''))));
       const finalChecklists = found ? checklists : [
         ...(currentSub.checklists || []),
         {

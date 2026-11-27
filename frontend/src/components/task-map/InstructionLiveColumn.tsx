@@ -12,7 +12,7 @@ import {
   RotateCcw,
   Loader2,
 } from 'lucide-react';
-import { TaskMapItem, SuperviseCheckItem } from '@/api/taskMap';
+import { TaskMapItem, SuperviseCheckItem, isTaskUnderAdmin } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
@@ -177,6 +177,22 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
         seen.add(dedupeKey);
 
         const clientName = task.progress?.client || task.list?.name || '';
+        const normalizedClient = clientName.trim().toLowerCase();
+        const normalizedList = (task.list?.name || '').trim().toLowerCase();
+        const normalizedFolder = (task.list?.folder?.name || '').trim().toLowerCase();
+        const isAdminOrVipscale =
+          isTaskUnderAdmin(task) ||
+          [normalizedClient, normalizedList, normalizedFolder].some(
+            (val) =>
+              Boolean(val) &&
+              (val === 'admin' ||
+                val.includes('admin') ||
+                val.includes('vipscale') ||
+                val.includes('vip scale'))
+          );
+        if (isAdminOrVipscale) {
+          continue;
+        }
         const isClientConfiguredUpwork = upworkClients.some(
           (c) => c.toLowerCase() === clientName.toLowerCase()
         );

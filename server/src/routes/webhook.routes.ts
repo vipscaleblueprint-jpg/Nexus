@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { handleGalaxyTask, handleGalaxyStatus, handleGalaxySubtask, syncClients, syncUsers, assistantChanged, handleUserLogout } from '../controllers/webhook.controller';
-import { handleSheetUpdate, handleSheetComment, handleSheetProgress, resolveNexusLinks, verifyClientOtp } from '../controllers/sheets.controller';
+import { handleSheetUpdate, handleSheetComment, handleSheetProgress, resolveNexusLinks, verifyClientOtp, getSheetClientLockStatus } from '../controllers/sheets.controller';
 
 const router = Router();
 
@@ -21,5 +21,6 @@ router.post('/sheets/comment', handleSheetComment);
 router.post('/sheets/progress', handleSheetProgress);
 router.post('/sheets/nexus-links', resolveNexusLinks);
 router.post('/sheets/verify-otp', verifyClientOtp);
+router.get('/sheets/client-lock-status', getSheetClientLockStatus);
 
 export default router;

@@ -505,13 +505,20 @@ export const TaskMapContainer: React.FC = () => {
         }
         const enrichedSessions: Record<string, any> = { ...(res.maActiveSessions || {}) };
         (res.tasks || []).forEach((t: any) => {
-          if (t.progress?.maName && t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime) {
+          if (t.progress?.maName && t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime && t.progress?.isLive !== false) {
             const key = t.progress.maName.toLowerCase().trim();
             const existing = enrichedSessions[key];
-            const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+            const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
+            const existingRowNum = existing?.rowNumber ? Number(existing.rowNumber) : -1;
+            const incomingRowNum = t.progress.sheetRow ? Number(t.progress.sheetRow) : -1;
             const incomingUpdatedMs = t.progress.updatedAt ? new Date(t.progress.updatedAt).getTime() : 0;
             const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-            if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+            const isStaleComparedToTimedOut =
+              existingHasTimeOut &&
+              ((incomingRowNum > 0 && existingRowNum > 0 && incomingRowNum <= existingRowNum) ||
+                incomingUpdatedMs <= existingUpdatedMs);
+            const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existingHasTimeOut && !existing.isMissingTime);
+            if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
               enrichedSessions[key] = {
                 maName: t.progress.maName,
                 taskId: t.id,
@@ -541,10 +548,17 @@ export const TaskMapContainer: React.FC = () => {
             if (!l?.maName || !l.isLive || !l.timeIn || l.timeOut || l.isMissingTime) return;
             const key = l.maName.toLowerCase().trim();
             const existing = enrichedSessions[key];
-            const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existing.timeOut && !existing.isMissingTime);
+            const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
+            const existingRowNum = existing?.rowNumber ? Number(existing.rowNumber) : -1;
+            const incomingRowNum = l.sheetRow ? Number(l.sheetRow) : -1;
             const incomingUpdatedMs = l.submittedAt ? new Date(l.submittedAt).getTime() : 0;
             const existingUpdatedMs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-            if (!existing || !existingIsLive || incomingUpdatedMs > existingUpdatedMs) {
+            const isStaleComparedToTimedOut =
+              existingHasTimeOut &&
+              ((incomingRowNum > 0 && existingRowNum > 0 && incomingRowNum <= existingRowNum) ||
+                incomingUpdatedMs <= existingUpdatedMs);
+            const existingIsLive = Boolean(existing && existing.active && existing.timeIn && !existingHasTimeOut && !existing.isMissingTime);
+            if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
               enrichedSessions[key] = {
                 maName: l.maName,
                 taskId: l.subtaskId ? `subtask:${l.subtaskId}` : (l.taskId || null),

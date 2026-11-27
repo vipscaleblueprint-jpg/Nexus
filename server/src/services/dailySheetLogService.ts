@@ -220,6 +220,30 @@ export async function upsertDailySheetLog(input: UpsertDailySheetLogInput) {
         endedAt: startedAt || new Date(),
       },
     });
+  } else if (cleanTimeOut) {
+    // When a Time Out arrives for this MA, close any lingering open live logs
+    // on the same row, earlier rows, or unrowed sessions for this MA on the same day
+    // so an older/unmatched "No task inputted" row cannot keep the MA live.
+    await prisma.dailySheetLog.updateMany({
+      where: {
+        dateKey,
+        isLive: true,
+        id: { not: saved.id },
+        AND: [
+          saved.userId ? { OR: [{ maKey }, { userId: saved.userId }] } : { maKey },
+          ...(sheetRow
+            ? [{ OR: [{ sheetRow: { lte: sheetRow } }, { sheetRow: null }] }]
+            : saved.taskId
+              ? [{ OR: [{ taskId: saved.taskId }, { taskId: null }] }]
+              : []),
+        ],
+      },
+      data: {
+        isLive: false,
+        timeOut: cleanTimeOut,
+        endedAt: endedAt || new Date(),
+      },
+    });
   }
 
   return saved;

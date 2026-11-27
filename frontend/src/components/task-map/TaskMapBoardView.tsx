@@ -29,6 +29,7 @@ import {
   getManilaDateKey,
   extractTaskLinkIdentifiers,
   matchesTaskLinkOrId,
+  findSearchedTaskLocations,
   SheetActivityLogRow,
   getSubStatusTransitionGuide,
   SubStatusTransitionGuide,
@@ -295,14 +296,21 @@ export const isTaskLiveWorking = (task: TaskMapItem, userName?: string, now = ne
   if (statuses.includes('CLOSED') || statuses.includes('DONE')) return false;
 
   // Synthetic assumption block representing assistant's open shift input
-  if (task.isAssumptionBlock && task.progress?.timeIn && !task.progress?.timeOut && !task.progress?.isMissingTime) {
-    return !isStaleLiveSession(task.progress.timeIn, task.progress.date, now);
+  if (task.isAssumptionBlock) {
+    const hasTimeIn = Boolean(task.progress?.timeIn && String(task.progress.timeIn).trim());
+    const hasTimeOut = Boolean(task.progress?.timeOut && String(task.progress.timeOut).trim());
+    if (!hasTimeIn || hasTimeOut || task.progress?.isMissingTime || task.progress?.isLive === false) {
+      return false;
+    }
+    return !isStaleLiveSession(task.progress?.timeIn, task.progress?.date, now);
   }
 
   const isMyProg = doesProgressMatchUser(task.progress?.maName, userName);
   const prog = isMyProg ? task.progress : null;
-  if (!prog?.timeIn || prog?.timeOut || prog?.isMissingTime) return false;
-  if (isStaleLiveSession(prog.timeIn, prog.date, now)) return false;
+  const hasTimeIn = Boolean(prog?.timeIn && String(prog.timeIn).trim());
+  const hasTimeOut = Boolean(prog?.timeOut && String(prog.timeOut).trim());
+  if (!hasTimeIn || hasTimeOut || prog?.isMissingTime || prog?.isLive === false) return false;
+  if (isStaleLiveSession(prog?.timeIn, prog?.date, now)) return false;
   return true;
 };
 
@@ -318,8 +326,10 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
 
   // 0. Live synthetic assumption block strictly takes the In Progress slot (clocked-out held blocks sit below dropzone until 12 AM)
   if (task.isAssumptionBlock) {
-    if (task.progress?.timeOut) return false;
-    return Boolean(task.progress?.timeIn && !task.progress.timeOut && !task.progress.isMissingTime);
+    const hasTimeIn = Boolean(task.progress?.timeIn && String(task.progress.timeIn).trim());
+    const hasTimeOut = Boolean(task.progress?.timeOut && String(task.progress.timeOut).trim());
+    if (hasTimeOut || task.progress?.isLive === false) return false;
+    return Boolean(hasTimeIn && !hasTimeOut && !task.progress?.isMissingTime);
   }
 
   // On-hold or paused tasks belong out of In Progress unless live clocked in right now
@@ -691,6 +701,7 @@ const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
   if (matchesTaskLinkOrId(task, query)) return true;
   const q = query.trim().toLowerCase();
   const title = (task.title || '').toLowerCase();
+  const parentTitle = (task.parentTaskTitle || '').toLowerCase();
   const clientName = (task.list?.name || '').toLowerCase();
   const folderName = (task.list?.folder?.name || '').toLowerCase();
   const desc = (task.description || '').toLowerCase();
@@ -698,6 +709,7 @@ const matchesSearchFilter = (task: TaskMapItem, query?: string) => {
 
   const basicMatch =
     title.includes(q) ||
+    parentTitle.includes(q) ||
     clientName.includes(q) ||
     folderName.includes(q) ||
     desc.includes(q) ||
@@ -3472,9 +3484,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const availableTaskTypeFilter = columnTaskTypeFilters['available'] || 'ALL';
           const availableSubStatusFilter = columnSubStatusFilters['available'] || 'ALL';
           const isLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
-          const baseAvailablePool = isLinkQuery ? availablePool : displayPool;
+          const hasSearchQuery = Boolean(searchQuery.trim());
+          const baseAvailablePool = hasSearchQuery ? availablePool : displayPool;
           const filteredDisplayPool = baseAvailablePool.filter((t) =>
-            (isLinkQuery || (
+            (isLinkQuery || hasSearchQuery || (
               matchesPriorityFilter(t, availableFilter) &&
               matchesTaskTypeFilter(t, availableTaskTypeFilter) &&
               matchesSubStatusFilter(t, availableSubStatusFilter)
@@ -3664,11 +3677,39 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
                 />
                 {filteredDisplayPool.length === 0 ? (
-                  <p className="text-xs text-zinc-600 italic text-center py-12">
-                    {displayPool.length > 0
-                      ? 'No tasks match the selected priority filter.'
-                      : 'No available tasks in the pool.'}
-                  </p>
+                  (() => {
+                    const searchMatches = searchQuery.trim()
+                      ? findSearchedTaskLocations(
+                          searchQuery,
+                          [...(allTasks || tasks), ...(allAvailablePool || availablePool)],
+                          allUsers
+                        )
+                      : [];
+                    return (
+                      <div className="text-xs text-zinc-500 text-center py-10 px-3 space-y-2">
+                        <p className="italic text-zinc-500">
+                          {searchQuery.trim()
+                            ? `No available tasks match "${searchQuery.trim()}".`
+                            : displayPool.length > 0
+                              ? 'No tasks match the selected priority filter.'
+                              : 'No available tasks in the pool.'}
+                        </p>
+                        {searchMatches.length > 0 && (
+                          <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-2.5 text-left space-y-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                              Found elsewhere:
+                            </p>
+                            {searchMatches.map((m) => (
+                              <div key={m.taskId} className="text-[11px] leading-snug text-zinc-300">
+                                <span className="font-medium text-white">{m.title}</span>
+                                <span className="text-zinc-400"> — {m.locationText}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
                 ) : (
                   sortAvailablePoolTasks(filteredDisplayPool).map((task) => {
                     const priorityConfig = getPriorityConfig(task.priority);
@@ -4776,13 +4817,39 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         {queuedTasks.length > 0 ? (
                           queuedTasks.map((t) => renderCard(t))
                         ) : !canShowColumnCutout ? (
-                          <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/30 px-3 py-3 text-center">
-                            <p className="text-[11px] text-zinc-500">
-                              {userTasks.some((t) => t.id !== activeInProgTask?.id && !isTaskHandedOver(t) && !isClosedTask(t))
-                                ? 'Queued tasks hidden by active column filters'
-                                : 'No tasks in queue — paused or assigned tasks appear here'}
-                            </p>
-                          </div>
+                          (() => {
+                            const searchMatches = searchQuery.trim()
+                              ? findSearchedTaskLocations(
+                                  searchQuery,
+                                  [...(allTasks || tasks), ...(allAvailablePool || availablePool)],
+                                  allUsers
+                                )
+                              : [];
+                            return (
+                              <div className="rounded-xl border border-dashed border-zinc-800/80 bg-zinc-950/30 px-3 py-3 text-center space-y-2">
+                                <p className="text-[11px] text-zinc-500">
+                                  {searchQuery.trim()
+                                    ? `No tasks in ${user.name}'s queue match "${searchQuery.trim()}".`
+                                    : userTasks.some((t) => t.id !== activeInProgTask?.id && !isTaskHandedOver(t) && !isClosedTask(t))
+                                      ? 'Queued tasks hidden by active column filters'
+                                      : 'No tasks in queue — paused or assigned tasks appear here'}
+                                </p>
+                                {searchMatches.length > 0 && (
+                                  <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2 text-left space-y-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                                      Found elsewhere:
+                                    </p>
+                                    {searchMatches.map((m) => (
+                                      <div key={m.taskId} className="text-[11px] leading-snug text-zinc-300">
+                                        <span className="font-medium text-white">{m.title}</span>
+                                        <span className="text-zinc-400"> — {m.locationText}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()
                         ) : null}
                       </div>
                     </div>

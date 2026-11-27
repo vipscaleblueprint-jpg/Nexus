@@ -334,11 +334,36 @@ export async function getDailySheetLogsForDate(
  */
 export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
   const dateKey = normalizeSheetDateKey(dateInput);
-  const logs = await getDailySheetLogsForDate(dateKey);
+  const todayKey = normalizeSheetDateKey(null);
+  const includeOvernightShiftWindow = dateKey === todayKey;
+  const overnightCutoff = new Date(Date.now() - 18 * 60 * 60 * 1000);
+
+  const allFetched = includeOvernightShiftWindow
+    ? await prisma.dailySheetLog.findMany({
+        where: {
+          OR: [
+            { dateKey },
+            { submittedAt: { gte: overnightCutoff } },
+          ],
+        },
+        orderBy: [{ isLive: 'desc' }, { submittedAt: 'desc' }, { sheetRow: 'desc' }],
+      })
+    : await getDailySheetLogsForDate(dateKey);
+
+  const logs = includeOvernightShiftWindow
+    ? allFetched.filter((l) => l.dateKey === dateKey)
+    : allFetched;
 
   const byTaskId = new Map<string, (typeof logs)[number]>();
   const bySubtaskId = new Map<string, (typeof logs)[number]>();
   const liveByMaKey = new Map<string, (typeof logs)[number]>();
+  const latestByMaMap = new Map<string, (typeof logs)[number]>();
+
+  for (const log of allFetched) {
+    if (log.maKey && !latestByMaMap.has(log.maKey)) {
+      latestByMaMap.set(log.maKey, log);
+    }
+  }
 
   for (const log of logs) {
     if (log.isLive && !liveByMaKey.has(log.maKey)) {
@@ -358,5 +383,12 @@ export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
     }
   }
 
-  return { dateKey, logs, byTaskId, bySubtaskId, liveByMaKey };
+  return {
+    dateKey,
+    logs,
+    latestByMa: Array.from(latestByMaMap.values()),
+    byTaskId,
+    bySubtaskId,
+    liveByMaKey,
+  };
 }

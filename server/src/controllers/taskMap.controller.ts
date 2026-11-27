@@ -610,6 +610,40 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const dateQuery = req.query.date as string || '';
     const searchQuery = (req.query.search as string || '').toLowerCase().trim();
     const clientQuery = (req.query.client as string || '').trim();
+    const isCompact = req.query.compact === '1' || req.query.compact === 'true';
+
+    const formatTaskMapPayload = (payload: any) => {
+      if (!payload || typeof payload !== 'object') return payload;
+      const tasksArr: any[] = Array.isArray(payload.tasks) ? payload.tasks : [];
+      const poolIds: string[] = Array.isArray(payload.availablePoolIds)
+        ? payload.availablePoolIds
+        : Array.isArray(payload.availablePool)
+          ? payload.availablePool.map((t: any) => t.id)
+          : [];
+
+      if (isCompact) {
+        // Ensure every availablePool item exists in tasks before omitting duplicate availablePool array
+        if (Array.isArray(payload.availablePool) && payload.availablePool.length > 0) {
+          const taskIdSet = new Set(tasksArr.map((t: any) => t.id));
+          const allPresent = payload.availablePool.every((t: any) => taskIdSet.has(t.id));
+          if (!allPresent) {
+            return { ...payload, availablePoolIds: poolIds };
+          }
+        }
+        const { availablePool: _omitted, ...rest } = payload;
+        return { ...rest, availablePoolIds: poolIds };
+      }
+
+      if (Array.isArray(payload.availablePool)) {
+        return payload;
+      }
+      const byId = new Map<string, any>();
+      for (const t of tasksArr) {
+        byId.set(t.id, t);
+      }
+      const hydratedPool = poolIds.map((id) => byId.get(id)).filter(Boolean);
+      return { ...payload, availablePool: hydratedPool };
+    };
 
     const todayManila = getManilaDateStr();
     const requestedDate = (dateQuery || todayManila).trim().split('T')[0];
@@ -632,14 +666,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const cacheGen = getCacheGeneration(cacheKey);
     const cachedData = await getCache<any>(cacheKey);
     if (cachedData) {
-      return res.json(cachedData);
+      return res.json(formatTaskMapPayload(cachedData));
     }
 
     const singleFlightKey = `${cacheKey}:${cacheGen}`;
     const existingInFlight = inFlightTaskMapQueries.get(singleFlightKey);
     if (existingInFlight) {
       const coalescedPayload = await existingInFlight;
-      return res.json(coalescedPayload);
+      return res.json(formatTaskMapPayload(coalescedPayload));
     }
 
     const computePromise = (async () => {
@@ -707,7 +741,6 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             );
             if (isClosedStatus(s)) return false;
             return !(
-              s === 'WAITING' || s.includes('WAITING') ||
               s === 'CRM' || s.includes('CRM') ||
               s === 'INREVIEW' || s === 'TOREVIEW' || s === 'REVIEW' ||
               s === 'CHECKING' || s === 'INCHECKING' ||
@@ -717,7 +750,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
               s === 'RECURRING' || s.includes('RECURRING') ||
               Boolean(t.recurringConfig) ||
               mapStatuses.some((st: string) =>
-                ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st)
+                ['CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st)
               )
             );
           });
@@ -780,14 +813,35 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
       status: { equals: s, mode: 'insensitive' as const },
     }));
-    const taskInclude = {
+    // Explicit select omits heavy HTML/rich-text `description` blobs on initial board load
+    // (lazy-fetched on click via GET /api/task-map/task-description) and omits per-task `list.statuses`
+    // (loaded once per list below and attached in memory, eliminating repeated joins across every task).
+    const taskBoardSelect = {
+      id: true,
+      title: true,
+      priority: true,
+      listId: true,
+      creatorId: true,
+      createdAt: true,
+      updatedAt: true,
+      assigneeId: true,
+      dueDate: true,
+      startDate: true,
+      status: true,
+      teamId: true,
+      externalId: true,
+      assigneeRoleRestrictions: true,
+      teamAssignAccessRole: true,
+      position: true,
+      rolloverExcluded: true,
+      recurringConfig: true,
+      estimatedHours: true,
+      launchDate: true,
       list: {
         select: {
           id: true,
           name: true,
           folder: { select: { id: true, name: true } },
-          // statuses are attached below from one per-list query: loading them per task repeated each
-          // list's statuses for every task and was most of this query's time.
         },
       },
       assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
@@ -795,7 +849,21 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
       subtasks: {
         where: { completed: false },
-        include: {
+        select: {
+          id: true,
+          title: true,
+          taskId: true,
+          createdAt: true,
+          completed: true,
+          status: true,
+          dueDate: true,
+          priority: true,
+          assigneeId: true,
+          teamId: true,
+          assigneeRoleRestrictions: true,
+          teamAssignAccessRole: true,
+          externalId: true,
+          estimatedHours: true,
           User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
           assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
           checklists: {
@@ -815,37 +883,25 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' as const } } } },
         },
       },
-    } satisfies Prisma.TaskInclude;
-    const taskOrderBy: Prisma.TaskOrderByWithRelationInput[] = [{ position: 'asc' }, { createdAt: 'desc' }];
+    };
 
-    // Open tasks don't depend on the records query, so start them right away (they're the slowest query).
-    const openTasksPromise = prisma.task.findMany({
-      where: { AND: [{ NOT: { OR: kycPinboardExclusion } }, { NOT: { OR: closedOrExcludedFilters } }] },
-      include: taskInclude,
-      orderBy: taskOrderBy,
-    });
-    openTasksPromise.catch(() => {}); // awaited below; avoid an unhandled rejection if an earlier query fails first
-    const listStatusesPromise = prisma.list.findMany({
-      select: {
-        id: true,
-        statuses: {
-          select: { name: true, color: true, groupName: true, order: true },
-          orderBy: { order: 'asc' },
-        },
-      },
-    });
-    listStatusesPromise.catch(() => {});
-
-    // Fetch TaskMap records (active/open tasks + at most 60 most recently updated closed CRM records)
-    // in parallel with metadata (options, shifts, users, roles, teams, today's daily sheet index)
+    // Fetch all independent board datasets in a single parallel round-trip
+    // (open tasks, per-list statuses, TaskMapRecords, metadata, users, daily sheet index, client lists, Upwork lists, MA sessions, supervise checks)
     const [
       records,
+      openDbTasks,
+      listStatuses,
       rawOptions,
       shifts,
       allUsers,
       workspaceRoles,
       workspaceTeams,
       dailySheetIndex,
+      clientDashboardLists,
+      upworkClients,
+      upworkProjectClients,
+      maActiveSessions,
+      activeSuperviseChecks,
     ] = await Promise.all([
       prisma.$queryRawUnsafe<TaskMapRecordData[]>(
         `SELECT r.*
@@ -858,6 +914,25 @@ export const getTaskMapData = async (req: Request, res: Response) => {
            )
          ORDER BY r."updatedAt" DESC`
       ),
+      prisma.task.findMany({
+        where: {
+          AND: [
+            { NOT: { OR: kycPinboardExclusion } },
+            { NOT: { OR: closedOrExcludedFilters } },
+          ],
+        },
+        select: taskBoardSelect,
+        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+      }),
+      prisma.list.findMany({
+        select: {
+          id: true,
+          statuses: {
+            select: { name: true, color: true, groupName: true, order: true },
+            orderBy: { order: 'asc' },
+          },
+        },
+      }),
       getStatusOptions(),
       getShiftConfigs(),
       prisma.user.findMany({
@@ -892,22 +967,36 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         orderBy: { createdAt: 'asc' },
       }),
       getDailySheetLogsIndexForDate(requestedDate),
+      fetchClientDashboardLists().catch((err: any) => {
+        logger.warn({ err }, 'Failed to query client dashboard folders');
+        return [] as Array<{ id: string; name: string }>;
+      }),
+      getUpworkClients(),
+      getUpworkProjectClients(),
+      getMaActiveSessionsMap(),
+      (prisma as any).superviseCheck.findMany({
+        where: {
+          dateKey: requestedDate,
+          reappearAt: { gt: new Date() },
+        },
+        orderBy: { checkedAt: 'desc' },
+      }).catch(() => []),
     ]);
 
     const recordsMap = new Map<string, TaskMapRecordData>();
+    const openTaskIdSet = new Set(openDbTasks.map((t) => t.id));
     const closedCrmCandidateTaskIds: string[] = [];
     const MAX_CLOSED_CRM_CANDIDATES = 60;
     for (const r of records) {
       recordsMap.set(r.taskId, r);
       const hasCrmTag = Array.isArray(r.statuses) && r.statuses.some((st) => CRM_TAG_SET.has((st || '').toUpperCase().trim()));
-      if (hasCrmTag && closedCrmCandidateTaskIds.length < MAX_CLOSED_CRM_CANDIDATES) {
+      if (hasCrmTag && !openTaskIdSet.has(r.taskId) && closedCrmCandidateTaskIds.length < MAX_CLOSED_CRM_CANDIDATES) {
         closedCrmCandidateTaskIds.push(r.taskId);
       }
     }
 
-    // Open tasks (started above) plus the bounded recent closed CRM-tagged tasks, and shift users, in parallel
-    const [openTaskRows, closedCrmTasks, listStatuses, shiftUsers] = await Promise.all([
-      openTasksPromise,
+    // Fetch bounded recent closed CRM-tagged tasks (PK index lookup, max 60) and resolve shift users in parallel
+    const [closedCrmTasks, shiftUsers] = await Promise.all([
       closedCrmCandidateTaskIds.length > 0
         ? prisma.task.findMany({
             where: {
@@ -917,17 +1006,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
                 { id: { in: closedCrmCandidateTaskIds } },
               ],
             },
-            include: taskInclude,
+            select: taskBoardSelect,
           })
-        : Promise.resolve([]),
-      listStatusesPromise,
+        : Promise.resolve([] as typeof openDbTasks),
       resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts),
     ]);
 
     const statusesByList = new Map(listStatuses.map((l) => [l.id, l.statuses]));
-    const tasks = closedCrmTasks.length > 0 ? [...openTaskRows, ...closedCrmTasks] : openTaskRows;
+    const tasks = closedCrmTasks.length > 0 ? [...openDbTasks, ...closedCrmTasks] : openDbTasks;
     if (closedCrmTasks.length > 0) {
-      // Same order the single query used: position asc, then newest first
+      // Preserve single-query order: position asc, then newest createdAt first
       tasks.sort(
         (a, b) =>
           (a.position === b.position ? 0 : (a.position ?? Infinity) - (b.position ?? Infinity)) ||
@@ -1164,8 +1252,19 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(reviewsList, task.dueDate);
       const parentClosed = isClosedStatus(task.status);
+      // Lightweight subtask refs on parent card (open subtasks are emitted as first-class TaskMapItems below)
+      const lightSubtasks = Array.isArray(task.subtasks)
+        ? task.subtasks.map((st: any) => ({
+            id: st.id,
+            title: st.title,
+            status: st.status,
+            completed: st.completed,
+          }))
+        : [];
       enrichedTasks.push({
         ...task,
+        description: null,
+        subtasks: lightSubtasks,
         subtaskCount: task._count?.subtasks ?? 0,
         taskMap: mapRecord,
         pmTags,
@@ -1448,10 +1547,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
 
-      // Exclude review/audit, recurring, daily, weekly, monthly, and CRM/Waiting tasks from Available Tasks pool
+      // Exclude review/audit, recurring, daily, weekly, monthly, and CRM tasks from Available Tasks pool (Waiting is included)
       const isExcluded =
-        s === 'WAITING' ||
-        s.includes('WAITING') ||
         s === 'CRM' ||
         s.includes('CRM') ||
         s === 'INREVIEW' ||
@@ -1469,8 +1566,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         s.includes('RECURRING') ||
         !!t.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
-          st.includes('WAITING') ||
+          ['CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
           st.includes('CRM') ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
@@ -1531,13 +1627,54 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       return false;
     };
 
-    const isTaskHigh = (t: any) => (t.priority || '').toUpperCase() === 'HIGH';
+    const getTaskPriorityRank = (t: any) => {
+      if (isTaskUrgent(t)) return 0;
+      const p = (t.priority || '').trim().toUpperCase();
+      if (p === 'HIGH') return 1;
+      if (p === 'NORMAL' || p === 'MEDIUM') return 2;
+      if (p === 'LOW') return 3;
+      return 4;
+    };
 
     const isTaskOnHold = (t: any) => {
       const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       if (s === 'ONHOLD' || s.includes('HOLD')) return true;
       const customStatuses = t.taskMap?.statuses || [];
       return customStatuses.some((cs: string) => cs.toUpperCase().includes('HOLD'));
+    };
+
+    const getAvailableTaskStatusRank = (t: any) => {
+      if (isTaskOnHold(t)) return 5;
+      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
+        (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+      );
+      if (
+        s === 'WAITING' ||
+        s === 'SENT' ||
+        s.includes('WAITING') ||
+        mapStatuses.some((st: string) => st === 'WAITING' || st === 'SENTBUTWAITING' || st.includes('WAITING'))
+      ) {
+        return 0;
+      }
+      if (s === 'INPROGRESS' || mapStatuses.some((st: string) => st === 'INPROGRESS')) {
+        return 1;
+      }
+      if (
+        s === 'REVISION' ||
+        s === 'REVISIONS' ||
+        s === 'REVISING' ||
+        s.includes('REVIS') ||
+        mapStatuses.some(
+          (st: string) => st === 'REVISION' || st === 'REVISIONS' || st === 'REVISING' || st.includes('REVIS')
+        )
+      ) {
+        return 2;
+      }
+      if (s === 'PENDING' || mapStatuses.some((st: string) => st === 'PENDING')) {
+        return 3;
+      }
+      return 4;
     };
 
     const availablePool = filteredTasks
@@ -1551,14 +1688,13 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         const holdB = isTaskOnHold(b) ? 1 : 0;
         if (holdA !== holdB) return holdA - holdB;
 
-        // 1. Prioritize urgent tasks at the top among active (non-on-hold) tasks
-        const urgentA = isTaskUrgent(a) ? 1 : 0;
-        const urgentB = isTaskUrgent(b) ? 1 : 0;
-        if (urgentA !== urgentB) return urgentB - urgentA;
+        // 1. Prioritize by urgency: URGENT > HIGH > NORMAL/MEDIUM > LOW
+        const priorityDiff = getTaskPriorityRank(a) - getTaskPriorityRank(b);
+        if (priorityDiff !== 0) return priorityDiff;
 
-        const highA = isTaskHigh(a) ? 1 : 0;
-        const highB = isTaskHigh(b) ? 1 : 0;
-        if (highA !== highB) return highB - highA;
+        // 2. Order by status: WAITING > IN PROGRESS > REVISING > PENDING > other > ON-HOLD
+        const statusDiff = getAvailableTaskStatusRank(a) - getAvailableTaskStatusRank(b);
+        if (statusDiff !== 0) return statusDiff;
 
         const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -1670,34 +1806,20 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Fetch all client lists under "Client Dashboard" in PostgreSQL
-    let allClients: Array<{ id: string; name: string }> = [];
-    try {
-      const clientDashboardLists = await fetchClientDashboardLists();
-      const allClientsMap = new Map<string, { id: string; name: string }>();
-      for (const c of clientDashboardLists) {
-        allClientsMap.set(c.id, c);
-      }
-
-      // Also include any list from non-admin active tasks
-      for (const t of openTasks as any[]) {
-        if (t.isAdminTask) continue;
-        const listId = t.list?.id;
-        const listName = t.list?.name;
-        if (listId && listName && !allClientsMap.has(listId)) {
-          allClientsMap.set(listId, { id: listId, name: listName });
-        }
-      }
-
-      allClients = Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err: any) {
-      logger.warn({ err }, 'Failed to query client dashboard folders');
+    // Assemble client list from pre-fetched Client Dashboard lists + active non-admin tasks
+    const allClientsMap = new Map<string, { id: string; name: string }>();
+    for (const c of clientDashboardLists) {
+      allClientsMap.set(c.id, c);
     }
-
-    const upworkClients = await getUpworkClients();
-    const upworkProjectClients = await getUpworkProjectClients();
-
-    const maActiveSessions: Record<string, any> = await getMaActiveSessionsMap();
+    for (const t of openTasks as any[]) {
+      if (t.isAdminTask) continue;
+      const listId = t.list?.id;
+      const listName = t.list?.name;
+      if (listId && listName && !allClientsMap.has(listId)) {
+        allClientsMap.set(listId, { id: listId, name: listName });
+      }
+    }
+    const allClients = Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
     // Ensure any open live session from task progress is present in maActiveSessions
     // (This guarantees that when an MA is working on an Admin task that is hidden by default,
@@ -1891,13 +2013,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       await captureTaskMapDailySnapshot(requestedDate, snapshotPayload, (req as any).user?.id || 'system');
     }
 
-    const activeSuperviseChecks = await (prisma as any).superviseCheck.findMany({
-      where: {
-        dateKey: requestedDate,
-        reappearAt: { gt: new Date() },
-      },
-      orderBy: { checkedAt: 'desc' },
-    }).catch(() => []);
+    const availablePoolIds = availablePool.map((t: any) => t.id);
 
     const responsePayload = {
       success: true,
@@ -1905,9 +2021,10 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       snapshotDate: isPastDate ? requestedDate : undefined,
       tasks: openTasks,
       launchTasks,
-      availablePool,
+      availablePoolIds,
       allClients,
       dailySheetLogs: dailySheetIndex.logs,
+      latestSheetRows: dailySheetIndex.latestByMa,
       superviseChecks: activeSuperviseChecks,
       options,
       shifts,
@@ -1930,6 +2047,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     };
 
     // Cache in Redis: 30 seconds for today (protects against thundering herd; writes invalidate via task_map:all), 3600 seconds for historical dates
+    // Stores compact `availablePoolIds` instead of duplicating full `availablePool` objects (~40-50% smaller Redis payload).
     await setCache(cacheKey, responsePayload, isPastDate ? 3600 : 30, cacheGen);
 
     return responsePayload;
@@ -1938,7 +2056,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     inFlightTaskMapQueries.set(singleFlightKey, computePromise);
     try {
       const responsePayload = await computePromise;
-      return res.json(responsePayload);
+      return res.json(formatTaskMapPayload(responsePayload));
     } finally {
       if (inFlightTaskMapQueries.get(singleFlightKey) === computePromise) {
         inFlightTaskMapQueries.delete(singleFlightKey);

@@ -326,6 +326,12 @@ const CardContent = memo(({
     }
   };
 
+  const isRecurringFrequencyStatus = useMemo(() => {
+    if (isSubtask) return false;
+    const statusUpper = ((task as any).status || '').toUpperCase().trim();
+    return ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper);
+  }, [isSubtask, (task as any).status]);
+
   const isInRecurringGroup = useMemo(() => {
     if (isSubtask) return false;
     const statusUpper = ((task as any).status || '').toUpperCase().trim();
@@ -1037,7 +1043,8 @@ const CardContent = memo(({
 
         {/* Due Date & Recurrence Row */}
         <div className="flex items-center gap-1.5 w-full">
-          {/* Due Date (Left side) */}
+          {/* Due Date (Left side) - hidden for DAILY, WEEKLY, MONTHLY recurring statuses */}
+          {!isRecurringFrequencyStatus && (
           <div className="relative">
             <div
               ref={dateTriggerRef}
@@ -1101,6 +1108,7 @@ const CardContent = memo(({
               </PortalDropdown>
             )}
           </div>
+          )}
 
           {/* Recurrence (Right side) - ONLY if in recurring group! */}
           {isInRecurringGroup && (
@@ -1131,8 +1139,8 @@ const CardContent = memo(({
                           {recConfig?.time
                             ? formatTimeDisplay(recConfig.time)
                             : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
-                              ? `Set ${(task as any).status} Time`
-                              : 'Set Time'}
+                              ? `Set ${(task as any).status} Due Date`
+                              : 'Set Due Date'}
                         </span>
                       </>
                     )}

@@ -20,6 +20,8 @@ export interface TaskMapShift {
   timezone: string;
   order: number;
   isActive: boolean;
+  memberIds?: string[];
+  memberNames?: string[];
 }
 
 export interface TaskMapRecord {
@@ -315,7 +317,7 @@ export function matchesTaskLinkOrId(
   return false;
 }
 
-/** Header user-visibility filter: ALL users, LIVE (live-working clocked in), ACTIVE (logged today). */
+/** Header user-visibility filter: ALL users, LIVE (live-working clocked in), ACTIVE (on-shift with latest spreadsheet row in current shift window). */
 export type TrackFilter = 'ALL' | 'LIVE' | 'ACTIVE';
 
 /**
@@ -348,6 +350,408 @@ export function isProgressLoggedToday(
     key = getManilaDateKey(prog.updatedAt);
   }
   return !!key && key === targetDateKey;
+}
+
+/**
+ * Returns Manila (Asia/Manila, UTC+8) calendar date key and hour/minute components for `now`.
+ */
+export function getManilaTimeParts(now: Date = new Date()): {
+  dateKey: string;
+  hour: number;
+  minute: number;
+  totalMinutes: number;
+} {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(now);
+
+  const year = parts.find((p) => p.type === 'year')?.value || '1970';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  let hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  if (hour === 24) hour = 0;
+
+  return {
+    dateKey: `${year}-${month}-${day}`,
+    hour,
+    minute,
+    totalMinutes: hour * 60 + minute,
+  };
+}
+
+/**
+ * Shifts a `YYYY-MM-DD` date key by `deltaDays` (e.g. -1 for yesterday, +1 for tomorrow).
+ */
+export function shiftDateKeyByDays(dateKey: string, deltaDays: number): string {
+  const m = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return dateKey;
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  const y = dt.getUTCFullYear();
+  const mo = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${mo}-${d}`;
+}
+
+/**
+ * Computes the current shift window [startMs, endMs] in Manila time, properly handling
+ * overnight/night shifts (where endHour < startHour, e.g. 5 PM - 2 AM or 8 PM - 5 AM).
+ */
+export function getShiftWindowBounds(
+  shift: Pick<TaskMapShift, 'startHour' | 'startMinute' | 'endHour' | 'endMinute'>,
+  now: Date = new Date()
+): { isWithinShift: boolean; startMs: number; endMs: number } {
+  const { dateKey, totalMinutes } = getManilaTimeParts(now);
+  const startMin = shift.startMinute || 0;
+  const endMin = shift.endMinute || 0;
+  const startTotal = shift.startHour * 60 + startMin;
+  const endTotal = shift.endHour * 60 + endMin;
+
+  let isWithinShift = false;
+  let startDateKey = dateKey;
+  let endDateKey = dateKey;
+
+  if (startTotal <= endTotal) {
+    isWithinShift = totalMinutes >= startTotal && totalMinutes < endTotal;
+  } else {
+    // Overnight / night shift crossing midnight
+    isWithinShift = totalMinutes >= startTotal || totalMinutes < endTotal;
+    if (totalMinutes < endTotal) {
+      startDateKey = shiftDateKeyByDays(dateKey, -1);
+      endDateKey = dateKey;
+    } else {
+      startDateKey = dateKey;
+      endDateKey = shiftDateKeyByDays(dateKey, 1);
+    }
+  }
+
+  const startIso = `${startDateKey}T${String(shift.startHour).padStart(2, '0')}:${String(startMin).padStart(2, '0')}:00+08:00`;
+  const endIso = `${endDateKey}T${String(shift.endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}:00+08:00`;
+  return {
+    isWithinShift,
+    startMs: new Date(startIso).getTime(),
+    endMs: new Date(endIso).getTime(),
+  };
+}
+
+/**
+ * Returns the configured active shifts that include `user` (by `memberIds` or `memberNames`).
+ */
+export function getUserConfiguredShifts(
+  user?: { id?: string | null; name?: string | null } | null,
+  shifts: TaskMapShift[] = []
+): TaskMapShift[] {
+  if (!user || !Array.isArray(shifts) || shifts.length === 0) return [];
+  const uid = user.id || '';
+  const nameLower = (user.name || '').trim().toLowerCase();
+  const firstName = nameLower.split(/\s+/)[0] || '';
+
+  return shifts.filter((s) => {
+    if (s.isActive === false) return false;
+    const ids = Array.isArray(s.memberIds) ? s.memberIds : [];
+    if (uid && ids.includes(uid)) return true;
+    const names = Array.isArray(s.memberNames)
+      ? s.memberNames.map((n) => (n || '').trim().toLowerCase()).filter(Boolean)
+      : [];
+    if (!nameLower || names.length === 0) return false;
+    return names.some(
+      (n) =>
+        n === nameLower ||
+        nameLower.includes(n) ||
+        n.includes(nameLower) ||
+        (firstName.length >= 2 && n.split(/\s+/)[0] === firstName)
+    );
+  });
+}
+
+function parseClockTimeMinutes(timeStr?: string | null): number | null {
+  if (!timeStr) return null;
+  const m = String(timeStr)
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let hrs = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const ampm = (m[3] || '').toLowerCase();
+  if (ampm === 'pm' && hrs < 12) hrs += 12;
+  if (ampm === 'am' && hrs === 12) hrs = 0;
+  if (hrs < 0 || hrs > 23 || mins < 0 || mins > 59) return null;
+  return hrs * 60 + mins;
+}
+
+function resolveSheetRowDateKey(
+  prog?: {
+    date?: string | null;
+    dateKey?: string | null;
+    dateDisplay?: string | null;
+    updatedAt?: string | null;
+    submittedAt?: string | null;
+    startedAt?: string | null;
+    endedAt?: string | null;
+  } | null
+): string | null {
+  if (!prog) return null;
+  if (prog.dateKey && /^\d{4}-\d{2}-\d{2}$/.test(prog.dateKey.trim())) {
+    return prog.dateKey.trim();
+  }
+  const raw = (prog.date || prog.dateDisplay || '').trim();
+  if (raw) {
+    const sheet = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (sheet) return `${sheet[3]}-${sheet[1].padStart(2, '0')}-${sheet[2].padStart(2, '0')}`;
+    const ymd = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+    if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+    const hasTime = /\d{1,2}:\d{2}/.test(raw);
+    const parsed = hasTime ? new Date(raw) : new Date(`${raw} 12:00:00`);
+    const key = !isNaN(parsed.getTime()) ? getManilaDateKey(parsed) : getManilaDateKey(raw);
+    if (key) return key;
+  }
+  for (const fallback of [prog.endedAt, prog.startedAt, prog.submittedAt, prog.updatedAt]) {
+    if (fallback) {
+      const key = getManilaDateKey(fallback);
+      if (key) return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolves the latest timestamp (ms) represented by a spreadsheet progress row.
+ * Uses timeOut/endedAt if present, else timeIn/startedAt, else submittedAt/updatedAt.
+ */
+export function getProgressRowTimestampMs(
+  prog?: {
+    date?: string | null;
+    dateKey?: string | null;
+    dateDisplay?: string | null;
+    timeIn?: string | null;
+    timeOut?: string | null;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    updatedAt?: string | null;
+    submittedAt?: string | null;
+  } | null
+): number | null {
+  if (!prog) return null;
+  const dateKey = resolveSheetRowDateKey(prog);
+  const inMins = parseClockTimeMinutes(prog.timeIn);
+  const outMins = parseClockTimeMinutes(prog.timeOut);
+
+  if (dateKey && outMins !== null) {
+    const effectiveOutDateKey =
+      inMins !== null && outMins < inMins ? shiftDateKeyByDays(dateKey, 1) : dateKey;
+    const h = Math.floor(outMins / 60);
+    const m = outMins % 60;
+    const ms = new Date(
+      `${effectiveOutDateKey}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+08:00`
+    ).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  if (prog.endedAt) {
+    const ms = new Date(prog.endedAt).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  if (dateKey && inMins !== null) {
+    const h = Math.floor(inMins / 60);
+    const m = inMins % 60;
+    const ms = new Date(
+      `${dateKey}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+08:00`
+    ).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  for (const fallback of [prog.startedAt, prog.submittedAt, prog.updatedAt]) {
+    if (fallback) {
+      const ms = new Date(fallback).getTime();
+      if (!isNaN(ms)) return ms;
+    }
+  }
+  return null;
+}
+
+/**
+ * Shift-aware check for the Task Map ACTIVE filter.
+ * Determines whether a spreadsheet progress row belongs to the user's current shift window
+ * (properly supporting overnight/night shifts that cross midnight) rather than naively comparing
+ * against today's calendar date.
+ */
+export function isProgressActiveForShift(
+  prog?: {
+    date?: string | null;
+    dateKey?: string | null;
+    dateDisplay?: string | null;
+    timeIn?: string | null;
+    timeOut?: string | null;
+    isMissingTime?: boolean;
+    isLive?: boolean;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    updatedAt?: string | null;
+    submittedAt?: string | null;
+  } | null,
+  options?: {
+    user?: { id?: string | null; name?: string | null } | null;
+    shifts?: TaskMapShift[];
+    activeShift?: string | null;
+    now?: Date;
+    targetDate?: Date | string | null;
+    isHistory?: boolean;
+    preShiftGraceMinutes?: number;
+    postShiftGraceMinutes?: number;
+  }
+): boolean {
+  if (!prog) return false;
+  const hasRowActivity = Boolean(
+    (prog.timeIn && String(prog.timeIn).trim()) ||
+    (prog.timeOut && String(prog.timeOut).trim()) ||
+    prog.isMissingTime ||
+    prog.startedAt ||
+    prog.endedAt
+  );
+  if (!hasRowActivity) return false;
+
+  const now = options?.now ?? new Date();
+  const todayKey = getManilaDateKey(now);
+  const targetKey = options?.targetDate ? getManilaDateKey(options.targetDate) : todayKey;
+  if (options?.isHistory || (targetKey && todayKey && targetKey !== todayKey)) {
+    return isProgressLoggedToday(prog, options?.targetDate ?? now);
+  }
+
+  const rowTs = getProgressRowTimestampMs(prog);
+  if (rowTs === null) return false;
+
+  const nowMs = now.getTime();
+  const preGraceMs = (options?.preShiftGraceMinutes ?? 60) * 60 * 1000;
+  const postGraceMs = (options?.postShiftGraceMinutes ?? 60) * 60 * 1000;
+
+  // Actively clocked-in live row (no timeOut) within max shift duration always counts as active
+  const isLiveNow = Boolean(
+    prog.timeIn &&
+    String(prog.timeIn).trim() &&
+    !(prog.timeOut && String(prog.timeOut).trim()) &&
+    !prog.isMissingTime &&
+    prog.isLive !== false &&
+    nowMs - rowTs <= 14 * 60 * 60 * 1000 &&
+    rowTs <= nowMs + 15 * 60 * 1000
+  );
+  if (isLiveNow) return true;
+
+  const shifts = Array.isArray(options?.shifts) ? options.shifts : [];
+  const userShifts = getUserConfiguredShifts(options?.user, shifts);
+
+  if (userShifts.length > 0) {
+    return userShifts.some((s) => {
+      const bounds = getShiftWindowBounds(s, now);
+      const isOnShiftNow = nowMs >= bounds.startMs - preGraceMs && nowMs <= bounds.endMs + postGraceMs;
+      if (!isOnShiftNow) return false;
+      return rowTs >= bounds.startMs - preGraceMs && rowTs <= bounds.endMs + postGraceMs;
+    });
+  }
+
+  // Fallback when user has no explicit shift assignment: check against currently active shift windows
+  const activeShiftTokens = (options?.activeShift || '')
+    .toUpperCase()
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const activeShifts = shifts.filter((s) => {
+    if (s.isActive === false) return false;
+    const bounds = getShiftWindowBounds(s, now);
+    if (nowMs >= bounds.startMs - preGraceMs && nowMs <= bounds.endMs + postGraceMs) return true;
+    return activeShiftTokens.includes((s.shiftKey || '').toUpperCase().trim());
+  });
+
+  if (activeShifts.length > 0) {
+    return activeShifts.some((s) => {
+      const bounds = getShiftWindowBounds(s, now);
+      return rowTs >= bounds.startMs - preGraceMs && rowTs <= bounds.endMs + postGraceMs;
+    });
+  }
+
+  // Final fallback when no shift configs exist or during off-shift gap: rolling 12-hour window
+  return rowTs >= nowMs - 12 * 60 * 60 * 1000 && rowTs <= nowMs + 60 * 60 * 1000;
+}
+
+/**
+ * Determines whether a user should appear in the Task Map ACTIVE filter based on their shift time
+ * and whether they have a latest spreadsheet row within their active shift window.
+ */
+export function isUserActiveInShift(params: {
+  user?: { id?: string | null; name?: string | null } | null;
+  shifts?: TaskMapShift[];
+  activeShift?: string | null;
+  allItems?: TaskMapItem[];
+  activeSession?: any;
+  dailySheetLogs?: DailySheetLogItem[];
+  latestSheetRows?: DailySheetLogItem[];
+  now?: Date;
+  targetDate?: Date | string | null;
+  isHistory?: boolean;
+}): boolean {
+  const userName = (params.user?.name || '').trim();
+  if (!userName) return false;
+
+  const userLower = userName.toLowerCase();
+  const userFirst = userLower.split(/\s+/)[0] || '';
+  const matchesMa = (maName?: string | null, userId?: string | null): boolean => {
+    if (params.user?.id && userId && params.user.id === userId) return true;
+    if (!maName) return false;
+    const pLower = maName.trim().toLowerCase();
+    const pFirst = pLower.split(/\s+/)[0] || '';
+    return (
+      pLower === userLower ||
+      (userFirst.length >= 2 && pFirst === userFirst) ||
+      userLower.includes(pLower) ||
+      pLower.includes(userLower)
+    );
+  };
+
+  const checkOpts = {
+    user: params.user,
+    shifts: params.shifts,
+    activeShift: params.activeShift,
+    now: params.now,
+    targetDate: params.targetDate,
+    isHistory: params.isHistory,
+  };
+
+  // 1. Check latest spreadsheet rows (includes overnight/night-shift rows from previous calendar day)
+  if (Array.isArray(params.latestSheetRows)) {
+    const matchedLatest = params.latestSheetRows.some(
+      (row) => matchesMa(row.maName, row.userId) && isProgressActiveForShift(row, checkOpts)
+    );
+    if (matchedLatest) return true;
+  }
+
+  // 2. Check today's DailySheetLog rows
+  if (Array.isArray(params.dailySheetLogs)) {
+    const matchedLog = params.dailySheetLogs.some(
+      (row) => matchesMa(row.maName, row.userId) && isProgressActiveForShift(row, checkOpts)
+    );
+    if (matchedLog) return true;
+  }
+
+  // 3. Check active session (Redis / live socket session)
+  if (params.activeSession && isProgressActiveForShift(params.activeSession, checkOpts)) {
+    return true;
+  }
+
+  // 4. Check task-level spreadsheet progress entries
+  if (Array.isArray(params.allItems)) {
+    return params.allItems.some(
+      (t) =>
+        matchesMa(t.progress?.maName) &&
+        isProgressActiveForShift(t.progress, checkOpts)
+    );
+  }
+
+  return false;
 }
 
 export interface ShiftUser {
@@ -932,6 +1336,7 @@ export interface TaskMapDataResponse {
   tasks: TaskMapItem[];
   launchTasks?: TaskMapItem[];
   availablePool: TaskMapItem[];
+  availablePoolIds?: string[];
   allClients?: Array<{ id: string; name: string }>;
   options: TaskMapOption[];
   shifts: TaskMapShift[];
@@ -951,6 +1356,7 @@ export interface TaskMapDataResponse {
   upworkProjectClients?: string[];
   maActiveSessions?: Record<string, any>;
   dailySheetLogs?: DailySheetLogItem[];
+  latestSheetRows?: DailySheetLogItem[];
 }
 
 export interface DailySheetLogItem {
@@ -1167,15 +1573,28 @@ export const taskMapApi = {
     return cachedRequest<TaskMapDataResponse>(
       cacheKey,
       TASK_MAP_CACHE_TTL.DATA,
-      () => {
+      async () => {
         const q = new URLSearchParams();
         if (params?.shift) q.set('shift', params.shift);
         if (params?.date) q.set('date', params.date);
         if (params?.client) q.set('client', params.client);
+        // Request compact wire payload (deduplicates availablePool via availablePoolIds)
+        q.set('compact', '1');
         const queryString = q.toString() ? `?${q.toString()}` : '';
-        return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
+        const res = await apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
           timeoutMs: params?.timeoutMs ?? 25000,
         });
+        // Transparently hydrate availablePool from availablePoolIds + tasks so all consumers see the exact same shape
+        if (res && !Array.isArray(res.availablePool) && Array.isArray(res.availablePoolIds)) {
+          const byId = new Map<string, TaskMapItem>();
+          for (const t of res.tasks || []) {
+            byId.set(t.id, t);
+          }
+          res.availablePool = res.availablePoolIds
+            .map((id) => byId.get(id))
+            .filter((t): t is TaskMapItem => Boolean(t));
+        }
+        return res;
       },
       { force: params?.force, signal: params?.signal }
     );
@@ -3628,6 +4047,155 @@ export function isTaskMapItemOnHold(task?: Partial<TaskMapItem> | null): boolean
     const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
     return up === 'ONHOLD' || up.includes('HOLD');
   });
+}
+
+/**
+ * Returns true if a task's status or Task Map sub-statuses exclude it from the Available Tasks pool.
+ * Available Tasks includes Waiting, In Progress, Revision/Revising, Pending, and On-Hold tasks,
+ * while excluding CRM, Review/Checking, and recurring/cadence tasks.
+ */
+export function isAvailablePoolExcludedTask(
+  task?: (Partial<TaskMapItem> & { recurringConfig?: any }) | null,
+  overrideSubStatuses?: string[]
+): boolean {
+  if (!task) return true;
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const mapStatuses = (overrideSubStatuses ?? task.taskMap?.statuses ?? []).map((x: string) =>
+    (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+  );
+
+  return (
+    s === 'CRM' ||
+    s.includes('CRM') ||
+    s === 'INREVIEW' ||
+    s === 'TOREVIEW' ||
+    s === 'REVIEW' ||
+    s === 'CHECKING' ||
+    s === 'INCHECKING' ||
+    s === 'DAILY' ||
+    s.includes('DAILY') ||
+    s === 'WEEKLY' ||
+    s.includes('WEEKLY') ||
+    s === 'MONTHLY' ||
+    s.includes('MONTHLY') ||
+    s === 'RECURRING' ||
+    s.includes('RECURRING') ||
+    Boolean(task.recurringConfig) ||
+    mapStatuses.some(
+      (st: string) =>
+        [
+          'CRM',
+          'ASKCLIENT',
+          'READYTOSEND',
+          'TOSEND',
+          'DAILY',
+          'WEEKLY',
+          'MONTHLY',
+          'RECURRING',
+          'INREVIEW',
+          'TOREVIEW',
+          'CHECKING',
+          'INCHECKING',
+        ].includes(st) ||
+        st.includes('CRM') ||
+        st.includes('DAILY') ||
+        st.includes('WEEKLY') ||
+        st.includes('MONTHLY') ||
+        st.includes('RECURRING')
+    )
+  );
+}
+
+/**
+ * Numeric urgency rank for Task Map priority sorting (lower = higher priority):
+ * URGENT (0) > HIGH (1) > NORMAL/MEDIUM (2) > LOW (3) > none/other (4).
+ */
+export function getTaskPriorityRank(
+  task?: (Partial<TaskMapItem> & { tags?: Array<string | { name?: string }> }) | null
+): number {
+  if (!task) return 4;
+  const p = (task.priority || '').trim().toUpperCase();
+  const customStatuses = task.taskMap?.statuses || [];
+  const tags = task.tags || [];
+  const isUrgent =
+    p === 'URGENT' ||
+    customStatuses.some((cs) => (cs || '').toUpperCase().includes('URGENT')) ||
+    tags.some((tag) => (typeof tag === 'string' ? tag : tag?.name || '').toUpperCase().includes('URGENT')) ||
+    (task.title || '').toUpperCase().includes('[URGENT]');
+
+  if (isUrgent) return 0;
+  if (p === 'HIGH') return 1;
+  if (p === 'NORMAL' || p === 'MEDIUM') return 2;
+  if (p === 'LOW') return 3;
+  return 4;
+}
+
+/**
+ * Numeric status rank for Available Tasks sorting (lower = higher priority):
+ * WAITING (0) > IN PROGRESS (1) > REVISING/REVISION (2) > PENDING (3) > other (4) > ON-HOLD (5).
+ */
+export function getAvailableTaskStatusRank(task?: Partial<TaskMapItem> | null): number {
+  if (!task) return 4;
+  if (isTaskMapItemOnHold(task)) return 5;
+
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const mapStatuses = (task.taskMap?.statuses || []).map((x: string) =>
+    (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+  );
+
+  if (
+    s === 'WAITING' ||
+    s === 'SENT' ||
+    s.includes('WAITING') ||
+    mapStatuses.some((st) => st === 'WAITING' || st === 'SENTBUTWAITING' || st.includes('WAITING'))
+  ) {
+    return 0;
+  }
+
+  if (s === 'INPROGRESS' || mapStatuses.some((st) => st === 'INPROGRESS')) {
+    return 1;
+  }
+
+  if (
+    s === 'REVISION' ||
+    s === 'REVISIONS' ||
+    s === 'REVISING' ||
+    s.includes('REVIS') ||
+    mapStatuses.some(
+      (st) => st === 'REVISION' || st === 'REVISIONS' || st === 'REVISING' || st.includes('REVIS')
+    )
+  ) {
+    return 2;
+  }
+
+  if (s === 'PENDING' || mapStatuses.some((st) => st === 'PENDING')) {
+    return 3;
+  }
+
+  return 4;
+}
+
+/**
+ * Comparator for Available Tasks pool:
+ * 1. On-Hold tasks strictly at the bottom
+ * 2. Priority urgency: URGENT > HIGH > NORMAL/MEDIUM > LOW
+ * 3. Status order: WAITING > IN PROGRESS > REVISING > PENDING > other > ON-HOLD
+ * 4. Newest createdAt first
+ */
+export function compareAvailablePoolTasks(a: TaskMapItem, b: TaskMapItem): number {
+  const holdA = isTaskMapItemOnHold(a) ? 1 : 0;
+  const holdB = isTaskMapItemOnHold(b) ? 1 : 0;
+  if (holdA !== holdB) return holdA - holdB;
+
+  const priorityDiff = getTaskPriorityRank(a) - getTaskPriorityRank(b);
+  if (priorityDiff !== 0) return priorityDiff;
+
+  const statusDiff = getAvailableTaskStatusRank(a) - getAvailableTaskStatusRank(b);
+  if (statusDiff !== 0) return statusDiff;
+
+  const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+  const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+  return dateB - dateA;
 }
 
 /**

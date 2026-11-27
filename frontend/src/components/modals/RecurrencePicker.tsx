@@ -378,7 +378,7 @@ export function RecurrencePicker({
         <div className="flex items-center justify-between">
           <label className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-            Set Time ({formattedTime || 'e.g. 9pm or 9:30pm'})
+            Set Due Date ({formattedTime || 'e.g. 9pm or 9:30pm'})
           </label>
           <input
             type="time"

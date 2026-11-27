@@ -7,7 +7,7 @@ import { DEFAULT_ESTIMATED_HOURS, formatEstimatedHours } from '@/components/moda
 import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, isHiddenBoardStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold, compareAvailablePoolTasks, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { useLiveClock } from '@/lib/liveClock';
@@ -213,7 +213,7 @@ export const sortTasksUrgentFirst = (
 };
 
 export const sortAvailablePoolTasks = (items: TaskMapItem[]) =>
-  groupTasksWithSubtasks(sortTasksUrgentFirst(items, { prioritizeInProgress: true }));
+  groupTasksWithSubtasks([...items].sort(compareAvailablePoolTasks));
 
 /**
  * Places subtasks directly below their parent main task whenever both exist in the same column

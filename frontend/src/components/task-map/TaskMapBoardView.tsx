@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import {
   TaskMapItem,
   TaskMapOption,
+  TaskMapShift,
+  DailySheetLogItem,
   taskMapApi,
   getUserRoleDefinition,
   createEmptyUserBlock,
@@ -12,6 +14,7 @@ import {
   isTaskHandedOver,
   getEffectiveTaskMapHandlerId,
   countNonOnHoldTasks,
+  isAvailablePoolExcludedTask,
   TASK_MAP_STATUS_COLORS,
   getTaskMapSubStatusStyle,
   getDefaultTaskMapSubStatuses,
@@ -20,7 +23,7 @@ import {
   matchesMarketingNameSearch,
   subscribeTaskMapSaving,
   isTaskSavingToDb,
-  isProgressLoggedToday,
+  isUserActiveInShift,
   isDeveloperUser,
   attachDragToScroll,
   isTaskUnderAdmin,
@@ -111,7 +114,7 @@ export function findBestUserMatch<T extends { name?: string | null; email?: stri
   return eligible.find((u) => doesProgressMatchUser(progMaName, u.name));
 }
 
-import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2, ArrowRightLeft } from 'lucide-react';
+import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2, ArrowRightLeft, Eye, EyeOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { getCurrentLiveTime } from '@/lib/liveClock';
 import { getPriorityConfig } from '@/lib/priority';
@@ -124,6 +127,7 @@ import {
   canTransferTaskMapCard,
   isOtherBoardWorkflowStatus,
   resolveColumnCollapsedState,
+  resolveColumnHiddenState,
 } from '@/lib/taskMapPermissions';
 import { resolveUsersFromRoleRestrictions } from '@/lib/taskTokens';
 import { toast } from '@/lib/toast';
@@ -180,7 +184,12 @@ interface Props {
   ) => void;
   onTransferTask?: (taskId: string, targetUserId: string) => Promise<void> | void;
   currentDate?: string;
+  shifts?: TaskMapShift[];
+  activeShift?: string;
+  dailySheetLogs?: DailySheetLogItem[];
+  latestSheetRows?: DailySheetLogItem[];
   isHistory?: boolean;
+  isInitialLoading?: boolean;
   search?: string;
   trackFilter?: 'ALL' | 'LIVE' | 'ACTIVE';
   maSortMode?: 'DEFAULT' | 'QUEUE_DESC' | 'QUEUE_ASC';
@@ -1258,6 +1267,135 @@ const CardTransferDropdown: React.FC<{
   );
 };
 
+/** Lightweight dark-zinc skeleton cards rendered while initial data or off-screen columns hydrate. */
+const BoardCardSkeletonList: React.FC<{ count?: number }> = memo(({ count = 3 }) => (
+  <div className="space-y-2.5 animate-pulse" aria-hidden="true">
+    {Array.from({ length: count }).map((_, idx) => (
+      <div
+        key={idx}
+        className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-3 space-y-2.5"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="h-3 w-20 rounded bg-zinc-800" />
+          <div className="h-4 w-16 rounded-full bg-zinc-800/80" />
+        </div>
+        <div className="space-y-1.5">
+          <div className="h-3.5 w-11/12 rounded bg-zinc-800/90" />
+          <div className="h-3.5 w-2/3 rounded bg-zinc-800/70" />
+        </div>
+        <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center gap-1.5">
+            <div className="h-5 w-16 rounded-md bg-zinc-800/80" />
+            <div className="h-5 w-12 rounded-md bg-zinc-800/60" />
+          </div>
+          <div className="h-5 w-20 rounded-md bg-zinc-800/70" />
+        </div>
+      </div>
+    ))}
+  </div>
+));
+BoardCardSkeletonList.displayName = 'BoardCardSkeletonList';
+
+/**
+ * Lazy-mounts heavy user column bodies (filter dropdowns + task cards) once near the horizontal
+ * scroll viewport via IntersectionObserver. Eager columns (first few visible columns, current user,
+ * pinned columns, active search, or active drag) mount immediately.
+ */
+const LazyUserColumnShell: React.FC<{
+  scrollRootRef: React.RefObject<HTMLDivElement | null>;
+  eager: boolean;
+  userId: string;
+  userName: string;
+  avatarUrl?: string | null;
+  initials: string;
+  avatarBg: string;
+  activeCount: number;
+  isPinned: boolean;
+  children: () => React.ReactNode;
+}> = ({
+  scrollRootRef,
+  eager,
+  userId,
+  userName,
+  avatarUrl,
+  initials,
+  avatarBg,
+  activeCount,
+  isPinned,
+  children,
+}) => {
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const [hasEntered, setHasEntered] = useState(eager);
+
+  useEffect(() => {
+    if (eager) {
+      setHasEntered(true);
+      return;
+    }
+    if (hasEntered) return;
+    const node = placeholderRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setHasEntered(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setHasEntered(true);
+          observer.disconnect();
+        }
+      },
+      {
+        root: scrollRootRef.current || null,
+        rootMargin: '0px 480px 0px 480px',
+        threshold: 0.01,
+      }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [eager, hasEntered, scrollRootRef]);
+
+  if (hasEntered) {
+    return <>{children()}</>;
+  }
+
+  return (
+    <div
+      ref={placeholderRef}
+      data-lazy-column={userId}
+      className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${
+        isPinned ? 'ring-1 ring-blue-500/30 border-blue-500/40 shadow-blue-950/20' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between h-9 pb-2 border-b border-border/80 mb-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1 mr-2 h-7">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={userName}
+              className="size-7 rounded-full object-cover border border-zinc-700/80 shrink-0"
+              loading="lazy"
+            />
+          ) : (
+            <div
+              className={`size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0 ${avatarBg}`}
+            >
+              {initials}
+            </div>
+          )}
+          <span className="text-sm font-bold text-zinc-100 truncate">{userName}</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
+            {activeCount}
+          </span>
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <BoardCardSkeletonList count={3} />
+      </div>
+    </div>
+  );
+};
+
 export const TaskMapBoardView: React.FC<Props> = ({
   tasks = [],
   availablePool = [],
@@ -1266,6 +1404,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
   options = [],
   allUsers = [],
   shiftUsers = [],
+  shifts = [],
+  activeShift = '',
+  dailySheetLogs = [],
+  latestSheetRows = [],
   currentShift,
   onStatusChange,
   onOptionsUpdated,
@@ -1281,6 +1423,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
   onTransferTask,
   currentDate,
   isHistory = false,
+  isInitialLoading = false,
   search = '',
   trackFilter = 'ALL',
   maSortMode = 'DEFAULT',
@@ -1299,6 +1442,90 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const boardScrollRef = useRef<HTMLDivElement>(null);
   useHorizontalScroll(boardScrollRef);
+
+  // Memoize sorted pools & review candidates ONCE per data update (avoids O(users * tasks) work on every render)
+  const memoizedSortedAvailablePool = useMemo(
+    () => sortAvailablePoolTasks(availablePool),
+    [availablePool]
+  );
+  const memoizedSortedAllAvailablePool = useMemo(
+    () => (allAvailablePool ? sortAvailablePoolTasks(allAvailablePool) : undefined),
+    [allAvailablePool]
+  );
+  const reviewCandidateTasks = useMemo(() => {
+    const reviewStatusSet = new Set(['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING']);
+    return tasks.filter((t) => {
+      const sNorm = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
+      return reviewStatusSet.has(sNorm);
+    });
+  }, [tasks]);
+
+  // Per-column progressive card windowing for user queues (matches Available tasks infinite-scroll pattern)
+  const USER_QUEUE_PAGE_SIZE = 10;
+  const [userQueueVisibleCounts, setUserQueueVisibleCounts] = useState<Record<string, number>>({});
+
+  // Hidden columns state: for non-PM users, other users' columns are hidden by default instead of collapsed
+  const hiddenStorageKey = currentUser?.id
+    ? `nexus_taskmap_hidden_columns_v1_${currentUser.id}`
+    : 'nexus_taskmap_hidden_columns_v1';
+  const [hiddenColumns, setHiddenColumns] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const key = currentUser?.id
+        ? `nexus_taskmap_hidden_columns_v1_${currentUser.id}`
+        : 'nexus_taskmap_hidden_columns_v1';
+      const saved = localStorage.getItem(key);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [hiddenDropdownOpen, setHiddenDropdownOpen] = useState(false);
+  const [hiddenSearch, setHiddenSearch] = useState('');
+  const hiddenDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !currentUser?.id) return;
+    try {
+      const saved = localStorage.getItem(`nexus_taskmap_hidden_columns_v1_${currentUser.id}`);
+      setHiddenColumns(saved ? JSON.parse(saved) : {});
+    } catch {
+      setHiddenColumns({});
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!hiddenDropdownOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (hiddenDropdownRef.current && !hiddenDropdownRef.current.contains(e.target as Node)) {
+        setHiddenDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [hiddenDropdownOpen]);
+
+  const setColumnHidden = useCallback(
+    (columnId: string, hide: boolean) => {
+      setHiddenColumns((prev) => {
+        const next = { ...prev, [columnId]: hide };
+        try {
+          localStorage.setItem(hiddenStorageKey, JSON.stringify(next));
+        } catch (e) {
+          console.error('Failed to save hidden columns', e);
+        }
+        return next;
+      });
+    },
+    [hiddenStorageKey]
+  );
+
+  const resetHiddenColumnsToDefault = useCallback(() => {
+    setHiddenColumns({});
+    try {
+      localStorage.removeItem(hiddenStorageKey);
+    } catch {}
+  }, [hiddenStorageKey]);
 
   useEffect(() => {
     const el = boardScrollRef.current;
@@ -1543,14 +1770,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
   const effectiveShowAdmin = showAdminTasks !== undefined ? showAdminTasks : localShowAdmin;
 
-  // Filter tasks by Admin and Client visibility (default: both checked) and include Pending, Revision, Waiting, and On-hold statuses
+  // Filter tasks by Admin and Client visibility (default: both checked) and include Waiting, In Progress, Revision, Pending, and On-hold statuses
   const displayPool = React.useMemo(() => {
     return availablePool.filter((t) => {
-      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
-      const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
-        x.trim().toUpperCase().replace(/[\s_-]+/g, '')
-      );
-
       // Exclude from available pool if routed to a specific handler via PM assignment or direct latest assignee (unless handed over)
       if (getEffectiveTaskMapHandlerId(t)) return false;
 
@@ -1573,35 +1795,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         );
       if (isQueuedByPm) return false;
 
-      const isExcluded =
-        s === 'WAITING' ||
-        s.includes('WAITING') ||
-        s === 'CRM' ||
-        s.includes('CRM') ||
-        s === 'INREVIEW' ||
-        s === 'TOREVIEW' ||
-        s === 'REVIEW' ||
-        s === 'CHECKING' ||
-        s === 'INCHECKING' ||
-        s === 'DAILY' ||
-        s.includes('DAILY') ||
-        s === 'WEEKLY' ||
-        s.includes('WEEKLY') ||
-        s === 'MONTHLY' ||
-        s.includes('MONTHLY') ||
-        s === 'RECURRING' ||
-        s.includes('RECURRING') ||
-        !!(t as any)?.recurringConfig ||
-        mapStatuses.some((st: string) =>
-          ['WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(st) ||
-          st.includes('WAITING') ||
-          st.includes('CRM') ||
-          st.includes('DAILY') ||
-          st.includes('WEEKLY') ||
-          st.includes('MONTHLY') ||
-          st.includes('RECURRING')
-        );
-      if (isExcluded) return false;
+      if (isAvailablePoolExcludedTask(t)) return false;
 
       // Admin task check
       const isAdmin = isTaskUnderAdmin(t);
@@ -2127,16 +2321,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
             );
             return hasLiveTask || hasLiveSession;
           }
-          const targetDateForTrack = currentDate || boardTime;
-          const hasLoggedTaskToday = allItems.some(
-            (t) => doesProgressMatchUser(t.progress?.maName, userName) && isProgressLoggedToday(t.progress, targetDateForTrack)
-          );
-          const hasLoggedSessionToday = Boolean(
-            activeSession &&
-            (activeSession.timeIn || activeSession.timeOut) &&
-            isProgressLoggedToday(activeSession, targetDateForTrack)
-          );
-          return hasLoggedTaskToday || hasLoggedSessionToday;
+          return isUserActiveInShift({
+            user: col.user,
+            shifts,
+            activeShift,
+            allItems,
+            activeSession,
+            dailySheetLogs,
+            latestSheetRows,
+            now: boardTime,
+            targetDate: currentDate || boardTime,
+            isHistory,
+          });
         }
         const activeShifts = (currentShift || '').toUpperCase().split(',').map((s) => s.trim());
         if (activeShifts.includes('CUSTOM') && selectedCustomMAs.length > 0) {
@@ -2201,6 +2397,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
     availablePool,
     allUsers,
     shiftUsers,
+    shifts,
+    activeShift,
+    dailySheetLogs,
+    latestSheetRows,
     currentShift,
     maActiveSessions,
     cleanSearch,
@@ -3748,7 +3948,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   carriedSubtasks={remainingAvailableSubtasks}
                   getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
                 />
-                {filteredDisplayPool.length === 0 ? (
+                {isInitialLoading && filteredDisplayPool.length === 0 ? (
+                  <div className="space-y-2.5 pt-1">
+                    <div className="flex items-center gap-1.5 px-1 text-[11px] text-zinc-400">
+                      <Loader2 className="size-3 animate-spin text-[#0099ff]" />
+                      <span>Loading available tasks...</span>
+                    </div>
+                    <BoardCardSkeletonList count={5} />
+                  </div>
+                ) : filteredDisplayPool.length === 0 ? (
                   (() => {
                     const searchMatches = searchQuery.trim()
                       ? findSearchedTaskLocations(
@@ -3968,10 +4176,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   }}
                                 />
 
-                                {/* Bulletin Icon - click shows task description */}
+                                {/* Bulletin Icon - click shows task description (lazy-fetched when omitted from initial payload) */}
                                 <TaskDescriptionButton
                                   description={task.description}
                                   taskTitle={task.title}
+                                  taskId={task.id}
+                                  clientName={task.list?.name || null}
+                                  lazyFetch={!task.description}
                                 />
 
                                 {/* Priority Flag and Label */}
@@ -4093,8 +4304,51 @@ export const TaskMapBoardView: React.FC<Props> = ({
           />
         )}
 
-        {/* 2. User Shift Columns (Matches Image 1 & 4) */}
-        {sortedUserColumns.map(([userId, { user, tasks: userTasks }]) => {
+        {/* 2. User Shift Columns (frontend-first skeletons on initial load, non-PM hides other columns by default, lazy-mounted horizontally) */}
+        {isInitialLoading && sortedUserColumns.length === 0 ? (
+          Array.from({ length: isPmUser ? 3 : 1 }).map((_, idx) => (
+            <div
+              key={`skeleton-col-${idx}`}
+              className="w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0"
+              aria-hidden="true"
+            >
+              <div className="flex items-center justify-between h-9 pb-2 border-b border-border/80 mb-3 animate-pulse">
+                <div className="flex items-center gap-2">
+                  <div className="size-7 rounded-full bg-zinc-800" />
+                  <div className="h-3.5 w-28 rounded bg-zinc-800" />
+                  <div className="h-4 w-7 rounded-full bg-zinc-800/80" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="size-5 rounded bg-zinc-800/70" />
+                  <div className="size-5 rounded bg-zinc-800/70" />
+                </div>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <BoardCardSkeletonList count={3} />
+              </div>
+            </div>
+          ))
+        ) : (() => {
+          const customSelectedSet = new Set(selectedCustomMAs || []);
+          const visibleUserColumns: typeof sortedUserColumns = [];
+          const hiddenUserColumns: typeof sortedUserColumns = [];
+
+          for (const entry of sortedUserColumns) {
+            const [uId] = entry;
+            const explicitlySelected = customSelectedSet.size > 0 && customSelectedSet.has(uId);
+            const isHidden =
+              !explicitlySelected &&
+              resolveColumnHiddenState(uId, hiddenColumns, currentUser?.id, isPmUser);
+            if (isHidden) {
+              hiddenUserColumns.push(entry);
+            } else {
+              visibleUserColumns.push(entry);
+            }
+          }
+
+          return (
+            <>
+              {visibleUserColumns.map(([userId, { user, tasks: userTasks }], visibleColIndex) => {
           const initials = (user.name || 'U').substring(0, 2).toUpperCase();
           const avatarBg = getAssigneeAvatarColor(user.name || 'U');
           const isCollapsed = resolveColumnCollapsedState(
@@ -4111,38 +4365,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const userSubStatusFilter = columnSubStatusFilters[userId] || 'ALL';
           const userClientFilter = columnClientFilters[userId] || 'ALL';
           const userShowAdmin = columnShowAdmin[userId] ?? (isDeveloperUser(user, workspaceTeams) ? true : effectiveShowAdmin);
-
-          const isColLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
-          const filteredUserTasks = userTasks.filter((t) => {
-            if (!matchesSearchFilter(t, searchQuery)) return false;
-            if (isColLinkQuery) return true;
-            if (!matchesPriorityFilter(t, userPriorityFilter)) return false;
-            if (!matchesTaskTypeFilter(t, userTaskTypeFilter)) return false;
-            if (!matchesSubStatusFilter(t, userSubStatusFilter)) return false;
-
-            // Admin task check: hide all tasks that are for the admin by default,
-            // except the General Task (assumption block), real tasks inputted by this MA from the spreadsheet,
-            // or tasks paused in this user's column so they stay visible in Queue!
-            const isAdmin = isTaskUnderAdmin(t);
-            const hasUserSheetInput = Boolean(
-              hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate }) &&
-              doesProgressMatchUser(t.progress?.maName, user.name)
-            );
-            const isPausedInColumn = (t.taskMap?.statuses || []).some(
-              (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
-            );
-            if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !isPausedInColumn && !searchQuery) return false;
-
-            // Client filter check: the General Task representing the user's active schedule input is always shown in their column
-            if (!t.isAssumptionBlock && userClientFilter !== 'ALL') {
-              const clientId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
-              const clientName = t.list?.name || 'General';
-              if (!userClientFilter.includes(clientId) && !userClientFilter.includes(clientName)) {
-                return false;
-              }
-            }
-            return true;
-          });
           const userActiveCount = countNonOnHoldTasks(userTasks);
 
           if (isCollapsed) {
@@ -4194,9 +4416,62 @@ export const TaskMapBoardView: React.FC<Props> = ({
             );
           }
 
+          const isEagerColumn =
+            visibleColIndex < 3 ||
+            isPinned ||
+            userId === currentUser?.id ||
+            Boolean(activeDragTask) ||
+            Boolean(cleanSearch) ||
+            Boolean(searchQuery);
+
           return (
-            <DroppableColumn
+            <LazyUserColumnShell
               key={userId}
+              scrollRootRef={boardScrollRef}
+              eager={isEagerColumn}
+              userId={userId}
+              userName={user.name}
+              avatarUrl={user.avatarUrl}
+              initials={initials}
+              avatarBg={avatarBg}
+              activeCount={userActiveCount}
+              isPinned={isPinned}
+            >
+              {() => {
+                const isColLinkQuery = extractTaskLinkIdentifiers(searchQuery).isLink;
+                const filteredUserTasks = userTasks.filter((t) => {
+                  if (!matchesSearchFilter(t, searchQuery)) return false;
+                  if (isColLinkQuery) return true;
+                  if (!matchesPriorityFilter(t, userPriorityFilter)) return false;
+                  if (!matchesTaskTypeFilter(t, userTaskTypeFilter)) return false;
+                  if (!matchesSubStatusFilter(t, userSubStatusFilter)) return false;
+
+                  // Admin task check: hide all tasks that are for the admin by default,
+                  // except the General Task (assumption block), real tasks inputted by this MA from the spreadsheet,
+                  // or tasks paused in this user's column so they stay visible in Queue!
+                  const isAdmin = isTaskUnderAdmin(t);
+                  const hasUserSheetInput = Boolean(
+                    hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate }) &&
+                    doesProgressMatchUser(t.progress?.maName, user.name)
+                  );
+                  const isPausedInColumn = (t.taskMap?.statuses || []).some(
+                    (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
+                  );
+                  if (isAdmin && !t.isAssumptionBlock && !userShowAdmin && !hasUserSheetInput && !isPausedInColumn && !searchQuery) return false;
+
+                  // Client filter check: the General Task representing the user's active schedule input is always shown in their column
+                  if (!t.isAssumptionBlock && userClientFilter !== 'ALL') {
+                    const clientId = t.list?.id || (t.list?.name ? `name-${t.list.name}` : 'general');
+                    const clientName = t.list?.name || 'General';
+                    if (!userClientFilter.includes(clientId) && !userClientFilter.includes(clientName)) {
+                      return false;
+                    }
+                  }
+                  return true;
+                });
+
+                return (
+            <DroppableColumn
               id={`user-${userId}`}
               className={`w-[370px] shrink-0 flex flex-col bg-card/90 border border-zinc-800/80 rounded-2xl p-4 shadow-xl h-full max-h-full min-h-0 ${isPinned ? 'ring-1 ring-blue-500/30 border-blue-500/40 shadow-blue-950/20' : ''
                 }`}
@@ -4247,6 +4522,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         >
                           <RotateCcw className="size-3.5" />
                         </button>
+
+                        {userId !== currentUser?.id && (
+                          <button
+                            type="button"
+                            onClick={() => setColumnHidden(userId, true)}
+                            className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
+                            title={`Hide ${user.name}'s column`}
+                          >
+                            <EyeOff className="size-3.5" />
+                          </button>
+                        )}
 
                         <button
                           type="button"
@@ -4362,7 +4648,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 const sorted = sortColumnTasks(filteredUserTasks, user.name);
                 const activeInProgTask = sorted.find((t) => isTaskActiveInProgress(t, user.name));
                 const queuedTasks = sorted.filter((t) => t.id !== activeInProgTask?.id && !isTaskHandedOver(t) && !isClosedTask(t));
-                const reviewStatusSet = new Set(['INREVIEW', 'TOREVIEW', 'REVIEW', 'CHECKING', 'INCHECKING']);
                 const activeAndQueuedIds = new Set(sorted.map((t) => t.id));
                 const toReviewMap = new Map<string, TaskMapItem>();
                 const isViewingToday = !currentDate || currentDate === getManilaDateKey(new Date());
@@ -4373,10 +4658,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     }
                   }
                 }
-                for (const t of tasks) {
+                for (const t of reviewCandidateTasks) {
                   if (activeAndQueuedIds.has(t.id) || toReviewMap.has(t.id)) continue;
-                  const sNorm = (t.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-                  if (!reviewStatusSet.has(sNorm)) continue;
                   const matchesWorker =
                     doesProgressMatchUser(t.progress?.maName, user.name) &&
                     hasSpreadsheetTaskInput(t, { isHistory, now: boardTime, targetDate: currentDate });
@@ -4724,13 +5007,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 }}
                               />
 
-                              {/* Bulletin Icon - click shows task description (lazy-fetched on press for session blocks) */}
+                              {/* Bulletin Icon - click shows task description (lazy-fetched on press when omitted) */}
                               <TaskDescriptionButton
                                 description={task.description}
                                 taskTitle={task.title}
                                 taskId={realTaskId}
                                 clientName={effectiveProgress?.client || task.list?.name || null}
-                                lazyFetch={Boolean(task.isAssumptionBlock)}
+                                lazyFetch={Boolean(task.isAssumptionBlock || !task.description)}
                                 onResolvedTaskMeta={(meta) => {
                                   if (!task.isAssumptionBlock) return;
                                   syncSessionPatch({
@@ -4857,8 +5140,29 @@ export const TaskMapBoardView: React.FC<Props> = ({
                   columnUserId: userId,
                 });
 
+                const queueVisibleLimit = userQueueVisibleCounts[userId] || USER_QUEUE_PAGE_SIZE;
+                const renderedQueuedTasks = queuedTasks.slice(0, queueVisibleLimit);
+                const remainingQueuedCount = Math.max(0, queuedTasks.length - renderedQueuedTasks.length);
+
                 return (
-                  <div data-column-body="true" className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0">
+                  <div
+                    data-column-body="true"
+                    className="flex-1 overflow-y-auto custom-scrollbar space-y-2 px-1.5 py-1 min-h-0"
+                    onScroll={(e) => {
+                      if (remainingQueuedCount <= 0) return;
+                      const el = e.currentTarget;
+                      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 140) {
+                        setUserQueueVisibleCounts((prev) => {
+                          const cur = prev[userId] || USER_QUEUE_PAGE_SIZE;
+                          if (cur >= queuedTasks.length) return prev;
+                          return {
+                            ...prev,
+                            [userId]: Math.min(cur + USER_QUEUE_PAGE_SIZE, queuedTasks.length),
+                          };
+                        });
+                      }
+                    }}
+                  >
                     {/* IN PROGRESS SLOT / CARD */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between px-1">
@@ -4917,8 +5221,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
                         <TaskMapInProgressDropCard
                           userId={userId}
                           userName={user.name}
-                          availableTasks={sortAvailablePoolTasks(availablePool)}
-                          allAvailableTasks={allAvailablePool ? sortAvailablePoolTasks(allAvailablePool) : undefined}
+                          availableTasks={memoizedSortedAvailablePool}
+                          allAvailableTasks={memoizedSortedAllAvailablePool}
                           allTasks={allTasks || tasks}
                           queuedTasks={queuedTasks}
                           onSelectTask={(taskId, task) => handleSelectInProgressTask(taskId, userId, task)}
@@ -4944,8 +5248,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           carriedSubtasks={remainingAvailableSubtasks}
                           getSubStatusStyle={(st, item) => getTaskMapSubStatusStyle(st, getUnifiedTaskMapOptions(item))}
                         />
-                        {queuedTasks.length > 0 ? (
-                          queuedTasks.map((t) => renderCard(t))
+                        {renderedQueuedTasks.length > 0 ? (
+                          <>
+                            {renderedQueuedTasks.map((t) => renderCard(t))}
+                            {remainingQueuedCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setUserQueueVisibleCounts((prev) => ({
+                                    ...prev,
+                                    [userId]: Math.min(
+                                      (prev[userId] || USER_QUEUE_PAGE_SIZE) + USER_QUEUE_PAGE_SIZE,
+                                      queuedTasks.length
+                                    ),
+                                  }))
+                                }
+                                className="w-full py-1.5 rounded-xl border border-zinc-800/80 bg-zinc-900/50 hover:bg-zinc-800/70 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                              >
+                                Show more ({remainingQueuedCount} remaining)
+                              </button>
+                            )}
+                          </>
                         ) : !canShowColumnCutout ? (
                           (() => {
                             const searchMatches = searchQuery.trim()
@@ -5001,8 +5324,128 @@ export const TaskMapBoardView: React.FC<Props> = ({
                 );
               })()}
             </DroppableColumn>
+                );
+              }}
+            </LazyUserColumnShell>
           );
         })}
+
+              {hiddenUserColumns.length > 0 && (
+                <div ref={hiddenDropdownRef} className="relative shrink-0 self-start pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setHiddenDropdownOpen((prev) => !prev)}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card/90 border border-zinc-800/80 hover:border-zinc-700 text-xs font-medium text-zinc-300 hover:text-white shadow-lg transition-colors cursor-pointer"
+                    title="View or unhide hidden team columns"
+                  >
+                    <Eye className="size-3.5 text-zinc-400" />
+                    <span>Hidden columns</span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
+                      {hiddenUserColumns.length}
+                    </span>
+                    <ChevronDown className={`size-3.5 text-zinc-400 transition-transform ${hiddenDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {hiddenDropdownOpen && (
+                    <div className="absolute left-0 top-full mt-2 w-64 rounded-xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-md shadow-2xl p-2 z-40 space-y-2">
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800">
+                        <Search className="size-3 text-zinc-500 shrink-0" />
+                        <input
+                          type="text"
+                          value={hiddenSearch}
+                          onChange={(e) => setHiddenSearch(e.target.value)}
+                          placeholder="Find member column..."
+                          className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+                        />
+                        {hiddenSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setHiddenSearch('')}
+                            className="text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                          >
+                            <X className="size-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-64 overflow-y-auto custom-scrollbar space-y-0.5">
+                        {hiddenUserColumns
+                          .filter(([, { user }]) =>
+                            !hiddenSearch.trim() ||
+                            (user.name || '').toLowerCase().includes(hiddenSearch.trim().toLowerCase())
+                          )
+                          .map(([hUserId, { user, tasks: hTasks }]) => {
+                            const hInitials = (user.name || 'U').substring(0, 2).toUpperCase();
+                            const hAvatarBg = getAssigneeAvatarColor(user.name || 'U');
+                            const hCount = countNonOnHoldTasks(hTasks);
+                            return (
+                              <button
+                                key={hUserId}
+                                type="button"
+                                onClick={() => setColumnHidden(hUserId, false)}
+                                className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-zinc-800/70 text-left transition-colors cursor-pointer"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {user.avatarUrl ? (
+                                    <img
+                                      src={user.avatarUrl}
+                                      alt={user.name}
+                                      className="size-5 rounded-full object-cover border border-zinc-700/80 shrink-0"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className={`size-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${hAvatarBg}`}>
+                                      {hInitials}
+                                    </div>
+                                  )}
+                                  <span className="text-xs text-zinc-200 truncate">{user.name}</span>
+                                </div>
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/70 shrink-0">
+                                  {hCount}
+                                </span>
+                              </button>
+                            );
+                          })}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1.5 border-t border-zinc-800/80">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next: Record<string, boolean> = { ...hiddenColumns };
+                            for (const [hUserId] of hiddenUserColumns) {
+                              next[hUserId] = false;
+                            }
+                            setHiddenColumns(next);
+                            try {
+                              localStorage.setItem(hiddenStorageKey, JSON.stringify(next));
+                            } catch {}
+                            setHiddenDropdownOpen(false);
+                          }}
+                          className="text-[11px] font-medium text-[#0099ff] hover:text-sky-300 px-1.5 py-0.5 cursor-pointer"
+                        >
+                          Show all
+                        </button>
+                        {Object.keys(hiddenColumns).length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetHiddenColumnsToDefault();
+                              setHiddenDropdownOpen(false);
+                            }}
+                            className="text-[11px] text-zinc-400 hover:text-zinc-200 px-1.5 py-0.5 cursor-pointer"
+                          >
+                            Reset default
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Drag Overlay Preview (1:1 card & carried subtasks, lightweight lift) */}

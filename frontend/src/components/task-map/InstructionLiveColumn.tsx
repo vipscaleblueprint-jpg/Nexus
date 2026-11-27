@@ -512,7 +512,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
             taskTitle={task.title}
             taskId={realTaskId}
             clientName={clientName !== 'No client inputted' ? clientName : null}
-            lazyFetch={Boolean(task.isAssumptionBlock)}
+            lazyFetch={Boolean(task.isAssumptionBlock || !task.description)}
           />
 
           <CardPriorityDropdown

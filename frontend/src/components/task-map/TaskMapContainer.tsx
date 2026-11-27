@@ -17,6 +17,7 @@ import {
   getDefaultTaskMapSubStatuses,
   normalizeTaskMapSubStatuses,
   isTaskMapItemOnHold,
+  isAvailablePoolExcludedTask,
   toCanonicalTaskStatus,
   applyOptimisticTaskMapAssignment,
   syncTaskPmReviewsWithAssignee,
@@ -95,6 +96,7 @@ interface TaskMapCacheEntry {
   shiftUsers: any[];
   activeUpworkSessions: UpworkSession[];
   dailySheetLogs: any[];
+  latestSheetRows?: any[];
   superviseChecks: any[];
   allDbClients: Array<{ id: string; name: string }>;
   isHistory: boolean;
@@ -130,8 +132,16 @@ const readTaskMapCache = (key: string): TaskMapCacheEntry | null => {
     try {
       const raw = sessionStorage.getItem(`${TASK_MAP_SESSION_PREFIX}${key}`);
       if (raw) {
-        const parsed = JSON.parse(raw) as TaskMapCacheEntry;
+        const parsed = JSON.parse(raw) as TaskMapCacheEntry & { availablePoolIds?: string[] };
         if (parsed && typeof parsed.timestamp === 'number' && now - parsed.timestamp < TASK_MAP_CACHE_MAX_AGE_MS) {
+          // Reconstruct availablePool from compact availablePoolIds when stored compactly
+          if (!Array.isArray(parsed.availablePool) && Array.isArray(parsed.availablePoolIds)) {
+            const byId = new Map<string, TaskMapItem>();
+            for (const t of parsed.tasks || []) byId.set(t.id, t);
+            parsed.availablePool = parsed.availablePoolIds
+              .map((id) => byId.get(id))
+              .filter((t): t is TaskMapItem => Boolean(t));
+          }
           taskMapMemoryCache.set(key, parsed);
           return parsed;
         }
@@ -151,10 +161,24 @@ const writeTaskMapCache = (key: string, entry: TaskMapCacheEntry, persistToSessi
     if (oldestKey) taskMapMemoryCache.delete(oldestKey);
   }
   if (persistToSession && typeof window !== 'undefined') {
-    try {
-      sessionStorage.setItem(`${TASK_MAP_SESSION_PREFIX}${key}`, JSON.stringify(entry));
-    } catch {
-      // Quota exceeded or private mode — keep in-memory cache only
+    // Persist asynchronously after paint so JSON.stringify never blocks frame rendering
+    const persist = () => {
+      try {
+        const taskIds = new Set((entry.tasks || []).map((t) => t.id));
+        const poolIds = (entry.availablePool || []).map((t) => t.id);
+        const allPoolInTasks = poolIds.every((id) => taskIds.has(id));
+        const compactEntry = allPoolInTasks
+          ? { ...entry, availablePool: undefined, availablePoolIds: poolIds }
+          : entry;
+        sessionStorage.setItem(`${TASK_MAP_SESSION_PREFIX}${key}`, JSON.stringify(compactEntry));
+      } catch {
+        // Quota exceeded or private mode — keep in-memory cache only
+      }
+    };
+    if (typeof (window as any).requestIdleCallback === 'function') {
+      (window as any).requestIdleCallback(persist, { timeout: 1500 });
+    } else {
+      setTimeout(persist, 0);
     }
   }
 };
@@ -259,8 +283,12 @@ export const TaskMapContainer: React.FC = () => {
   }, []);
   const [currentDate, setCurrentDate] = useState<string>(() => initialQueryParams.date);
   const [currentView, setCurrentView] = useState<'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS'>('BOARD');
+  const [switchingView, setSwitchingView] = useState<'BOARD' | 'AUDITING' | 'CRM' | null>(null);
+  const viewSwitchRafRef = useRef<number | null>(null);
+  const viewSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hasOpenedDailyTracker, setHasOpenedDailyTracker] = useState(false);
   const [dailySheetLogs, setDailySheetLogs] = useState<any[]>(() => initialCache?.dailySheetLogs || []);
+  const [latestSheetRows, setLatestSheetRows] = useState<any[]>(() => initialCache?.latestSheetRows || []);
   const [superviseChecks, setSuperviseChecks] = useState<any[]>(() => initialCache?.superviseChecks || []);
   const [selectedClients, setSelectedClients] = useState<string[] | 'ALL'>('ALL');
   const [selectedCustomMAs, setSelectedCustomMAs] = useState<string[]>([]);
@@ -489,6 +517,9 @@ export const TaskMapContainer: React.FC = () => {
       setShiftUsers(cachedEntry.shiftUsers);
       setActiveUpworkSessions(cachedEntry.activeUpworkSessions);
       setDailySheetLogs(cachedEntry.dailySheetLogs);
+      if (Array.isArray(cachedEntry.latestSheetRows)) {
+        setLatestSheetRows(cachedEntry.latestSheetRows);
+      }
       setSuperviseChecks(cachedEntry.superviseChecks);
       setAllDbClients(cachedEntry.allDbClients);
       setIsHistoryView(cachedEntry.isHistory);
@@ -698,6 +729,9 @@ export const TaskMapContainer: React.FC = () => {
         if (Array.isArray(res.dailySheetLogs)) {
           setDailySheetLogs(res.dailySheetLogs);
         }
+        if (Array.isArray(res.latestSheetRows)) {
+          setLatestSheetRows(res.latestSheetRows);
+        }
         if (Array.isArray((res as any).superviseChecks)) {
           setSuperviseChecks((res as any).superviseChecks);
         }
@@ -726,6 +760,7 @@ export const TaskMapContainer: React.FC = () => {
           shiftUsers: res.shiftUsers || [],
           activeUpworkSessions: res.activeUpworkSessions || [],
           dailySheetLogs: Array.isArray(res.dailySheetLogs) ? res.dailySheetLogs : [],
+          latestSheetRows: Array.isArray(res.latestSheetRows) ? res.latestSheetRows : [],
           superviseChecks: Array.isArray((res as any).superviseChecks) ? (res as any).superviseChecks : [],
           allDbClients: res.allClients || [],
           isHistory: Boolean(res.isHistory),
@@ -1314,23 +1349,59 @@ export const TaskMapContainer: React.FC = () => {
     };
   }, [loadData, currentDate, historyDates]);
 
+  useEffect(() => {
+    return () => {
+      if (viewSwitchRafRef.current !== null) cancelAnimationFrame(viewSwitchRafRef.current);
+      if (viewSwitchTimerRef.current !== null) clearTimeout(viewSwitchTimerRef.current);
+    };
+  }, []);
+
   const handleViewChange = useCallback(
     (nextView: 'BOARD' | 'AUDITING' | 'CRM' | 'UPWORK' | 'DAILY_TRACKER' | 'SHEETS') => {
-      setCurrentView(nextView);
-      if (nextView === 'DAILY_TRACKER' || nextView === 'SHEETS') {
-        setHasOpenedDailyTracker(true);
+      if (nextView === currentView && !switchingView) return;
+      if (viewSwitchRafRef.current !== null) {
+        cancelAnimationFrame(viewSwitchRafRef.current);
+        viewSwitchRafRef.current = null;
       }
-      if (nextView === 'BOARD') {
-        setSelectedTaskModal(null);
-        setSelectedSubtaskTargetId(undefined);
-        setRestoringUrlTask(false);
-        // Only trigger a background refresh if data is older than 15s (avoid redundant fetches on tab switch)
-        if (Date.now() - lastLoadedAtRef.current > 15000) {
-          void loadData(true);
+      if (viewSwitchTimerRef.current !== null) {
+        clearTimeout(viewSwitchTimerRef.current);
+        viewSwitchTimerRef.current = null;
+      }
+
+      const isMapView = nextView === 'BOARD' || nextView === 'AUDITING' || nextView === 'CRM';
+      const commitView = () => {
+        setCurrentView(nextView);
+        if (nextView === 'DAILY_TRACKER' || nextView === 'SHEETS') {
+          setHasOpenedDailyTracker(true);
         }
+        if (nextView === 'BOARD') {
+          setSelectedTaskModal(null);
+          setSelectedSubtaskTargetId(undefined);
+          setRestoringUrlTask(false);
+          // Only trigger a background refresh if data is older than 15s (avoid redundant fetches on tab switch)
+          if (Date.now() - lastLoadedAtRef.current > 15000) {
+            void loadData(true);
+          }
+        }
+      };
+
+      if (isMapView) {
+        setSwitchingView(nextView);
+        // Paint the NexusLogoLoader overlay first, then mount the target map behind it
+        viewSwitchRafRef.current = requestAnimationFrame(() => {
+          viewSwitchRafRef.current = null;
+          commitView();
+          viewSwitchTimerRef.current = setTimeout(() => {
+            viewSwitchTimerRef.current = null;
+            setSwitchingView(null);
+          }, 180);
+        });
+      } else {
+        setSwitchingView(null);
+        commitView();
       }
     },
-    [loadData]
+    [currentView, switchingView, loadData]
   );
 
   // Status Change Handler with Optimistic Updates (Frontend First) & Instant Realtime
@@ -1438,38 +1509,9 @@ export const TaskMapContainer: React.FC = () => {
       )
     );
 
-    // Available Tasks pool holds Pending, Revision, Hand-over, and On-hold tasks.
-    // Exclude Review/Checking/Waiting/CRM and recurring, daily, weekly, monthly tasks.
-    const s = (existingTask?.status || '').toUpperCase().replace(/[\s_-]+/g, '');
-    const isExcluded =
-      s === 'WAITING' ||
-      s.includes('WAITING') ||
-      s === 'CRM' ||
-      s.includes('CRM') ||
-      s === 'INREVIEW' ||
-      s === 'TOREVIEW' ||
-      s === 'REVIEW' ||
-      s === 'CHECKING' ||
-      s === 'INCHECKING' ||
-      s === 'DAILY' ||
-      s.includes('DAILY') ||
-      s === 'WEEKLY' ||
-      s.includes('WEEKLY') ||
-      s === 'MONTHLY' ||
-      s.includes('MONTHLY') ||
-      s === 'RECURRING' ||
-      s.includes('RECURRING') ||
-      !!(existingTask as any)?.recurringConfig ||
-      upStatuses.some(
-        (st) =>
-          ['WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
-          st.includes('WAITING') ||
-          st.includes('CRM') ||
-          st.includes('DAILY') ||
-          st.includes('WEEKLY') ||
-          st.includes('MONTHLY') ||
-          st.includes('RECURRING')
-      );
+    // Available Tasks pool holds Waiting, In Progress, Revision, Pending, Hand-over, and On-hold tasks.
+    // Exclude Review/Checking/CRM and recurring, daily, weekly, monthly tasks.
+    const isExcluded = isAvailablePoolExcludedTask(existingTask, upStatuses);
 
     const isNowAvailable =
       !isExcluded &&
@@ -1653,7 +1695,6 @@ export const TaskMapContainer: React.FC = () => {
     const isMovingOutOfAvailable =
       nextStatusUp === 'IN REVIEW' ||
       nextStatusUp === 'CHECKING' ||
-      nextStatusUp === 'WAITING' ||
       nextStatusUp === 'CRM' ||
       Boolean(normalizedFields.assigneeId && normalizedFields.assigneeId !== null);
 
@@ -2411,37 +2452,12 @@ export const TaskMapContainer: React.FC = () => {
 
   const isInitialBoardLoading = loading && !hasLoadedOnceRef.current && tasks.length === 0 && availablePool.length === 0;
   const isInitialLoadFailed = !hasLoadedOnceRef.current && Boolean(loadError) && tasks.length === 0 && availablePool.length === 0;
-  const showJournalLoader = (isInitialBoardLoading || isInitialLoadFailed) && !selectedTaskModal && !restoringUrlTask;
 
+  // Frontend-first shell: always mount Sidebar, Header, and active view immediately
+  // so the UI renders at 0ms and streams/hydrates column data asynchronously.
   return (
     <>
-      {showJournalLoader ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-12 h-full bg-background text-zinc-400">
-          {isInitialLoadFailed && !loading ? (
-            <div className="max-w-md w-full rounded-2xl border border-red-500/30 bg-red-500/5 p-6 text-center space-y-3">
-              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-red-500/15 text-red-400">
-                <AlertTriangle className="size-5" />
-              </div>
-              <h2 className="text-sm font-semibold text-zinc-100">Task Map is temporarily unavailable</h2>
-              <p className="text-xs text-zinc-400 leading-relaxed">{loadError}</p>
-              <p className="text-[11px] text-zinc-500">Retrying automatically in the background…</p>
-              <button
-                type="button"
-                onClick={() => loadData(false)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0099ff] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#0088e6] transition-colors"
-              >
-                <RefreshCw className="size-3.5" />
-                Retry now
-              </button>
-            </div>
-          ) : (
-            <NexusLogoLoader size={52} label="Loading Task Map Journal..." />
-          )}
-        </div>
-      ) : isInitialBoardLoading ? (
-        <div className="flex-1 h-full bg-background" />
-      ) : (
-        <div className="flex h-full w-full bg-background overflow-hidden select-none">
+      <div className="flex h-full w-full bg-background overflow-hidden select-none">
       {/* 1. Left: Dedicated Date Sidebar (Matches Image 1) */}
       <TaskMapSidebar
         currentDate={currentDate}
@@ -2464,7 +2480,7 @@ export const TaskMapContainer: React.FC = () => {
           search={search}
           onSearchChange={setSearch}
           activeUpworkSessions={effectiveUpworkSessions}
-          currentView={currentView}
+          currentView={switchingView || currentView}
           onViewChange={handleViewChange}
           clients={clients}
           adminClients={adminClients}
@@ -2494,8 +2510,54 @@ export const TaskMapContainer: React.FC = () => {
         />
 
         {/* Viewport: Board View OR Auditing View OR CRM View OR Upwork Tab View */}
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          {currentView === 'BOARD' ? (
+        <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
+          {switchingView && !isInitialBoardLoading && (
+            <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-background/95 backdrop-blur-[2px]">
+              <NexusLogoLoader
+                size={52}
+                label={
+                  switchingView === 'AUDITING'
+                    ? 'Loading Auditor Map...'
+                    : switchingView === 'CRM'
+                      ? 'Loading CRM Map...'
+                      : 'Loading Task Map...'
+                }
+              />
+            </div>
+          )}
+          {isInitialBoardLoading ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 h-full bg-background">
+              <NexusLogoLoader
+                size={52}
+                label={
+                  currentView === 'AUDITING'
+                    ? 'Loading Auditor Map...'
+                    : currentView === 'CRM'
+                      ? 'Loading CRM Map...'
+                      : 'Loading Task Map...'
+                }
+              />
+            </div>
+          ) : isInitialLoadFailed && !loading ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 h-full bg-background text-zinc-400">
+              <div className="max-w-md w-full rounded-2xl border border-red-500/30 bg-red-500/5 p-6 text-center space-y-3">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-red-500/15 text-red-400">
+                  <AlertTriangle className="size-5" />
+                </div>
+                <h2 className="text-sm font-semibold text-zinc-100">Task Map is temporarily unavailable</h2>
+                <p className="text-xs text-zinc-400 leading-relaxed">{loadError}</p>
+                <p className="text-[11px] text-zinc-500">Retrying automatically in the background…</p>
+                <button
+                  type="button"
+                  onClick={() => loadData(false)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0099ff] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#0088e6] transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="size-3.5" />
+                  Retry now
+                </button>
+              </div>
+            </div>
+          ) : currentView === 'BOARD' ? (
             <TaskMapBoardView
               tasks={displayedTasks}
               availablePool={displayedPool}
@@ -2504,9 +2566,14 @@ export const TaskMapContainer: React.FC = () => {
               options={options}
               allUsers={allUsers}
               shiftUsers={shiftUsers}
+              shifts={shifts}
+              activeShift={activeShift}
+              dailySheetLogs={dailySheetLogs}
+              latestSheetRows={latestSheetRows}
               currentShift={currentShift}
               currentDate={currentDate}
               isHistory={isHistoryView}
+              isInitialLoading={isInitialBoardLoading}
               onStatusChange={handleStatusChange}
               onOptionsUpdated={() => loadData(true)}
               onOpenDetail={handleOpenTaskDetail}
@@ -2618,7 +2685,6 @@ export const TaskMapContainer: React.FC = () => {
         </div>
       </main>
         </div>
-      )}
 
       {/* Task Detail Modal */}
       {!selectedTaskModal && restoringUrlTask && <TaskModalLoadingOverlay />}

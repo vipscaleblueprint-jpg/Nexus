@@ -4753,7 +4753,8 @@ export function TaskDetailModalContent({
                     <span className="text-[12px] text-zinc-500">Dates</span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Left: Due Date */}
+                    {/* Left: Due Date (hidden when status is a Recurring Status) */}
+                    {!isInRecurringGroup && (
                     <Popover.Root open={isDateOpen && canEditTask} onOpenChange={setIsDateOpen}>
                       <Popover.Trigger asChild>
                         <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit text-zinc-300">
@@ -4815,6 +4816,7 @@ export function TaskDetailModalContent({
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
+                    )}
 
                     {/* Right: Recurrence & Pause - ONLY if in recurring group! */}
                     {isInRecurringGroup && (
@@ -4844,7 +4846,7 @@ export function TaskDetailModalContent({
                                   <Repeat className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                                   <span className="text-zinc-500 hover:text-zinc-300">
                                     {['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
-                                      ? `Set ${(localStatus || '').toUpperCase()} Time`
+                                      ? `Set ${(localStatus || '').toUpperCase()} Due Date`
                                       : 'Set Recurrence'}
                                   </span>
                                 </>

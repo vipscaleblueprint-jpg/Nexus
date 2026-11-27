@@ -985,6 +985,9 @@ export const TaskMapCrmView: React.FC<Props> = ({
               <TaskDescriptionButton
                 description={task.description}
                 taskTitle={task.title}
+                taskId={task.id}
+                clientName={task.list?.name || null}
+                lazyFetch={!task.description}
               />
 
               {/* Clickable Priority Flag */}

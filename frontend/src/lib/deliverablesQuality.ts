@@ -70,13 +70,33 @@ function stripPunctuation(value: string): string {
 }
 
 /**
+ * Returns true if the task resides under Admin (internal/admin folder or list),
+ * where strict client deliverable format requirements are bypassed.
+ */
+export function isTaskUnderAdminScope(params: {
+  isAdminTask?: boolean;
+  folderName?: string | null;
+  listName?: string | null;
+  clientName?: string | null;
+}): boolean {
+  if (params.isAdminTask) return true;
+  const candidates = [params.folderName, params.listName, params.clientName]
+    .map((v) => (v || '').trim().toLowerCase())
+    .filter(Boolean);
+  return candidates.some((c) => c === 'admin' || /\badmin\b/i.test(c));
+}
+
+/**
  * Evaluates ONLY `Task Deliverables Description:` (Column K) to verify whether it
  * describes a tangible, measurable, client-detailed output rather than vague activity.
+ * Tasks under Admin only require a non-empty description (no strict format gate).
  */
 export function evaluateDeliverableDescription(params: {
   deliverablesDescription: string;
   taskTitle?: string;
   clientName?: string;
+  listName?: string;
+  folderName?: string;
   isAdminTask?: boolean;
 }): DeliverableQualityReport {
   const desc = normalizeText(params.deliverablesDescription);
@@ -86,6 +106,31 @@ export function evaluateDeliverableDescription(params: {
   const isGraphicsOrMediaTask = GRAPHICS_MEDIA_KEYWORDS.some((kw) =>
     combinedHintText.includes(kw)
   );
+
+  const templateSnippet = isGraphicsOrMediaTask
+    ? 'Update thumbnails, titles, and graphics across Module 2 lessons'
+    : 'Create two caption template versions for the target reel';
+
+  if (
+    isTaskUnderAdminScope({
+      isAdminTask: params.isAdminTask,
+      folderName: params.folderName,
+      listName: params.listName,
+      clientName: params.clientName,
+    })
+  ) {
+    const hasText = Boolean(desc);
+    return {
+      score: hasText ? 100 : 0,
+      level: hasText ? 'strong' : 'weak',
+      isGraphicsOrMediaTask,
+      isSubmittable: hasText,
+      blockReason: hasText ? null : 'Task Deliverables Description is required.',
+      checks: [],
+      suggestions: [],
+      templateSnippet,
+    };
+  }
 
   const descNorm = stripPunctuation(desc);
   const wordCount = desc ? desc.split(/\s+/).filter(Boolean).length : 0;
@@ -150,10 +195,6 @@ export function evaluateDeliverableDescription(params: {
   }
 
   const suggestions = checks.filter((c) => !c.passed).map((c) => c.hint);
-
-  const templateSnippet = isGraphicsOrMediaTask
-    ? 'Update thumbnails, titles, and graphics across Module 2 lessons'
-    : 'Create two caption template versions for the target reel';
 
   return {
     score,

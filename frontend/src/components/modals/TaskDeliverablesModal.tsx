@@ -16,6 +16,8 @@ export interface TaskDeliverablesModalProps {
   }) => Promise<void> | void;
   taskTitle: string;
   clientName?: string;
+  listName?: string;
+  folderName?: string;
   isAdminTask?: boolean;
   targetStatus: 'To Review' | 'Hand-over' | string;
   initialDeliverables?: string;
@@ -38,70 +40,45 @@ const DEFAULT_UPDATE_TEMPLATE = [
   ' ┊➤ ',
 ].join('\n');
 
-function hasFilledUpdateSection(text: string): boolean {
-  const lines = (text || '').split(/\r?\n/);
-  let currentSection: 'action' | 'resources' | 'todo' | null = null;
-
-  for (const rawLine of lines) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) continue;
-
-    const sectionMatch = trimmed.match(/^(?:📍|📎|⏭️?|📌)?\s*(Action Done|Resources|Still To Do)\s*:\s*(.*)$/i);
-    if (sectionMatch) {
-      const label = sectionMatch[1].toLowerCase();
-      currentSection = label.includes('action')
-        ? 'action'
-        : label.includes('resources')
-          ? 'resources'
-          : 'todo';
-      const inlineRemainder = (sectionMatch[2] || '').replace(/^[\s┊➤\-*•]+/, '').trim();
-      if (inlineRemainder.length > 0) return true;
-      continue;
-    }
-
-    if (currentSection) {
-      const cleaned = trimmed.replace(/^[\s┊➤\-*•]+/, '').trim();
-      if (cleaned.length > 0) return true;
-    }
-  }
-
-  return false;
-}
-
 export function TaskDeliverablesModal({
   isOpen,
   onClose,
   onSubmit,
   taskTitle,
   clientName,
+  listName,
+  folderName,
   isAdminTask,
   targetStatus,
   initialDeliverables = '',
   initialUpdate = '',
   timeIn = '',
 }: TaskDeliverablesModalProps) {
+  const syncKey = isOpen ? `${taskTitle}::${initialDeliverables}::${initialUpdate}` : '';
+  const [prevSyncKey, setPrevSyncKey] = useState(syncKey);
   const [deliverablesDescription, setDeliverablesDescription] = useState(initialDeliverables || taskTitle || '');
   const [updateAndDeliverables, setUpdateAndDeliverables] = useState(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
   const [currentTimeOut, setCurrentTimeOut] = useState(() => formatManilaTime(new Date()));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Sync prefilled fields and clock-out time when modal opens or switches tasks without cascading effect setState
+  if (syncKey !== prevSyncKey) {
+    setPrevSyncKey(syncKey);
+    if (isOpen) {
+      setDeliverablesDescription(initialDeliverables || taskTitle || '');
+      setUpdateAndDeliverables(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
+      setCurrentTimeOut(formatManilaTime(new Date()));
+    }
+  }
+
   // Update clock-out time display every 10 seconds while modal is open
   useEffect(() => {
     if (!isOpen) return;
-    setCurrentTimeOut(formatManilaTime(new Date()));
     const timer = setInterval(() => {
       setCurrentTimeOut(formatManilaTime(new Date()));
     }, 10000);
     return () => clearInterval(timer);
   }, [isOpen]);
-
-  // Keep description prefilled when task changes
-  useEffect(() => {
-    if (isOpen) {
-      setDeliverablesDescription(initialDeliverables || taskTitle || '');
-      setUpdateAndDeliverables(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
-    }
-  }, [isOpen, taskTitle, initialDeliverables, initialUpdate]);
 
   const quality = useMemo(
     () =>
@@ -109,9 +86,11 @@ export function TaskDeliverablesModal({
         deliverablesDescription,
         taskTitle,
         clientName,
+        listName,
+        folderName,
         isAdminTask,
       }),
-    [deliverablesDescription, taskTitle, clientName, isAdminTask]
+    [deliverablesDescription, taskTitle, clientName, listName, folderName, isAdminTask]
   );
 
   if (!isOpen) return null;
@@ -143,11 +122,6 @@ export function TaskDeliverablesModal({
       : isToReview
         ? 'Submit & Clock Out'
         : 'Submit & Time Out';
-  const loaderLabel = isPaused
-    ? 'Pausing task & timing out...'
-    : isHandover
-      ? 'Submitting handover deliverables...'
-      : 'Submitting deliverables & clocking out...';
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting || !quality.isSubmittable) return;

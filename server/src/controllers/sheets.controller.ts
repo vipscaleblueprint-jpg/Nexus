@@ -822,8 +822,10 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
       for (const s of t.subtasks) {
         const subId = clickUpIdOf(s.externalId!);
         const status = s.completed ? 'CLOSED' : s.status;
-        // Subtasks have no updatedAt: a closed one is listed while its parent changed recently.
-        if (!subId || isOffSheetStatus(status) || (isClosedSheetStatus(status) && t.updatedAt < closedSince)) continue;
+        // Subtasks have no updatedAt: a closed one is listed while its parent is still open (so
+        // closing a subtask always reaches the sheet) or the parent changed recently.
+        const parentActive = !isClosedSheetStatus(t.status) || t.updatedAt >= closedSince;
+        if (!subId || isOffSheetStatus(status) || (isClosedSheetStatus(status) && !parentActive)) continue;
         items.push({
           clickup_link: `https://app.clickup.com/t/${subId}`,
           nexus_link: `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}&subtask=${s.id}`,

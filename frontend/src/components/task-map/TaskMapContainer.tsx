@@ -202,6 +202,8 @@ export const TaskMapContainer: React.FC = () => {
 
   const initialCache = initialQueryParams.cached;
 
+  // Header slot the Auditor Map portals its Distribute button into (set by TaskMapHeader via ref)
+  const [auditorHeaderSlot, setAuditorHeaderSlot] = useState<HTMLDivElement | null>(null);
   const [tasks, setTasks] = useState<TaskMapItem[]>(() => initialCache?.tasks || []);
   const [availablePool, setAvailablePool] = useState<TaskMapItem[]>(() => initialCache?.availablePool || []);
   const availablePoolRef = useRef<TaskMapItem[]>(initialCache?.availablePool || []);
@@ -2496,6 +2498,7 @@ export const TaskMapContainer: React.FC = () => {
       <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
         {/* Top Header Bar: Date, Day, Shift Pills [All] [Day] [Noon] [Night] [Custom], Client selector, View tabs, Search */}
         <TaskMapHeader
+          auditorActionsSlotRef={setAuditorHeaderSlot}
           currentDate={currentDate}
           currentShift={currentShift}
           activeShift={activeShift}
@@ -2630,6 +2633,7 @@ export const TaskMapContainer: React.FC = () => {
             />
           ) : currentView === 'AUDITING' ? (
             <TaskMapAuditingView
+              headerActionsSlot={auditorHeaderSlot}
               tasks={displayedTasks}
               availablePool={displayedPool}
               allAvailablePool={availablePool}

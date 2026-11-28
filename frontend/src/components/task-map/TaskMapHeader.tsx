@@ -45,6 +45,8 @@ interface Props {
   onTriggerDailyRollover?: () => void;
   isRollingOver?: boolean;
   isHistory?: boolean;
+  /** Auditor Map: receives the header slot its Distribute button is portaled into. */
+  auditorActionsSlotRef?: (el: HTMLDivElement | null) => void;
   auditorRoles?: AuditorRoleOption[];
   auditorTypeFilter?: string;
   onAuditorTypeFilterChange?: (filter: string) => void;
@@ -125,6 +127,7 @@ export const TaskMapHeader: React.FC<Props> = ({
   onTriggerDailyRollover,
   isRollingOver = false,
   isHistory = false,
+  auditorActionsSlotRef,
   auditorRoles = [],
   auditorTypeFilter = 'ALL',
   onAuditorTypeFilterChange,
@@ -967,6 +970,11 @@ export const TaskMapHeader: React.FC<Props> = ({
 
             {/* Auto-queue: Distribute / Reset (PMs & Admins, today's board only) */}
             {isPmOrAdmin && currentView === 'BOARD' && !isHistory && <AutoQueueControls />}
+
+            {/* Auditor Map: TaskMapAuditingView portals its Distribute button here (same spot as the Task Map's) */}
+            {isPmOrAdmin && currentView === 'AUDITING' && !isHistory && (
+              <div ref={auditorActionsSlotRef} className="contents" />
+            )}
 
             <div className="relative flex items-center">
               <Search className="size-3.5 text-zinc-500 absolute left-3 pointer-events-none" />

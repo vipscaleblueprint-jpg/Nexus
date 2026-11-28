@@ -839,6 +839,7 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
         injectSubtaskIntoJournal(parentTask.id, { id: linked.id, title: linked.title }).catch((err) =>
           console.error('[Galaxy] Failed to inject linked subtask into journal:', err)
         );
+        await invalidateCache(`task:${parentTask.id}`, 'tasks:all', 'dashboard:all').catch(() => {});
         return res.status(200).json({ success: true, subtask: linked });
       }
     }
@@ -952,6 +953,9 @@ export const handleGalaxySubtask = async (req: Request, res: Response) => {
     }
 
     await injectSubtaskIntoJournal(parentTask.id, { id: subtask.id, title: subtask.title });
+
+    // Without this, opening the parent serves its cached copy (up to 5 min) without the new subtask.
+    await invalidateCache(`task:${parentTask.id}`, 'tasks:all', 'dashboard:all').catch(() => {});
 
     io.emit('subtask_created', subtask);
 

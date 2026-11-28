@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { DayPicker, DateRange } from 'react-day-picker';
 import 'react-day-picker/style.css';
+import * as Popover from '@radix-ui/react-popover';
+import { KANBAN_DATE_PICKER_CSS } from '@/lib/datePickerStyles';
 import {
   taskMapApi,
   LaunchMeta,
@@ -112,34 +114,7 @@ function formatDisplay(ymd?: string | null): string {
   }
 }
 
-const RDP_STYLE = `
-  .ldm-rdp .rdp-root {
-    --rdp-accent-color: #8b5cf6;
-    --rdp-accent-background-color: rgba(139, 92, 246, 0.2);
-    --rdp-day-height: 32px;
-    --rdp-day-width: 32px;
-    --rdp-day_button-height: 30px;
-    --rdp-day_button-width: 30px;
-    --rdp-day_button-border-radius: 6px;
-    --rdp-selected-border: 1.5px solid #8b5cf6;
-    --rdp-today-color: #a78bfa;
-    --rdp-nav_button-height: 26px;
-    --rdp-nav_button-width: 26px;
-    color: #e4e4e7;
-    font-size: 11.5px;
-  }
-  .ldm-rdp .rdp-month_caption { font-size: 12px; font-weight: 700; color: #f4f4f5; }
-  .ldm-rdp .rdp-button_previous, .ldm-rdp .rdp-button_next { border-radius: 5px; color: #a1a1aa; }
-  .ldm-rdp .rdp-button_previous:hover, .ldm-rdp .rdp-button_next:hover { background: #27272a; color: #fff; }
-  .ldm-rdp .rdp-chevron { fill: #a78bfa; }
-  .ldm-rdp .rdp-weekday { color: #71717a; font-size: 10px; font-weight: 600; opacity: 1; }
-  .ldm-rdp .rdp-day_button { color: #e4e4e7; font-size: 11px; transition: background 0.1s; }
-  .ldm-rdp .rdp-day_button:hover:not(:disabled) { background: #27272a; }
-  .ldm-rdp .rdp-today:not(.rdp-selected) .rdp-day_button { color: #a78bfa; font-weight: 700; border: 1px solid rgba(139, 92, 246, 0.5); }
-  .ldm-rdp .rdp-selected .rdp-day_button, .ldm-rdp .rdp-range_start .rdp-day_button, .ldm-rdp .rdp-range_end .rdp-day_button { background: #8b5cf6; color: #ffffff; font-weight: 700; border-color: #8b5cf6; }
-  .ldm-rdp .rdp-range_middle .rdp-day_button { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; }
-  .ldm-rdp .rdp-outside .rdp-day_button { color: #52525b; opacity: 0.4; }
-`;
+
 
 const TIME_PRESETS: string[] = [];
 for (let h = 0; h < 24; h++) {
@@ -442,13 +417,12 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   // DayPicker
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [endDatePickerOpen, setEndDatePickerOpen] = useState(false);
-  const datePickerRef = useRef<HTMLDivElement>(null);
-  const endDatePickerRef = useRef<HTMLDivElement>(null);
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => parseDateKey(initialDate) || new Date());
 
   // Time
   const [launchTime, setLaunchTime] = useState('09:00 PM');
   const [timezone, setTimezone] = useState('Asia/Manila');
+  const [tzOpen, setTzOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -543,35 +517,20 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
     return () => document.removeEventListener('mousedown', handler);
   }, [clientDropdownOpen]);
 
-  // Click outside date pickers
-  useEffect(() => {
-    if (!datePickerOpen && !endDatePickerOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (datePickerOpen && datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
-        setDatePickerOpen(false);
-      }
-      if (endDatePickerOpen && endDatePickerRef.current && !endDatePickerRef.current.contains(e.target as Node)) {
-        setEndDatePickerOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [datePickerOpen, endDatePickerOpen]);
-
   // Escape to close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (clientDropdownOpen) {
           setClientDropdownOpen(false);
-        } else if (!datePickerOpen && !endDatePickerOpen) {
+        } else if (!datePickerOpen && !endDatePickerOpen && !tzOpen) {
           onClose();
         }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, clientDropdownOpen, datePickerOpen, endDatePickerOpen]);
+  }, [onClose, clientDropdownOpen, datePickerOpen, endDatePickerOpen, tzOpen]);
 
   const selectedClient = clients.find((c) => c.id === selectedClientId);
   const startDateObj = parseDateKey(startDate);
@@ -680,7 +639,6 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
       className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-[2px]"
       onClick={onClose}
     >
-      <style>{RDP_STYLE}</style>
 
       <form
         onSubmit={handleSubmit}
@@ -895,28 +853,42 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
             </div>
 
             {/* Date Picker Button */}
-            <div className="relative" ref={datePickerRef}>
-              <button
-                type="button"
-                onClick={() => {
+            <Popover.Root
+              open={datePickerOpen}
+              onOpenChange={(open) => {
+                if (open) {
                   const p = parseDateKey(startDate);
                   if (p) setCalendarMonth(p);
-                  setDatePickerOpen((v) => !v);
-                }}
-                className="w-full h-8 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
-              >
-                <span className="flex items-center gap-2">
-                  <CalendarIcon className="size-3 text-purple-400" />
-                  <span className="text-zinc-200 font-medium">{formatDisplay(startDate)}</span>
-                </span>
-                <ChevronDown className="size-3 text-zinc-500" />
-              </button>
-
-              {datePickerOpen && (
-                <div
-                  role="dialog"
-                  className="ldm-rdp absolute left-0 top-full mt-1 z-[80] rounded-xl border border-[#2f2f3d] bg-[#16161c] shadow-2xl p-2.5"
+                }
+                setDatePickerOpen(open);
+              }}
+            >
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  className="w-full h-8 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
                 >
+                  <span className="flex items-center gap-2">
+                    <CalendarIcon className="size-3 text-purple-400" />
+                    <span className="text-zinc-200 font-medium">{formatDisplay(startDate)}</span>
+                  </span>
+                  <ChevronDown className="size-3 text-zinc-500" />
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  className="z-[100000] p-2.5 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none w-[230px]"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                >
+                <div className="kanban-date-picker">
+                  <style>{KANBAN_DATE_PICKER_CSS}</style>
+                  <div className="flex justify-between items-center mb-2 px-1">
+                    <div className="text-[11px] text-zinc-500 font-semibold uppercase">
+                      {hasEndDate ? 'Launch Date Range' : 'Launch Start Date'}
+                    </div>
+                  </div>
                   {!hasEndDate ? (
                     <DayPicker
                       mode="single"
@@ -942,7 +914,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                       }}
                     />
                   )}
-                  <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-[#272733]">
+                  <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-zinc-800">
                     <button
                       type="button"
                       onClick={() => {
@@ -950,21 +922,22 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                         setStartDate(today);
                         setDatePickerOpen(false);
                       }}
-                      className="text-[10px] font-semibold text-purple-400 hover:underline px-1 cursor-pointer"
+                      className="text-[10px] font-semibold text-zinc-400 hover:text-zinc-200 hover:bg-[var(--hover-subtle)] px-2 py-0.5 rounded transition-colors cursor-pointer"
                     >
                       Today
                     </button>
                     <button
                       type="button"
                       onClick={() => setDatePickerOpen(false)}
-                      className="text-[10px] font-medium text-zinc-400 hover:text-zinc-200 px-1 cursor-pointer"
+                      className="text-[10px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-[var(--hover-subtle)] px-2 py-0.5 rounded transition-colors cursor-pointer"
                     >
                       Done
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
 
             {/* Launch Starting Time with Quick Presets & Manual Typing */}
             <div className="flex flex-col gap-1">
@@ -981,61 +954,94 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
             {/* Optional End Date Checkbox */}
             <div className="pt-1 border-t border-[#272733] flex flex-col gap-1.5">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={hasEndDate}
-                  onChange={(e) => {
-                    setHasEndDate(e.target.checked);
-                    if (!e.target.checked) setEndDate('');
-                  }}
-                  className="size-3.5 rounded border-[#3a3a4c] bg-[#121217] accent-purple-600 cursor-pointer"
-                />
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={hasEndDate}
+                onClick={() => {
+                  const next = !hasEndDate;
+                  setHasEndDate(next);
+                  if (!next) setEndDate('');
+                }}
+                className="flex items-center gap-2 cursor-pointer select-none text-left group/check"
+              >
+                <span
+                  className={`size-3.5 rounded flex items-center justify-center shrink-0 border transition-colors ${
+                    hasEndDate
+                      ? 'bg-purple-600 border-purple-600'
+                      : 'border-[#3a3a4c] bg-[#121217] group-hover/check:border-purple-500/60'
+                  }`}
+                >
+                  {hasEndDate && <Check className="size-2.5 text-white" strokeWidth={3} />}
+                </span>
                 <span className="text-[11px] font-medium text-zinc-300">Set Date Range (Optional End Date & Time)</span>
-              </label>
+              </button>
 
               {hasEndDate && (
                 <div className="pl-5 flex flex-col gap-1.5">
                   {/* End Date Picker */}
-                  <div className="relative" ref={endDatePickerRef}>
-                    <button
-                      type="button"
-                      onClick={() => {
+                  <Popover.Root
+                    open={endDatePickerOpen}
+                    onOpenChange={(open) => {
+                      if (open) {
                         const p = parseDateKey(endDate || startDate);
                         if (p) setCalendarMonth(p);
-                        setEndDatePickerOpen((v) => !v);
-                      }}
-                      className="w-full h-7 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
-                    >
-                      <span className="flex items-center gap-2">
-                        <CalendarIcon className="size-3 text-purple-400" />
-                        <span className={endDate ? 'text-zinc-100 font-medium' : 'text-zinc-500'}>
-                          {endDate ? formatDisplay(endDate) : 'Select end date…'}
-                        </span>
-                      </span>
-                      <ChevronDown className="size-3 text-zinc-500" />
-                    </button>
-
-                    {endDatePickerOpen && (
-                      <div
-                        role="dialog"
-                        className="ldm-rdp absolute left-0 top-full mt-1 z-[80] rounded-xl border border-[#2f2f3d] bg-[#16161c] shadow-2xl p-2.5"
+                      }
+                      setEndDatePickerOpen(open);
+                    }}
+                  >
+                    <Popover.Trigger asChild>
+                      <button
+                        type="button"
+                        className="w-full h-7 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
                       >
-                        <DayPicker
-                          mode="single"
-                          selected={parseDateKey(endDate)}
-                          month={calendarMonth}
-                          onMonthChange={setCalendarMonth}
-                          onSelect={(d) => {
-                            if (d) {
-                              setEndDate(dateToKey(d));
-                              setEndDatePickerOpen(false);
-                            }
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
+                        <span className="flex items-center gap-2">
+                          <CalendarIcon className="size-3 text-purple-400" />
+                          <span className={endDate ? 'text-zinc-100 font-medium' : 'text-zinc-500'}>
+                            {endDate ? formatDisplay(endDate) : 'Select end date…'}
+                          </span>
+                        </span>
+                        <ChevronDown className="size-3 text-zinc-500" />
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        className="z-[100000] p-2.5 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none w-[230px]"
+                        side="bottom"
+                        align="start"
+                        sideOffset={4}
+                      >
+                        <div className="kanban-date-picker">
+                          <style>{KANBAN_DATE_PICKER_CSS}</style>
+                          <div className="flex justify-between items-center mb-2 px-1">
+                            <div className="text-[11px] text-zinc-500 font-semibold uppercase">Launch End Date</div>
+                            {endDate && (
+                              <button
+                                type="button"
+                                onClick={() => setEndDate('')}
+                                className="text-[10px] text-red-400/80 hover:text-red-400 hover:bg-red-500/10 px-2 py-0.5 rounded transition-colors cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                          <DayPicker
+                            mode="single"
+                            selected={parseDateKey(endDate)}
+                            month={calendarMonth}
+                            onMonthChange={setCalendarMonth}
+                            disabled={startDateObj ? { before: startDateObj } : undefined}
+                            onSelect={(d) => {
+                              if (d) {
+                                setEndDate(dateToKey(d));
+                                setEndDatePickerOpen(false);
+                              }
+                            }}
+                          />
+                        </div>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
 
                   {/* End Time Row with Quick Presets & Manual Typing */}
                   <div className="flex flex-col gap-1 p-2 rounded-lg bg-[#121217] border border-[#2a2a38]">
@@ -1065,17 +1071,55 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                 {selectedClient?.timezone ? `Client: ${selectedClient.timezone}` : 'Default: +8 (Manila)'}
               </span>
             </label>
-            <select
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-              className="bg-[#18181f] border border-[#2a2a35] rounded-xl px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-purple-500 cursor-pointer"
-            >
-              {COMMON_TIMEZONES.map((tz) => (
-                <option key={tz.value} value={tz.value} className="bg-zinc-900 text-zinc-100">
-                  {tz.label}
-                </option>
-              ))}
-            </select>
+            <Popover.Root open={tzOpen} onOpenChange={setTzOpen}>
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  className={`w-full h-8 flex items-center justify-between gap-2 px-2.5 rounded-xl border bg-[#18181f] text-xs text-zinc-200 cursor-pointer transition-colors ${
+                    tzOpen ? 'border-purple-500 ring-1 ring-purple-500/40' : 'border-[#2a2a35] hover:border-purple-500/50'
+                  }`}
+                >
+                  <span className="truncate">
+                    {COMMON_TIMEZONES.find((tz) => tz.value === timezone)?.label || timezone}
+                  </span>
+                  <ChevronDown className={`size-3 text-zinc-500 shrink-0 transition-transform ${tzOpen ? 'rotate-180' : ''}`} />
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  className="z-[100000] w-[var(--radix-popover-trigger-width)] max-h-60 overflow-y-auto custom-scrollbar p-1 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none"
+                  side="top"
+                  align="start"
+                  sideOffset={4}
+                >
+                  {/* A client timezone outside the common list still shows, selected */}
+                  {[
+                    ...(COMMON_TIMEZONES.some((tz) => tz.value === timezone) ? [] : [{ label: timezone, value: timezone }]),
+                    ...COMMON_TIMEZONES,
+                  ].map((tz) => {
+                    const selected = tz.value === timezone;
+                    return (
+                      <button
+                        key={tz.value}
+                        type="button"
+                        onClick={() => {
+                          setTimezone(tz.value);
+                          setTzOpen(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          selected
+                            ? 'bg-purple-500/15 text-purple-300 font-semibold'
+                            : 'text-zinc-300 hover:bg-[var(--hover-subtle)]'
+                        }`}
+                      >
+                        <span className="truncate">{tz.label}</span>
+                        {selected && <Check className="size-3 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
           </div>
 
           {/* Bottom Action Buttons */}

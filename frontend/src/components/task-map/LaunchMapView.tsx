@@ -38,6 +38,7 @@ import {
   toCanonicalTaskStatus,
 } from '@/api/taskMap';
 import { STATUS_COLORS } from '@/lib/taskTokens';
+import * as Popover from '@radix-ui/react-popover';
 import { toast } from '@/lib/toast';
 import type { EnrichedLaunchEntry } from './LaunchMapDayDrawer';
 import { LaunchAssigneeChips, LaunchTextWithLinks } from './LaunchTextWithLinks';
@@ -133,6 +134,86 @@ const MONTHS = [
   'November',
   'December',
 ] as const;
+
+/**
+ * Month or year picker for the Launch Map header: a small trigger that opens a themed
+ * Radix popover (replaces the native <select>, which ignored the app theme).
+ */
+function HeaderPicker<T extends number>({
+  label,
+  value,
+  options,
+  onChange,
+  columns = 1,
+  displayLabel,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+  columns?: 1 | 3;
+  /** Trigger text when it differs from the option label (e.g. full month name). */
+  displayLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = options.find((o) => o.value === value);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold text-[var(--text)] transition-colors cursor-pointer ${
+            open ? 'bg-[var(--hover-subtle)]' : 'hover:bg-[var(--hover-subtle)]'
+          }`}
+        >
+          <span>{displayLabel ?? current?.label ?? value}</span>
+          <ChevronDown className={`size-3 text-[var(--muted)] transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          onOpenAutoFocus={(e) => {
+            // Bring the selected option into view (the year list is long) instead of focusing the first one
+            e.preventDefault();
+            const el = (e.currentTarget as HTMLElement | null)?.querySelector('[data-selected="true"]');
+            el?.scrollIntoView({ block: 'center' });
+            (el as HTMLElement | null)?.focus();
+          }}
+          className={`z-[100000] p-1 bg-[var(--popover)] border border-[var(--border)] rounded-xl shadow-2xl outline-none ${
+            columns === 3 ? 'grid grid-cols-3 gap-0.5 w-[228px]' : 'flex flex-col gap-0.5 w-[96px] max-h-64 overflow-y-auto custom-scrollbar'
+          }`}
+        >
+          {options.map((o) => {
+            const selected = o.value === value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                data-selected={selected ? 'true' : undefined}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+                className={`px-2 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${
+                  selected
+                    ? 'bg-purple-500/15 text-purple-300 font-semibold'
+                    : 'text-[var(--text)] hover:bg-[var(--hover-subtle)]'
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 
 function parseDateKeyParts(dateKey: string): { year: number; month: number; day: number } {
   const [y, m, d] = dateKey.split('-').map((n) => parseInt(n, 10));
@@ -323,31 +404,31 @@ const MonthDayCell = React.memo<MonthCellProps>(
 
       if (entry.isInReview) {
         pillClasses =
-          'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500';
+          'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-900 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500';
         icon = <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />;
       } else if (entry.isUrgent) {
         pillClasses =
-          'border-l-2 border-red-400 bg-red-500/20 text-red-100 hover:bg-red-500/30 [.theme-light_&]:bg-red-50 [.theme-light_&]:text-red-950 [.theme-light_&]:border-red-500';
+          'border-l-2 border-red-400 bg-red-500/20 text-red-100 hover:bg-red-500/30 [.theme-light_&]:bg-red-50 [.theme-light_&]:text-red-900 [.theme-light_&]:border-red-500';
         icon = <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />;
       } else if (timing === 'PASSED') {
         // Date passed: Done styling in emerald green
         pillClasses =
-          'border-l-2 border-emerald-400 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-950 [.theme-light_&]:border-emerald-600';
+          'border-l-2 border-emerald-400 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-900 [.theme-light_&]:border-emerald-600';
         icon = <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />;
       } else if (timing === 'TODAY') {
         // Today's launch: active purple pulse
         pillClasses =
-          'border-l-2 border-purple-400 bg-purple-500/25 text-purple-100 hover:bg-purple-500/35 ring-1 ring-purple-500/40 [.theme-light_&]:bg-purple-50 [.theme-light_&]:text-purple-950 [.theme-light_&]:border-purple-600';
+          'border-l-2 border-purple-400 bg-purple-500/25 text-purple-100 hover:bg-purple-500/35 ring-1 ring-purple-500/40 [.theme-light_&]:bg-purple-50 [.theme-light_&]:text-purple-900 [.theme-light_&]:border-purple-600';
         icon = <Rocket className="size-3 shrink-0 text-purple-300 animate-pulse" />;
       } else if (timing === 'UPCOMING') {
         // Upcoming in next 7 days: rose milestone
         pillClasses =
-          'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500';
+          'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-900 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500';
         icon = <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />;
       } else {
         // Farther away (> 7 days, later months, or TBD): sky blue
         pillClasses =
-          'border-l-2 border-sky-400 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25 [.theme-light_&]:bg-sky-50 [.theme-light_&]:text-sky-950 [.theme-light_&]:border-sky-500';
+          'border-l-2 border-sky-400 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25 [.theme-light_&]:bg-sky-50 [.theme-light_&]:text-sky-900 [.theme-light_&]:border-sky-500';
         icon = <CalendarClock className="size-3 shrink-0 text-sky-400 [.theme-light_&]:text-sky-600" />;
       }
 
@@ -430,7 +511,7 @@ const MonthDayCell = React.memo<MonthCellProps>(
         style={
           heatOpacity > 0 && !isDragOver
             ? {
-                backgroundColor: `color-mix(in srgb, #000000 ${Math.round(heatOpacity * 90)}%, var(--surface))`,
+                backgroundColor: `color-mix(in srgb, var(--launch-heat, #000000) calc(${Math.round(heatOpacity * 90)}% * var(--launch-heat-scale, 1)), var(--surface))`,
                 borderColor: heatOpacity > 0.25 ? 'rgba(139, 92, 246, 0.4)' : undefined,
               }
             : undefined
@@ -1081,6 +1162,18 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     setCursorDay(todayParts.day);
   }, [todayParts]);
 
+  // Slide direction for the month grid: the new month glides in from the side you scrolled
+  // toward (like the Windows calendar) instead of swapping instantly.
+  const monthIndex = cursorYear * 12 + cursorMonth;
+  const prevMonthIndexRef = useRef(monthIndex);
+  const [monthSlide, setMonthSlide] = useState<'next' | 'prev' | null>(null);
+  useEffect(() => {
+    const prev = prevMonthIndexRef.current;
+    if (monthIndex === prev) return;
+    prevMonthIndexRef.current = monthIndex;
+    setMonthSlide(monthIndex > prev ? 'next' : 'prev');
+  }, [monthIndex]);
+
   // On-wheel calendar navigation with scroll-boundary detection
   // Vertically scrolling inside the month scrolls smoothly without changing months;
   // wheeling past the top or bottom boundary advances/retreats the month with debounce.
@@ -1099,8 +1192,9 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       if (!container) return;
 
       const now = Date.now();
-      // Cooldown between month navigations (500ms) to avoid multiple rapid flips
-      if (now - wheelCooldownRef.current < 500) {
+      // Cooldown between month navigations, matched to the slide animation (~260ms),
+      // so each wheel notch moves one month and the motion stays continuous
+      if (now - wheelCooldownRef.current < 300) {
         return;
       }
 
@@ -1552,34 +1646,24 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                   <ChevronLeft className="size-3.5" />
                 </button>
 
-                <select
+                <HeaderPicker
+                  label="Month"
                   value={cursorMonth}
-                  onChange={(e) => {
-                    setCursorMonth(Number(e.target.value));
+                  columns={3}
+                  displayLabel={MONTHS[cursorMonth]}
+                  options={MONTHS.map((mName, idx) => ({ value: idx, label: mName.slice(0, 3) }))}
+                  onChange={(m) => {
+                    setCursorMonth(m);
                     setCursorDay(1);
                   }}
-                  aria-label="Month"
-                  className="bg-transparent px-1.5 py-0.5 text-xs font-semibold text-[var(--text)] focus:outline-none cursor-pointer"
-                >
-                  {MONTHS.map((mName, idx) => (
-                    <option key={mName} value={idx} className="bg-popover text-foreground">
-                      {mName}
-                    </option>
-                  ))}
-                </select>
+                />
 
-                <select
+                <HeaderPicker
+                  label="Year"
                   value={cursorYear}
-                  onChange={(e) => setCursorYear(Number(e.target.value))}
-                  aria-label="Year"
-                  className="bg-transparent px-1 py-0.5 text-xs font-semibold text-[var(--text)] focus:outline-none cursor-pointer"
-                >
-                  {yearOptions.map((y) => (
-                    <option key={y} value={y} className="bg-popover text-foreground">
-                      {y}
-                    </option>
-                  ))}
-                </select>
+                  options={yearOptions.map((y) => ({ value: y, label: String(y) }))}
+                  onChange={setCursorYear}
+                />
 
                 <button
                   type="button"
@@ -1866,7 +1950,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
               })}
             </div>
 
-            <div className="grid grid-cols-7 auto-rows-fr flex-1 min-h-[560px]">
+            <div
+              key={monthIndex}
+              className={`grid grid-cols-7 auto-rows-fr flex-1 min-h-[560px] ${
+                monthSlide === 'next' ? 'launch-month-slide-next' : monthSlide === 'prev' ? 'launch-month-slide-prev' : ''
+              }`}
+            >
               {monthGridDays.map((cell) => (
                 <MonthDayCell
                   key={cell.dateKey}
@@ -2417,7 +2506,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
           {/* Elevated Floating Popover Panel */}
           <div
-            className="fixed z-[9995] bg-[#14141e] border border-purple-500/40 rounded-2xl shadow-2xl p-3 flex flex-col gap-2.5 text-zinc-100 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed z-[9995] bg-[var(--popover)] border border-purple-500/40 rounded-2xl shadow-2xl p-3 flex flex-col gap-2.5 text-zinc-100 animate-in fade-in zoom-in-95 duration-150"
             style={{
               width: Math.min(380, Math.max(300, popoverDay.rect.width + 50)),
               top: Math.max(12, Math.min(popoverDay.rect.top - 8, window.innerHeight - 380)),
@@ -2427,7 +2516,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#29293d] shrink-0">
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--border)] shrink-0">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs font-bold text-white truncate">
                   {formatReadableDate(popoverDay.dateKey)}
@@ -2468,7 +2557,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                 const entryDateKey = entry.dateKey || popoverDay.dateKey;
                 const timing = getLaunchTiming(entryDateKey, todayKey, entry.isClosed);
 
-                let pillClasses = 'border-[#2d2d3f] bg-[#1a1a26] hover:bg-[#222232] text-zinc-100 hover:border-purple-500/40 shadow-xs';
+                let pillClasses = 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--hover-subtle)] text-zinc-100 hover:border-purple-500/40 shadow-xs';
                 let icon = (
                   <span
                     className="size-2.5 rounded-full shrink-0"
@@ -2571,7 +2660,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
       {/* Floating Action Menu for "..." button rendered via Portal outside clipped elements */}
       {activeMenu && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed z-[99999] min-w-[135px] bg-[#1a1a24] border border-[#2e2e3f] rounded-xl shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200 backdrop-blur-md animate-in fade-in duration-100"
+          className="fixed z-[99999] min-w-[135px] bg-[var(--popover)] border border-[var(--border)] rounded-xl shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200 backdrop-blur-md animate-in fade-in duration-100"
           style={{
             top: Math.min(activeMenu.rect.bottom + 4, window.innerHeight - 55),
             left: Math.max(8, Math.min(activeMenu.rect.right - 135, window.innerWidth - 145)),
@@ -2601,7 +2690,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           onClick={() => setConfirmDeleteState(null)}
         >
           <div
-            className="w-full max-w-sm bg-[#16161e] border border-[#2d2d3d] rounded-2xl p-5 shadow-2xl flex flex-col gap-4 text-zinc-100 animate-in zoom-in-95 duration-150"
+            className="w-full max-w-sm bg-[var(--popover)] border border-[var(--border)] rounded-2xl p-5 shadow-2xl flex flex-col gap-4 text-zinc-100 animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
@@ -2616,7 +2705,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#262636]">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
               <button
                 type="button"
                 disabled={deletingLaunch}

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   TaskMapItem,
   TaskMapOption,
@@ -88,6 +89,8 @@ import {
 } from '@dnd-kit/core';
 
 interface Props {
+  /** Header slot (PMs/Admins, today's board) the Distribute button renders into, like the Task Map's. */
+  headerActionsSlot?: HTMLElement | null;
   tasks: TaskMapItem[];
   availablePool: TaskMapItem[];
   allAvailablePool?: TaskMapItem[];
@@ -337,6 +340,7 @@ const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task, now: 
 };
 
 export const TaskMapAuditingView: React.FC<Props> = ({
+  headerActionsSlot,
   tasks = [],
   availablePool = [],
   allAvailablePool,
@@ -1479,7 +1483,30 @@ export const TaskMapAuditingView: React.FC<Props> = ({
     }
   }, [cleanSearch]);
 
+  const distributeButton =
+    headerActionsSlot && isPmUser
+      ? createPortal(
+          <button
+            type="button"
+            onClick={handleAutoDistribute}
+            disabled={isDistributing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-zinc-800/80 hover:border-zinc-700 rounded-xl text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+            title="Auto distribute: give each To Review task to an on-shift auditor with the matching audit role and the fewest queued tasks"
+          >
+            {isDistributing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Scale className="size-3.5 text-emerald-400" />
+            )}
+            <span className="hidden sm:inline">Distribute</span>
+          </button>,
+          headerActionsSlot
+        )
+      : null;
+
   return (
+    <>
+    {distributeButton}
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
@@ -1621,19 +1648,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
                         title={`Reset ${col.title}'s column (return review tasks to Queue)`}
                       >
                         <RotateCcw className="size-3.5" />
-                      </button>
-                    )}
-
-                    {col.id === 'col-to-review' && isPmUser && (
-                      <button
-                        type="button"
-                        onClick={handleAutoDistribute}
-                        disabled={isDistributing}
-                        className="inline-flex items-center gap-1 h-6 px-1.5 text-[10px] font-semibold text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-wait"
-                        title="Auto distribute: give each To Review task to an on-shift auditor with the matching audit role and the fewest queued tasks"
-                      >
-                        {isDistributing ? <Loader2 className="size-3.5 animate-spin" /> : <Scale className="size-3.5" />}
-                        Distribute
                       </button>
                     )}
 
@@ -1947,5 +1961,6 @@ export const TaskMapAuditingView: React.FC<Props> = ({
         />
       )}
     </DndContext>
+    </>
   );
 };

@@ -158,6 +158,10 @@
   --task-chip: #F0F0F0;
   --task-chip-sub: #F6F6F6;
 
+  /* Launch Map: busy days get a soft purple tint, not the dark theme's black shade */
+  --launch-heat: #8b5cf6;
+  --launch-heat-scale: 0.15;
+
   /* Theme tokens based on original light mode */
   --bg: #FFFFFF;
   --surface: #F9F9F9;
@@ -969,4 +973,19 @@ span[databadge] {
 .nexus-logo-fill-layer {
   animation: nexus-logo-fill 1.8s ease-in-out infinite;
   will-change: clip-path, opacity;
+}
+
+/* Launch Map: month grid glides in from the direction of travel (wheel or arrows) */
+@keyframes launch-month-in-next {
+  from { transform: translateY(28px); opacity: 0.35; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes launch-month-in-prev {
+  from { transform: translateY(-28px); opacity: 0.35; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+.launch-month-slide-next { animation: launch-month-in-next 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+.launch-month-slide-prev { animation: launch-month-in-prev 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .launch-month-slide-next, .launch-month-slide-prev { animation: none; }
 }

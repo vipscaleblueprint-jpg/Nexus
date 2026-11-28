@@ -1286,8 +1286,8 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
 
   // 3. In-Progress Live Time: Time In | Mins or Hrs with mins (Counting elapsed)
   if (prog?.timeIn && !prog?.timeOut) {
-    const isStale = task.isAssumptionBlock ? false : isStaleLiveSession(prog.timeIn, prog.date, now);
-    const elapsed = computeElapsed(prog.timeIn, prog.date, now) || (task.isAssumptionBlock ? '0hr 0m' : '');
+    const isStale = isStaleLiveSession(prog.timeIn, prog.date, now);
+    const elapsed = computeElapsed(prog.timeIn, prog.date, now);
     const timeInDisplay = cleanDisplayTime(prog.timeIn);
 
     // If session is runaway / stale (>14h or unclosed old date), or not marked as active live task, display static Time In without live pinging beacon

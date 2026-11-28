@@ -36,6 +36,7 @@ import dynamic from 'next/dynamic';
 import { TaskMapSidebar } from './TaskMapSidebar';
 import { TaskMapHeader } from './TaskMapHeader';
 import { TaskMapBoardView } from './TaskMapBoardView';
+import { isStaleLiveSession } from './TaskMapCardControls';
 import { isModalHistoryBackPending } from '@/lib/taskNavigation';
 
 const TaskMapAuditingView = dynamic(
@@ -634,7 +635,14 @@ export const TaskMapContainer: React.FC = () => {
         }
         const enrichedSessions: Record<string, any> = { ...(res.maActiveSessions || {}) };
         (res.tasks || []).forEach((t: any) => {
-          if (t.progress?.maName && t.progress?.timeIn && !t.progress?.timeOut && !t.progress?.isMissingTime && t.progress?.isLive !== false) {
+          if (
+            t.progress?.maName &&
+            t.progress?.timeIn &&
+            !t.progress?.timeOut &&
+            !t.progress?.isMissingTime &&
+            t.progress?.isLive !== false &&
+            !isStaleLiveSession(t.progress.timeIn, t.progress.date)
+          ) {
             const key = t.progress.maName.toLowerCase().trim();
             const existing = enrichedSessions[key];
             const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
@@ -678,7 +686,16 @@ export const TaskMapContainer: React.FC = () => {
         ];
         if (liveLogCandidates.length > 0) {
           liveLogCandidates.forEach((l: any) => {
-            if (!l?.maName || !l.isLive || !l.timeIn || l.timeOut || l.isMissingTime) return;
+            if (
+              !l?.maName ||
+              !l.isLive ||
+              !l.timeIn ||
+              l.timeOut ||
+              l.isMissingTime ||
+              isStaleLiveSession(l.timeIn, l.dateKey)
+            ) {
+              return;
+            }
             const key = l.maName.toLowerCase().trim();
             const existing = enrichedSessions[key];
             const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());

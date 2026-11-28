@@ -1778,6 +1778,42 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     }
     const allClients = Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
+    const isStaleLiveProgress = (
+      startedAt?: string | Date | null,
+      updatedAt?: string | Date | null,
+      dateStr?: string | null
+    ): boolean => {
+      const refRaw = startedAt || updatedAt;
+      if (refRaw) {
+        const refMs = new Date(refRaw).getTime();
+        if (!isNaN(refMs) && nowMs - refMs > MAX_UPWORK_SESSION_MS) {
+          return true;
+        }
+      }
+      if (dateStr) {
+        const cleanDate = String(dateStr).trim();
+        let parsedMs = NaN;
+        const ymd = cleanDate.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+        if (ymd) {
+          parsedMs = Date.UTC(
+            parseInt(ymd[1], 10),
+            parseInt(ymd[2], 10) - 1,
+            parseInt(ymd[3], 10),
+            15,
+            59,
+            59
+          ); // 23:59:59 Manila
+        } else {
+          const parsed = new Date(cleanDate.includes(':') ? cleanDate : `${cleanDate} 23:59:59 GMT+0800`);
+          parsedMs = parsed.getTime();
+        }
+        if (!isNaN(parsedMs) && nowMs - parsedMs > MAX_UPWORK_SESSION_MS) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     // Ensure any open live session from task progress is present in maActiveSessions
     // (This guarantees that when an MA is working on an Admin task that is hidden by default,
     // their active session is available to render the General Task block with their admin client/task details)
@@ -1790,8 +1826,24 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const sheetProg = Array.isArray(reviewsList)
         ? reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS')
         : null;
-      if (sheetProg?.maName && sheetProg.timeIn && !sheetProg.timeOut && !sheetProg.isMissingTime) {
+      if (
+        sheetProg?.maName &&
+        sheetProg.timeIn &&
+        !sheetProg.timeOut &&
+        !sheetProg.isMissingTime &&
+        !isStaleLiveProgress(sheetProg.startedAt, sheetProg.updatedAt, sheetProg.date)
+      ) {
         const maKey = sheetProg.maName.toLowerCase().trim();
+        const pmAssign = Array.isArray(reviewsList)
+          ? reviewsList.find((r: any) => r.type === 'PM_ASSIGNMENT' && !r.subtaskId)
+          : null;
+        const origMa = Array.isArray(reviewsList)
+          ? reviewsList.find((r: any) => r.type === 'ORIGINAL_MA')
+          : null;
+        const matchedOwnerUser = (allUsers || []).find(
+          (u: any) => (u.name || '').trim().toLowerCase() === maKey
+        );
+        const resolvedUserId = matchedOwnerUser?.id || pmAssign?.assignedTo || origMa?.userId || null;
         const existing = maActiveSessions[maKey];
         const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
         const existingRowNum = existing?.rowNumber ? Number(existing.rowNumber) : -1;
@@ -1806,6 +1858,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
           maActiveSessions[maKey] = {
             maName: sheetProg.maName,
+            userId: resolvedUserId,
             taskId: t.id,
             listId: t.listId || t.list?.id || null,
             listName: t.list?.name || null,
@@ -1834,7 +1887,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       ...((dailySheetIndex as any)?.latestByMa || []),
     ];
     for (const log of liveSheetCandidates) {
-      if (!log?.maName || !log.isLive || !log.timeIn || log.timeOut || log.isMissingTime) continue;
+      if (
+        !log?.maName ||
+        !log.isLive ||
+        !log.timeIn ||
+        log.timeOut ||
+        log.isMissingTime ||
+        isStaleLiveProgress(log.startedAt, log.submittedAt, log.dateKey)
+      ) {
+        continue;
+      }
       const maKey = log.maKey || log.maName.toLowerCase().trim();
       const existing = maActiveSessions[maKey];
       const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());

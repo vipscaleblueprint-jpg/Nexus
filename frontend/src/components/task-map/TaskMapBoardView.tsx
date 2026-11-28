@@ -349,7 +349,7 @@ export const isTaskActiveInProgress = (task: TaskMapItem, userName?: string): bo
     if (hasTimeOut) return false;
     if (task.progress?.isMissingTime) return true;
     if (task.progress?.isLive === false) return false;
-    return Boolean(hasTimeIn && !hasTimeOut);
+    return Boolean(hasTimeIn && !hasTimeOut && !isStaleLiveSession(task.progress?.timeIn, task.progress?.date));
   }
 
   // On-hold or paused tasks belong out of In Progress unless live clocked in right now
@@ -2071,6 +2071,17 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const findActiveSessionForUser = (userName?: string | null, userId?: string | null) => {
       if ((!userName && !userId) || !maActiveSessions) return null;
       const entries = Object.entries(maActiveSessions);
+      const isOwnedByAnotherUser = (key: string, session: any): boolean => {
+        if (userId && session?.userId && session.userId !== userId) return true;
+        const candidateKey = (key || '').trim().toLowerCase();
+        const candidateName = (session?.maName || '').trim().toLowerCase();
+        return allUsers.some((u) => {
+          if (!u?.id || u.id === userId) return false;
+          const uName = (u.name || '').trim().toLowerCase();
+          return Boolean(uName && (uName === candidateKey || uName === candidateName));
+        });
+      };
+
       if (userId) {
         const byId = entries.find(([, s]) => (s as any)?.userId && (s as any).userId === userId);
         if (byId) return byId[1];
@@ -2078,9 +2089,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (!userName) return null;
       const cleanUser = userName.trim().toLowerCase();
       const direct = maActiveSessions[cleanUser];
-      if (direct) return direct;
+      if (direct && !isOwnedByAnotherUser(cleanUser, direct)) return direct;
 
       const exactEntry = entries.find(([key, s]) => {
+        if (isOwnedByAnotherUser(key, s)) return false;
         const k = key.trim().toLowerCase();
         const m = ((s as any)?.maName || '').trim().toLowerCase();
         return k === cleanUser || m === cleanUser;
@@ -2089,6 +2101,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
       const userParts = cleanUser.split(/\s+/);
       const tokenEntry = entries.find(([key, s]) => {
+        if (isOwnedByAnotherUser(key, s)) return false;
         const candidate = ((s as any)?.maName || key || '').trim().toLowerCase();
         return Boolean(candidate && userParts.some((p) => p === candidate));
       });
@@ -2096,8 +2109,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
       const fuzzyEntry = entries.find(
         ([key, session]) =>
-          doesProgressMatchUser(key, userName) ||
-          doesProgressMatchUser((session as any)?.maName, userName)
+          !isOwnedByAnotherUser(key, session) &&
+          (doesProgressMatchUser(key, userName) ||
+            doesProgressMatchUser((session as any)?.maName, userName))
       );
       return fuzzyEntry ? fuzzyEntry[1] : null;
     };
@@ -2109,9 +2123,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const isSessionClosed =
         ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(sessionStatusNorm) ||
         Boolean(activeSession?.cleared);
+      const isSessionStaleLive = Boolean(
+        activeSession?.timeIn &&
+        !activeSession?.timeOut &&
+        !activeSession?.isMissingTime &&
+        isStaleLiveSession(activeSession.timeIn, activeSession.date, boardTime)
+      );
       const hasHeldSession = Boolean(
         activeSession &&
         !isSessionClosed &&
+        !isSessionStaleLive &&
         (activeSession.active || activeSession.timeIn || activeSession.timeOut || activeSession.client || activeSession.taskName)
       );
 
@@ -4998,7 +5019,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     effectiveProgress?.timeIn &&
                     !effectiveProgress?.timeOut &&
                     !effectiveProgress?.isMissingTime &&
-                    (task.isAssumptionBlock || !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, boardTime))
+                    !isStaleLiveSession(effectiveProgress?.timeIn, effectiveProgress?.date, boardTime)
                   );
                   const taskStatusHex = resolveTaskStatusColor(
                     task.status || 'IN PROGRESS',

@@ -19,6 +19,8 @@ import {
   updateTaskMeta,
   getLaunchMapData,
   getLaunchCandidates,
+  createLaunchRecordHandler,
+  deleteLaunchRecordHandler,
   updateTaskLaunchMeta,
   getTaskTimeline,
   getUpworkClientsHandler,
@@ -33,6 +35,9 @@ import {
   getClientLockStatusHandler,
   syncSpreadsheetRowHandler,
   getUserDailyScheduleConfigHandler,
+  updateUserDailyScheduleConfigHandler,
+  triggerSheetFilterHandler,
+  getUserDailyScheduleMetadataHandler,
   getDailySheetLogsHandler,
   createDailySheetLogHandler,
   createSuperviseCheckHandler,
@@ -56,6 +61,8 @@ taskMapRouter.use(authenticateToken);
 taskMapRouter.get('/data', getTaskMapData);
 taskMapRouter.get('/admin-tasks', getAdminTasks);
 taskMapRouter.get('/launch', getLaunchMapData);
+taskMapRouter.post('/launch', createLaunchRecordHandler);
+taskMapRouter.delete('/launch/:id', deleteLaunchRecordHandler);
 taskMapRouter.get('/launch/candidates', getLaunchCandidates);
 taskMapRouter.get('/options', getOptions);
 taskMapRouter.post('/options', upsertOption);
@@ -98,6 +105,9 @@ taskMapRouter.get('/client-lock-status', getClientLockStatusHandler);
 
 // Spreadsheet Schedule Row Sync & User Config
 taskMapRouter.get('/sheets/user-config', getUserDailyScheduleConfigHandler);
+taskMapRouter.post('/sheets/user-config', updateUserDailyScheduleConfigHandler);
+taskMapRouter.post('/sheets/trigger-filter', triggerSheetFilterHandler);
+taskMapRouter.get('/sheets/metadata', getUserDailyScheduleMetadataHandler);
 taskMapRouter.post('/sheets/sync-row', syncSpreadsheetRowHandler);
 taskMapRouter.get('/sheets/logs', getDailySheetLogsHandler);
 taskMapRouter.post('/sheets/logs', createDailySheetLogHandler);

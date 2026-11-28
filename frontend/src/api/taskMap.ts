@@ -1427,6 +1427,28 @@ export interface DailySheetLogItem {
   updatedAt: string;
 }
 
+export interface DailyScheduleSheetMetadata {
+  spreadsheetId: string;
+  gid: string;
+  todayKey: string;
+  weekStartKey: string;
+  monthStartKey: string;
+  currentTaskRow: number;
+  currentTask: {
+    row: number;
+    date: string;
+    timeIn?: string | null;
+    timeOut?: string | null;
+    client?: string | null;
+    task?: string | null;
+    isLive: boolean;
+  } | null;
+  todayRange: { startRow: number; endRow: number } | null;
+  weekRange: { startRow: number; endRow: number } | null;
+  monthRange: { startRow: number; endRow: number } | null;
+  totalRows: number;
+  source: string;
+}
 // ===========================================================================
 // Client-Side Request Cache & In-Flight Deduplication for taskMapApi
 // ===========================================================================
@@ -1960,6 +1982,44 @@ export const taskMapApi = {
     );
   },
 
+  createLaunchRecord: async (payload: {
+    title: string;
+    listId: string;
+    startDate: string;
+    startTime?: string | null;
+    endDate?: string | null;
+    endTime?: string | null;
+    timezone?: string;
+    targetPeriod?: string | null;
+    isMilestone?: boolean;
+    workstream?: string | null;
+    details?: string | null;
+    notes?: string | null;
+    status?: string;
+    priority?: string;
+    assigneeIds?: string[];
+    taskId?: string | null;
+  }): Promise<{
+    success: boolean;
+    launch: any;
+    item: LaunchMapLightItem;
+    launchMeta: LaunchMeta;
+    effectiveLaunchDate: string | null;
+    targetPeriod?: string | null;
+    dueDate: string | null;
+  }> => {
+    return apiClient('/api/task-map/launch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteLaunchRecord: async (id: string): Promise<{ success: boolean; message?: string }> => {
+    return apiClient(`/api/task-map/launch/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
   updateLaunchMeta: async (
     taskId: string,
     payload: {
@@ -2248,6 +2308,7 @@ export const taskMapApi = {
     userId: string;
     userName: string | null;
     dailySheetUrl: string | null;
+    dailySheetScriptUrl?: string | null;
     spreadsheetId: string | null;
   }> => {
     const cacheKey = `daily-schedule-config:${userId || 'SELF'}`;
@@ -2260,6 +2321,46 @@ export const taskMapApi = {
       },
       { force: options?.force }
     );
+  },
+
+  updateDailyScheduleConfig: async (payload: {
+    userId?: string;
+    dailySheetUrl?: string;
+    dailySheetScriptUrl?: string;
+  }): Promise<{
+    success: boolean;
+    userId: string;
+    dailySheetUrl: string | null;
+    dailySheetScriptUrl: string | null;
+    spreadsheetId: string | null;
+  }> => {
+    return apiClient('/api/task-map/sheets/user-config', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  triggerSheetFilter: async (payload: {
+    filter: 'today' | 'week' | 'month' | 'all';
+    scriptUrl?: string;
+  }): Promise<{
+    success: boolean;
+    filter: string;
+    result?: any;
+    error?: string;
+  }> => {
+    return apiClient('/api/task-map/sheets/trigger-filter', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getDailyScheduleMetadata: async (userId?: string): Promise<{
+    success: boolean;
+    metadata: DailyScheduleSheetMetadata | null;
+  }> => {
+    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+    return apiClient(`/api/task-map/sheets/metadata${q}`);
   },
 
   checkSuperviseSession: async (payload: {

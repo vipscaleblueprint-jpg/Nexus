@@ -22,6 +22,9 @@ import {
   hasLaunchDateMarker,
   upsertTaskLaunchMeta,
   triggerLaunchReviewAlertIfNeeded,
+  createLaunchRecord,
+  updateLaunchRecord,
+  formatLaunchRecordToItem,
 } from '../services/launchMapService';
 import {
   isWaitingMainStatus,
@@ -304,6 +307,50 @@ async function hasLiveSheetSessionForTarget(maName: string, taskId: string, subt
  * Falls back to direct execution automatically if Redis is unavailable.
  */
 async function triggerN8nStartTaskWebhook(params: SpreadsheetSyncJobPayload) {
+  // 1. Direct Apps Script Web App execution (Runs native Apps Script code in the spreadsheet)
+  let scriptAppUrl: string | null = null;
+  if (params.userId) {
+    const u = await prisma.user.findUnique({
+      where: { id: params.userId },
+      select: { notificationPreferences: true },
+    }).catch(() => null);
+    scriptAppUrl = (u?.notificationPreferences as any)?.dailySheetScriptUrl || null;
+  }
+
+  if (scriptAppUrl) {
+    const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
+    try {
+      const appScriptPayload = {
+        action: params.mode === 'STOP' ? 'stop' : (params.mode === 'UPDATE' ? 'sync' : 'start'),
+        sheetName: resolvedSheetName,
+        client: params.clientName,
+        task: params.taskTitle,
+        timeIn: params.timeIn,
+        timeOut: params.timeOut,
+        timeTracker: params.timeTracker,
+        taskLink: params.taskLink,
+        status: params.status,
+        sheetRow: params.sheetRow,
+        taskDeliverablesDescription: params.taskDeliverablesDescription || params.description,
+        taskUpdateAndDeliverables: params.taskUpdateAndDeliverables,
+      };
+      const scriptRes = await fetch(scriptAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(appScriptPayload),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (scriptRes.ok) {
+        const resTxt = await scriptRes.text().catch(() => '');
+        logger.info(`[AppsScript Direct] Native script execution succeeded for ${params.userName} (mode: ${params.mode || 'START'}): ${resTxt.substring(0, 100)}`);
+        return;
+      }
+      logger.warn(`[AppsScript Direct] HTTP ${scriptRes.status} for ${params.userName}, falling back to n8n webhook`);
+    } catch (err: any) {
+      logger.warn(`[AppsScript Direct] Call failed for ${params.userName}: ${err.message}, falling back to n8n webhook`);
+    }
+  }
+
   await enqueueSpreadsheetSync(params);
 }
 
@@ -4832,7 +4879,7 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
       return res.json(cached);
     }
 
-    const [rawTasks, clientDashboardLists] = await Promise.all([
+    const [rawTasks, launchRecords, clientDashboardLists] = await Promise.all([
       prisma.task.findMany({
         where: {
           status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] },
@@ -4869,6 +4916,25 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
         },
         orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
       }),
+      prisma.launchRecord.findMany({
+        include: {
+          list: {
+            select: {
+              id: true,
+              name: true,
+              folder: { select: { name: true } },
+              statuses: {
+                select: { name: true, color: true, groupName: true, order: true },
+                orderBy: { order: 'asc' },
+              },
+            },
+          },
+          assignees: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+          creator: { select: { id: true, name: true } },
+          task: { select: { id: true, title: true, status: true, priority: true } },
+        },
+        orderBy: [{ startDate: 'asc' }, { updatedAt: 'desc' }],
+      }),
       fetchClientDashboardLists().catch((err) => {
         logger.warn({ err }, 'Failed to query client dashboard folders for Launch Map');
         return [] as Array<{ id: string; name: string }>;
@@ -4888,8 +4954,40 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
     let totalInReview = 0;
     let totalMilestones = 0;
     let totalTbd = 0;
+    const linkedTaskIds = new Set<string>();
 
+    // 1. Process dedicated LaunchRecord entries
+    for (const lr of launchRecords) {
+      if (lr.taskId) linkedTaskIds.add(lr.taskId);
+
+      const formatted = formatLaunchRecordToItem(lr);
+      const effectiveLaunchDate = formatted.effectiveLaunchDate;
+      const targetPeriod = formatted.targetPeriod;
+
+      const closed = formatted.isClosed;
+      const inReview = !closed && isReviewStatus(lr.status);
+
+      totalScheduled++;
+      if (inReview) totalInReview++;
+      if (lr.isMilestone) totalMilestones++;
+      if (!effectiveLaunchDate && targetPeriod) totalTbd++;
+
+      if (lr.list?.id && lr.list?.name) {
+        const cur = clientMap.get(lr.list.id);
+        if (cur) cur.count++;
+        else clientMap.set(lr.list.id, { id: lr.list.id, name: lr.list.name, count: 1 });
+      }
+
+      if (effectiveLaunchDate && start && end && (effectiveLaunchDate < start || effectiveLaunchDate > end)) {
+        continue;
+      }
+
+      items.push(formatted);
+    }
+
+    // 2. Process legacy Task entries (skip if already represented by a LaunchRecord)
     for (const t of rawTasks) {
+      if (linkedTaskIds.has(t.id)) continue;
       const taskMapStatuses = Array.isArray(t.taskMapRecord?.statuses) ? t.taskMapRecord!.statuses : [];
       const { launchMeta, effectiveLaunchDate, targetPeriod, isLaunchDate } = extractLaunchMeta(
         t.taskMapRecord?.pmReviews,
@@ -5111,6 +5209,48 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
     const { launchDate, targetPeriod, isLaunchDate, workstream, details, notes, syncDueDate } = req.body || {};
     const user = (req as any).user;
 
+    // Check if :id is an existing LaunchRecord
+    const existingLaunchRecord = await prisma.launchRecord.findUnique({ where: { id } });
+    if (existingLaunchRecord) {
+      if (isLaunchDate === false && (launchDate === null || launchDate === undefined) && !targetPeriod) {
+        await prisma.launchRecord.delete({ where: { id } });
+        await invalidateCache('task_map:*', 'launch_map:all', 'launch_map:*').catch(() => {});
+        io.emit('launch_map:deleted', { id });
+        io.emit('task_map:updated', { taskId: id, deleted: true });
+        return res.json({ success: true, deleted: true });
+      }
+
+      const updated = await updateLaunchRecord(
+        id,
+        {
+          startDate: launchDate ? new Date(`${launchDate}T12:00:00+08:00`) : undefined,
+          targetPeriod,
+          isMilestone: isLaunchDate !== undefined ? Boolean(isLaunchDate) : undefined,
+          workstream,
+          details,
+          notes,
+        },
+        user?.id || null
+      );
+
+      if (!updated) {
+        return res.status(404).json({ error: 'Launch record not found' });
+      }
+
+      const formatted = formatLaunchRecordToItem(updated);
+      io.emit('task_map:updated', { taskId: id, ...formatted });
+      io.emit('launch_map:updated', { ...formatted });
+
+      return res.json({
+        success: true,
+        launchMeta: formatted.launchMeta,
+        effectiveLaunchDate: formatted.effectiveLaunchDate,
+        targetPeriod: formatted.targetPeriod,
+        dueDate: formatted.dueDate,
+        alertSent: false,
+      });
+    }
+
     const target = parseTaskMapTargetId(id);
     if (target.isSubtask) {
       return res.status(400).json({ error: 'Launch Map schedules apply to main tasks' });
@@ -5154,6 +5294,117 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
     res.status(error?.message === 'Task not found' ? 404 : 400).json({
       error: error?.message || 'Failed to update launch metadata',
     });
+  }
+};
+
+/**
+ * Create a new LaunchRecord directly in the dedicated LaunchRecord table
+ */
+export const createLaunchRecordHandler = async (req: Request, res: Response) => {
+  try {
+    const {
+      title,
+      listId,
+      startDate,
+      startTime,
+      endDate,
+      endTime,
+      timezone,
+      targetPeriod,
+      isMilestone,
+      workstream,
+      details,
+      notes,
+      status,
+      priority,
+      assigneeIds,
+      taskId,
+    } = req.body || {};
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ error: 'Title is required' });
+    }
+    if (!listId) {
+      return res.status(400).json({ error: 'Client listId is required' });
+    }
+
+    const user = (req as any).user;
+    const cleanStartDate = startDate
+      ? new Date(`${String(startDate).slice(0, 10)}T12:00:00+08:00`)
+      : new Date();
+
+    const cleanEndDate = endDate
+      ? new Date(`${String(endDate).slice(0, 10)}T12:00:00+08:00`)
+      : null;
+
+    const record = await createLaunchRecord(
+      {
+        title: title.trim(),
+        listId,
+        startDate: cleanStartDate,
+        startTime: startTime || null,
+        endDate: cleanEndDate,
+        endTime: endTime || null,
+        timezone: timezone || 'Asia/Manila',
+        targetPeriod: targetPeriod || null,
+        isMilestone: isMilestone !== undefined ? Boolean(isMilestone) : true,
+        workstream: workstream || null,
+        details: details || null,
+        notes: notes || null,
+        status: status || 'SCHEDULED',
+        priority: priority || 'MEDIUM',
+        assigneeIds: Array.isArray(assigneeIds) ? assigneeIds : [],
+        taskId: taskId || null,
+      },
+      user?.id || null
+    );
+
+    const formatted = formatLaunchRecordToItem(record);
+
+    io.emit('launch_map:created', formatted);
+    io.emit('task_map:updated', { taskId: record.id, ...formatted });
+
+    res.status(201).json({
+      success: true,
+      launch: record,
+      item: formatted,
+      launchMeta: formatted.launchMeta,
+      effectiveLaunchDate: formatted.effectiveLaunchDate,
+      targetPeriod: formatted.targetPeriod,
+      dueDate: formatted.dueDate,
+    });
+  } catch (error: any) {
+    logger.error({ error }, 'Error creating launch record');
+    res.status(500).json({ error: error?.message || 'Failed to create launch record' });
+  }
+};
+
+/**
+ * Delete a LaunchRecord directly
+ */
+export const deleteLaunchRecordHandler = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.launchRecord.findUnique({ where: { id } });
+    if (!existing) {
+      // Fallback: check if it's a task with launch meta
+      const existingTask = await prisma.task.findUnique({ where: { id } });
+      if (existingTask) {
+        await upsertTaskLaunchMeta(id, { launchDate: null, targetPeriod: null, isLaunchDate: false }, (req as any).user?.id);
+        return res.json({ success: true, message: 'Task unscheduled from Launch Map' });
+      }
+      return res.status(404).json({ error: 'Launch record not found' });
+    }
+
+    await prisma.launchRecord.delete({ where: { id } });
+    await invalidateCache('task_map:*', 'launch_map:all', 'launch_map:*').catch(() => {});
+    io.emit('launch_map:deleted', { id });
+    io.emit('task_map:updated', { taskId: id, deleted: true });
+
+    res.json({ success: true, message: 'Launch record deleted successfully' });
+  } catch (error: any) {
+    logger.error({ error }, 'Error deleting launch record');
+    res.status(500).json({ error: 'Failed to delete launch record' });
   }
 };
 
@@ -6550,21 +6801,371 @@ export const getUserDailyScheduleConfigHandler = async (req: Request, res: Respo
     }
     const user = await prisma.user.findUnique({
       where: { id: requestedUserId },
-      select: { id: true, name: true, email: true, dailySheetUrl: true },
+      select: { id: true, name: true, email: true, dailySheetUrl: true, notificationPreferences: true },
     });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     const match = user.dailySheetUrl?.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    const prefs = (user.notificationPreferences as any) || {};
     return res.json({
       success: true,
       userId: user.id,
       userName: user.name,
       dailySheetUrl: user.dailySheetUrl || null,
+      dailySheetScriptUrl: prefs.dailySheetScriptUrl || (user as any).dailySheetScriptUrl || null,
       spreadsheetId: match ? match[1] : null,
     });
   } catch (err: any) {
     logger.error({ err }, 'Error in getUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const updateUserDailyScheduleConfigHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = (req.body.userId as string) || (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized or userId missing' });
+    }
+    const { dailySheetUrl, dailySheetScriptUrl } = req.body;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, notificationPreferences: true, dailySheetUrl: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentPrefs = (user.notificationPreferences as any) || {};
+    const updatedPrefs = {
+      ...currentPrefs,
+      ...(dailySheetScriptUrl !== undefined ? { dailySheetScriptUrl: dailySheetScriptUrl ? String(dailySheetScriptUrl).trim() : null } : {}),
+    };
+
+    const updateData: any = {
+      notificationPreferences: updatedPrefs,
+    };
+    if (dailySheetUrl !== undefined) {
+      updateData.dailySheetUrl = dailySheetUrl ? String(dailySheetUrl).trim() : null;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: { id: true, name: true, email: true, dailySheetUrl: true, notificationPreferences: true },
+    });
+
+    const match = updated.dailySheetUrl?.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return res.json({
+      success: true,
+      userId: updated.id,
+      userName: updated.name,
+      dailySheetUrl: updated.dailySheetUrl || null,
+      dailySheetScriptUrl: (updated.notificationPreferences as any)?.dailySheetScriptUrl || null,
+      spreadsheetId: match ? match[1] : null,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in updateUserDailyScheduleConfigHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const triggerSheetFilterHandler = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const { filter, scriptUrl } = req.body;
+    if (!filter || !['today', 'week', 'month', 'all'].includes(String(filter).toLowerCase())) {
+      return res.status(400).json({ error: 'Valid filter ("today", "week", "month", "all") is required' });
+    }
+
+    let targetScriptUrl = scriptUrl;
+    if (!targetScriptUrl && user?.id) {
+      const u = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { notificationPreferences: true },
+      });
+      targetScriptUrl = (u?.notificationPreferences as any)?.dailySheetScriptUrl;
+    }
+
+    if (!targetScriptUrl) {
+      return res.status(400).json({
+        error: 'No Apps Script Web App URL found. Please connect your Apps Script Web App URL first.',
+      });
+    }
+
+    // Call the deployed Google Apps Script Web App directly from the server (35s timeout for cold starts)
+    const targetUrl = new URL(targetScriptUrl);
+    targetUrl.searchParams.set('filter', String(filter).toLowerCase());
+    targetUrl.searchParams.set('_t', String(Date.now()));
+
+    const fetchRes = await fetch(targetUrl.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(35000),
+      redirect: 'follow',
+    });
+
+    const text = await fetchRes.text();
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = { raw: text };
+    }
+
+    if (parsed?.raw) {
+      if (
+        parsed.raw.includes('doGet') ||
+        parsed.raw.includes('function: doGet') ||
+        parsed.raw.includes('Script function not found') ||
+        parsed.raw.includes('Hindi mahanap ang script function')
+      ) {
+        return res.status(502).json({
+          success: false,
+          error:
+            'Your Google Apps Script Web App deployment does not have the latest code with doGet. Please open Extensions > Apps Script in your sheet, paste the updated appscript.js, and under Deploy > Manage deployments, select "New version" and click Deploy.',
+          details: parsed,
+        });
+      }
+    }
+
+    if (!fetchRes.ok || (parsed && parsed.ok === false)) {
+      return res.status(fetchRes.status >= 400 ? fetchRes.status : 502).json({
+        success: false,
+        error: parsed?.error || `Apps Script returned HTTP ${fetchRes.status}`,
+        details: parsed,
+      });
+    }
+
+    return res.json({
+      success: true,
+      filter,
+      result: parsed,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in triggerSheetFilterHandler');
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUserDailyScheduleMetadataHandler = async (req: Request, res: Response) => {
+  try {
+    const requestedUserId = (req.query.userId as string) || (req as any).user?.id;
+    if (!requestedUserId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { id: requestedUserId },
+      select: { id: true, name: true, email: true, dailySheetUrl: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.dailySheetUrl) {
+      return res.json({
+        success: true,
+        metadata: null,
+      });
+    }
+
+    const idMatch = user.dailySheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (!idMatch?.[1]) {
+      return res.json({
+        success: true,
+        metadata: null,
+      });
+    }
+    const spreadsheetId = idMatch[1];
+    const gidMatch = user.dailySheetUrl.match(/[?#&]gid=(\d+)/);
+    const gid = gidMatch?.[1] || '0';
+
+    // Current Manila date & intervals
+    let todayKey = '';
+    try {
+      todayKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    } catch {
+      todayKey = new Date().toISOString().split('T')[0];
+    }
+
+    const todayDate = new Date(`${todayKey}T12:00:00+08:00`);
+    const dayOfWeek = todayDate.getDay();
+    const diffToMon = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const mondayDate = new Date(todayDate);
+    mondayDate.setDate(todayDate.getDate() + diffToMon);
+    const weekStartKey = mondayDate.toISOString().split('T')[0];
+    const monthStartKey = `${todayKey.slice(0, 7)}-01`;
+
+    let metadata: any = null;
+
+    // 1. Attempt GViz fetch
+    const candidateUrls = [
+      ...(gid && gid !== '0' ? [`https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&gid=${gid}`] : []),
+      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=2025`,
+      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json`,
+    ];
+
+    for (const url of candidateUrls) {
+      try {
+        const fetchRes = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!fetchRes.ok) continue;
+        const txt = await fetchRes.text();
+        if (!txt || !txt.includes('setResponse(')) continue;
+        const jsonStr = txt.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, '');
+        const parsed = JSON.parse(jsonStr);
+        if (parsed?.status === 'error' || !Array.isArray(parsed?.table?.rows)) continue;
+
+        const rows = parsed.table.rows;
+        let lastDateKey: string | null = null;
+        const parsedRows: Array<{
+          rowNum: number;
+          dateKey: string;
+          timeIn?: string | null;
+          timeOut?: string | null;
+          client?: string | null;
+          task?: string | null;
+          isLive: boolean;
+        }> = [];
+
+        rows.forEach((r: any, idx: number) => {
+          const rowNum = idx + 2;
+          const cell0 = r?.c?.[0];
+          let dateKey: string | null = null;
+          if (cell0) {
+            const v = String(cell0.v || '');
+            const m = v.match(/Date\((\d+),(\d+),(\d+)\)/);
+            if (m) {
+              const y = parseInt(m[1], 10);
+              const mo = parseInt(m[2], 10) + 1;
+              const d = parseInt(m[3], 10);
+              dateKey = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            } else if (cell0.f) {
+              const dt = new Date(cell0.f);
+              if (!isNaN(dt.getTime())) {
+                dateKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+              }
+            }
+          }
+          if (dateKey) lastDateKey = dateKey;
+
+          const timeIn = r?.c?.[1]?.f || r?.c?.[1]?.v;
+          const timeOut = r?.c?.[2]?.f || r?.c?.[2]?.v;
+          const client = r?.c?.[6]?.f || r?.c?.[6]?.v;
+          const task = r?.c?.[8]?.f || r?.c?.[8]?.v;
+
+          if (lastDateKey && (timeIn || timeOut || client || task || dateKey)) {
+            parsedRows.push({
+              rowNum,
+              dateKey: lastDateKey,
+              timeIn: timeIn ? String(timeIn).trim() : null,
+              timeOut: timeOut ? String(timeOut).trim() : null,
+              client: client ? String(client).trim() : null,
+              task: task ? String(task).trim() : null,
+              isLive: Boolean(timeIn && !timeOut),
+            });
+          }
+        });
+
+        const todayRows = parsedRows.filter((p) => p.dateKey === todayKey);
+        const weekRows = parsedRows.filter((p) => p.dateKey >= weekStartKey && p.dateKey <= todayKey);
+        const monthRows = parsedRows.filter((p) => p.dateKey >= monthStartKey && p.dateKey <= todayKey);
+
+        const currentTask = todayRows.find((p) => p.isLive) || todayRows[todayRows.length - 1] || null;
+
+        metadata = {
+          spreadsheetId,
+          gid,
+          todayKey,
+          weekStartKey,
+          monthStartKey,
+          currentTaskRow: currentTask?.rowNum || (todayRows[0]?.rowNum ?? (parsedRows[parsedRows.length - 1]?.rowNum ? parsedRows[parsedRows.length - 1].rowNum + 1 : 1)),
+          currentTask: currentTask
+            ? {
+                row: currentTask.rowNum,
+                date: currentTask.dateKey,
+                timeIn: currentTask.timeIn,
+                timeOut: currentTask.timeOut,
+                client: currentTask.client,
+                task: currentTask.task,
+                isLive: currentTask.isLive,
+              }
+            : null,
+          todayRange: todayRows.length > 0 ? { startRow: todayRows[0].rowNum, endRow: todayRows[todayRows.length - 1].rowNum } : null,
+          weekRange: weekRows.length > 0 ? { startRow: weekRows[0].rowNum, endRow: weekRows[weekRows.length - 1].rowNum } : null,
+          monthRange: monthRows.length > 0 ? { startRow: monthRows[0].rowNum, endRow: monthRows[monthRows.length - 1].rowNum } : null,
+          totalRows: parsedRows.length,
+          source: 'GOOGLE_SHEET_GVIZ',
+        };
+        break;
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    // 2. Fallback to DailySheetLog if GViz was not reachable
+    if (!metadata) {
+      const maKey = (user.name || user.email || '').toLowerCase().trim();
+      const dbLogs = await prisma.dailySheetLog.findMany({
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(maKey ? [{ maKey }] : []),
+          ],
+          dateKey: { gte: monthStartKey },
+        },
+        orderBy: { dateKey: 'desc' },
+      });
+
+      const todayLogs = dbLogs.filter((l) => l.dateKey === todayKey);
+      const weekLogs = dbLogs.filter((l) => l.dateKey >= weekStartKey && l.dateKey <= todayKey);
+      const monthLogs = dbLogs;
+
+      const liveLog = todayLogs.find((l) => l.isLive && l.sheetRow) || todayLogs.find((l) => l.sheetRow) || null;
+      const currentTaskRow = liveLog?.sheetRow || 1;
+
+      const todaySheetRows = todayLogs.map((l) => l.sheetRow).filter((r): r is number => Boolean(r && r > 0)).sort((a, b) => a - b);
+      const weekSheetRows = weekLogs.map((l) => l.sheetRow).filter((r): r is number => Boolean(r && r > 0)).sort((a, b) => a - b);
+      const monthSheetRows = monthLogs.map((l) => l.sheetRow).filter((r): r is number => Boolean(r && r > 0)).sort((a, b) => a - b);
+
+      metadata = {
+        spreadsheetId,
+        gid,
+        todayKey,
+        weekStartKey,
+        monthStartKey,
+        currentTaskRow,
+        currentTask: liveLog
+          ? {
+              row: liveLog.sheetRow,
+              date: liveLog.dateKey,
+              timeIn: liveLog.timeIn,
+              timeOut: liveLog.timeOut,
+              client: liveLog.client,
+              task: liveLog.taskName,
+              isLive: liveLog.isLive,
+            }
+          : null,
+        todayRange: todaySheetRows.length > 0 ? { startRow: todaySheetRows[0], endRow: todaySheetRows[todaySheetRows.length - 1] } : null,
+        weekRange: weekSheetRows.length > 0 ? { startRow: weekSheetRows[0], endRow: weekSheetRows[weekSheetRows.length - 1] } : null,
+        monthRange: monthSheetRows.length > 0 ? { startRow: monthSheetRows[0], endRow: monthSheetRows[monthSheetRows.length - 1] } : null,
+        totalRows: dbLogs.length,
+        source: 'DAILY_SHEET_LOG_DB',
+      };
+    }
+
+    return res.json({
+      success: true,
+      metadata,
+    });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in getUserDailyScheduleMetadataHandler');
     return res.status(500).json({ error: err.message });
   }
 };

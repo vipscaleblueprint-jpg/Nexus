@@ -80,6 +80,7 @@ import {
   getDailySheetLogsIndexForDate,
 } from '../services/dailySheetLogService';
 import { checkMaSheetActivityStatus } from '../services/maInactivityService';
+import { enqueueSpreadsheetSync, SpreadsheetSyncJobPayload } from '../workers/spreadsheetSync.worker';
 
 // Closed status check matching Nexus conventions
 const isClosedStatus = (status?: string | null) => {
@@ -165,10 +166,17 @@ async function closeOtherOpenBoardSessionsForMa(
   const maKey = (maName || '').trim().toLowerCase();
   if (!maKey) return;
   try {
-    const recordsWithReviews = await prisma.taskMapRecord.findMany({
-      where: { pmReviews: { not: null as any } },
-      select: { taskId: true, statuses: true, pmReviews: true },
-    });
+    const escapedMaKey = maKey.replace(/[\\%_]/g, '\\$&');
+    const recordsWithReviews = await prisma.$queryRawUnsafe<
+      Array<{ taskId: string; statuses: string[]; pmReviews: any }>
+    >(
+      `SELECT "taskId", "statuses", "pmReviews"
+       FROM "TaskMapRecord"
+       WHERE "pmReviews" IS NOT NULL
+         AND "pmReviews"::text ILIKE '%SHEET_PROGRESS%'
+         AND "pmReviews"::text ILIKE $1 ESCAPE '\\'`,
+      `%${escapedMaKey}%`
+    );
     for (const rec of recordsWithReviews) {
       let revs = parsePmReviewsArray(rec.pmReviews);
       let modified = false;
@@ -285,79 +293,12 @@ async function hasLiveSheetSessionForTarget(maName: string, taskId: string, subt
 }
 
 /**
- * Asynchronously triggers the n8n webhook to append the newly started task row
- * into the MA's personal Daily Schedule spreadsheet.
+ * Enqueues the n8n Google Sheets schedule sync into the rate-limited BullMQ worker
+ * (with per-spreadsheet locking, exponential backoff, cached tab resolution, and sheetRow write-back).
+ * Falls back to direct execution automatically if Redis is unavailable.
  */
-async function triggerN8nStartTaskWebhook(params: {
-  userId: string;
-  userName: string;
-  userEmail?: string | null;
-  dailySheetUrl?: string | null;
-  taskId?: string | null;
-  subtaskId?: string | null;
-  sheetRow?: number | null;
-  taskTitle: string;
-  clientName: string;
-  taskLink?: string | null;
-  status?: string;
-  timeIn?: string;
-  timeOut?: string | null;
-  timeTracker?: string | null;
-  taskDeliverablesDescription?: string | null;
-  taskUpdateAndDeliverables?: string | null;
-  description?: string | null;
-  date?: string;
-  sheetName?: string;
-  mode?: 'START' | 'STOP' | 'UPDATE';
-  insertEmptyRowBeforeStart?: boolean;
-}) {
-  const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
-  // Strip automation-managed sheet columns (Task Link, Task Status, Was Deliverables Submitted?, IsRecorded?)
-  // so Nexus never overwrites Google Sheet formulas / Apps Script automations.
-  const {
-    taskLink: _omitTaskLink,
-    status: _omitStatus,
-    ...safePayload
-  } = params;
-  // Default to "2025" because MA Daily Schedule spreadsheets use the "2025" tab
-  // (sending the calendar year like "2026" causes n8n "Sheet with name 2026 not found").
-  const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
-  const payload = JSON.stringify({ ...safePayload, sheetName: resolvedSheetName });
-
-  const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await fetch(n8nUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        signal: AbortSignal.timeout(15000),
-      });
-      const bodyText = await res.text().catch(() => '');
-      let parsed: any = null;
-      try {
-        parsed = bodyText ? JSON.parse(bodyText) : null;
-      } catch {
-        parsed = null;
-      }
-      const n8nReportedFailure =
-        (Array.isArray(parsed) && parsed[0]?.ok === false) ||
-        (parsed && !Array.isArray(parsed) && parsed.ok === false);
-
-      if (res.ok && !n8nReportedFailure) {
-        logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}, attempt ${attempt}): HTTP ${res.status}`);
-        return;
-      }
-
-      logger.warn(`[n8n Sync] Attempt ${attempt} returned HTTP ${res.status}${n8nReportedFailure ? ' (n8n ok:false)' : ''} for ${params.userName}`);
-    } catch (err: any) {
-      logger.warn(`[n8n Sync] Attempt ${attempt} failed for ${params.userName}: ${err.message}`);
-    }
-
-    if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, 1200));
-    }
-  }
+async function triggerN8nStartTaskWebhook(params: SpreadsheetSyncJobPayload) {
+  await enqueueSpreadsheetSync(params);
 }
 
 /**
@@ -3372,6 +3313,7 @@ async function executeTaskMapAssignment(
             userName: subMaName,
             userEmail: targetSubUser?.email || actorUser?.email,
             dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
+            dailySheetLogId: savedSubLog?.id || null,
             taskId: currentSubtask.taskId,
             subtaskId: currentSubtask.id,
             taskTitle: subTaskTitleForSheet,
@@ -3975,6 +3917,7 @@ async function executeTaskMapAssignment(
           userName: mainMaName,
           userEmail: updatedTask.assignee?.email || actorUser?.email,
           dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
+          dailySheetLogId: savedMainLog?.id || null,
           taskId: id,
           taskTitle: updatedTask.title,
           clientName: mainClientForSheet,
@@ -6245,6 +6188,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           userName: actorDisplayName,
           userEmail: actorUser?.email,
           dailySheetUrl: actorUser?.dailySheetUrl,
+          dailySheetLogId: savedLog?.id || null,
           taskId: cleanTaskId || null,
           subtaskId: subtaskId || null,
           sheetRow: resolvedSheetRow,

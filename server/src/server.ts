@@ -43,6 +43,7 @@ import { dailyRolloverQueue } from './queues/dailyRollover.queue';
 import { JOURNAL_CATCH_UP_JOB, SHIFT_AUDIT_JOB, TASK_MAP_SHIFT_ROLLOVER_JOB, TASK_MAP_DAILY_ROLLOVER_JOB, MA_AUTO_HANDOVER_JOB, LAUNCH_REVIEW_SWEEP_JOB, CRM_FOLLOW_UP_SWEEP_JOB } from './workers/dailyRollover.worker';
 import { toolsSyncQueue } from './queues/toolsSync.queue';
 import './workers/toolsSync.worker';
+import './workers/spreadsheetSync.worker';
 import { autoQueueQueue } from './queues/autoQueue.queue';
 import {
   AUTO_QUEUE_JOB,

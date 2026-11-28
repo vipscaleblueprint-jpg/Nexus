@@ -4,7 +4,6 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   DAYS_OF_WEEK,
-  QUICK_SCHEDULES,
   TIME_OPTIONS,
   ShiftRule,
   createRuleId,
@@ -122,40 +121,8 @@ export function ShiftScheduleEditor({ value, onChange, compact = false }: ShiftS
     commitRules(nextRules);
   };
 
-  const applyPreset = (preset: string) => {
-    const parsed = parseSchedule(preset);
-    if (!parsed) return;
-    commitRules(parsed);
-  };
-
-  const formattedPreview = useMemo(() => formatSchedule(rules), [rules]);
-
   return (
     <div className={`space-y-3 ${compact ? '' : 'w-full'}`}>
-      {/* Quick Presets */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mr-0.5">
-          Presets:
-        </span>
-        {QUICK_SCHEDULES.slice(0, compact ? 4 : 6).map((preset) => {
-          const isActive = formattedPreview.toUpperCase() === preset.toUpperCase();
-          return (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => applyPreset(preset)}
-              className={`px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors cursor-pointer ${
-                isActive
-                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
-                  : 'bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-              }`}
-            >
-              {preset.replace(' to ', '–')}
-            </button>
-          );
-        })}
-      </div>
-
       <div className="space-y-2">
         {rules.map((rule, idx) => {
           const startOpts = buildTimeOptions(rule.startTime);

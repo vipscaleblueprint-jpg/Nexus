@@ -4,6 +4,7 @@ export interface CanDragTaskMapCardParams {
   columnUserId?: string | null;
   isFromAvailable?: boolean;
   isAssumptionBlock?: boolean;
+  isWaiting?: boolean;
 }
 
 export function canDragTaskMapCard(params: CanDragTaskMapCardParams): boolean {
@@ -13,9 +14,11 @@ export function canDragTaskMapCard(params: CanDragTaskMapCardParams): boolean {
     columnUserId,
     isFromAvailable = false,
     isAssumptionBlock = false,
+    isWaiting = false,
   } = params;
 
   if (isAssumptionBlock) return false;
+  if (isFromAvailable && isWaiting) return false;
   // Available tasks can be dragged by PMs or by any user to assign to themselves
   if (isFromAvailable) return true;
   if (!columnUserId) return false;

@@ -37,6 +37,8 @@ import {
   SheetActivityLogRow,
   getSubStatusTransitionGuide,
   SubStatusTransitionGuide,
+  isTaskMapItemOnHold,
+  isTaskMapItemWaiting,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
@@ -114,7 +116,7 @@ export function findBestUserMatch<T extends { name?: string | null; email?: stri
   return eligible.find((u) => doesProgressMatchUser(progMaName, u.name));
 }
 
-import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2, ArrowRightLeft, Eye, EyeOff } from 'lucide-react';
+import { Flag, CheckCircle2, ChevronLeft, ChevronRight, ChevronsRight, ChevronDown, Check, Building2, Search, Shield, Pin, X, Infinity as InfinityIcon, Sparkles, CornerDownRight, RotateCcw, Loader2, ArrowRightLeft, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { getCurrentLiveTime } from '@/lib/liveClock';
 import { getPriorityConfig } from '@/lib/priority';
@@ -1617,6 +1619,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
     guide: SubStatusTransitionGuide;
     onConfirm: () => Promise<void>;
   } | null>(null);
+  const [onHoldDragConfirm, setOnHoldDragConfirm] = useState<{
+    targetUserName: string;
+    taskTitle: string;
+    clientName?: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
   const submittingDeliverablesRef = useRef<Set<string>>(new Set());
   const recentlyClockedOutRef = useRef<Map<string, number>>(new Map());
   const collapsedStorageKey = currentUser?.id
@@ -2449,6 +2457,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
     if (!task) return;
 
     const isFromAvailable = poolIds.has(task.id);
+    const isPoolWaiting = isFromAvailable && isTaskMapItemWaiting(task);
     const activeSourceUserId = event.active.data.current?.sourceUserId as string | null | undefined;
     const sourceOwnerId = isFromAvailable ? null : (activeSourceUserId ?? getEffectiveTaskMapHandlerId(task));
     if (
@@ -2458,12 +2467,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
         columnUserId: sourceOwnerId,
         isFromAvailable,
         isAssumptionBlock: task.isAssumptionBlock,
+        isWaiting: isPoolWaiting,
       })
     ) {
       toast.error(
-        isFromAvailable
-          ? 'Only Project Managers and Admins can assign tasks from the Available column'
-          : 'You can only drag tasks within your own column'
+        isPoolWaiting
+          ? 'Waiting tasks in Available Tasks cannot be dragged'
+          : isFromAvailable
+            ? 'Only Project Managers and Admins can assign tasks from the Available column'
+            : 'You can only drag tasks within your own column'
       );
       return;
     }
@@ -2649,7 +2661,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       };
 
       if (sourceOwnerId !== targetUserId) {
-        await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runInProgressAssign);
+        if (isTaskMapItemOnHold(currentTask)) {
+          setOnHoldDragConfirm({
+            targetUserName: targetUser?.name || 'this MA',
+            taskTitle: currentTask?.title || 'Task',
+            clientName: currentTask?.progress?.client || currentTask?.list?.name || '',
+            onConfirm: async () => {
+              await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runInProgressAssign);
+            },
+          });
+        } else {
+          await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runInProgressAssign);
+        }
       } else {
         await runInProgressAssign();
       }
@@ -2715,6 +2738,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
         try {
           if (onAssignTask) {
             await onAssignTask(taskId, targetUserId, 'QUEUE', nextRoles, undefined, currentTask, preserveHandover);
+            if (isTaskMapItemOnHold(currentTask) && (currentTask?.status || '').toUpperCase().replace(/[\s_-]+/g, '') === 'ONHOLD') {
+              if (onTaskUpdate) {
+                await onTaskUpdate(taskId, { status: 'PENDING', assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles });
+              } else {
+                await tasksApi.updateTask(taskId, { status: 'PENDING', assigneeId: targetUserId, assigneeRoleRestrictions: nextRoles } as any).catch(console.error);
+              }
+            }
             if (remainingAvailableSubtasks.length > 0) {
               await Promise.all(
                 remainingAvailableSubtasks.map((sub) =>
@@ -2787,7 +2817,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       };
 
       if (sourceOwnerId !== targetUserId) {
-        await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runQueueAssign);
+        if (isTaskMapItemOnHold(currentTask)) {
+          setOnHoldDragConfirm({
+            targetUserName: targetUser?.name || 'this MA',
+            taskTitle: currentTask?.title || 'Task',
+            clientName: currentTask?.progress?.client || currentTask?.list?.name || '',
+            onConfirm: async () => {
+              await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runQueueAssign);
+            },
+          });
+        } else {
+          await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', runQueueAssign);
+        }
       } else {
         await runQueueAssign();
       }
@@ -3599,6 +3640,15 @@ export const TaskMapBoardView: React.FC<Props> = ({
           return;
         }
         onStatusChange(task.id, isSelecting ? ['Available Task'] : cleanNext);
+        if (isSelecting && (isTaskMapItemWaiting(task) || isTaskMapItemOnHold(task))) {
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'PENDING' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'PENDING' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info('Task moved to Available Tasks');
+        }
         return;
       }
 
@@ -3782,10 +3832,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
     };
 
-    const guide = getSubStatusTransitionGuide(label, 'TASK_MAP', {
+    const baseGuide = getSubStatusTransitionGuide(label, 'TASK_MAP', {
       isSelecting,
       isLiveSession: false,
     });
+    const isMovingFromWaitingOrOnHoldToAvailable =
+      isSelecting &&
+      (norm === 'available task' || norm === 'availabletask') &&
+      (isTaskMapItemWaiting(task) || isTaskMapItemOnHold(task));
+    const guide: SubStatusTransitionGuide = isMovingFromWaitingOrOnHoldToAvailable
+      ? {
+          ...baseGuide,
+          title: isTaskMapItemWaiting(task)
+            ? 'Change Waiting to Available Task?'
+            : 'Change On-Hold to Available Task?',
+          summary: isTaskMapItemWaiting(task)
+            ? 'Are you sure you want to change this sub-status from Waiting to Available Task?'
+            : 'Are you sure you want to change this sub-status from On-Hold to Available Task?',
+          mainStatusChange: 'PENDING',
+          requiresConfirmModal: true,
+        }
+      : baseGuide;
     setSubStatusGuideTarget({
       task,
       guide,
@@ -4130,11 +4197,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               ? 'border-amber-500/30 not-has-[[data-card-control]:hover]:hover:border-amber-400/55 shadow-md'
                               : 'border-border hover:border-zinc-700 shadow-md';
 
+                    const isPoolWaiting = isTaskMapItemWaiting(task);
                     return (
                       <DraggableTaskCard
                         key={task.id}
                         task={task}
-                        disabled={!isPmUser}
+                        disabled={!isPmUser || isPoolWaiting}
                       >
                         <div className={isSubtask && hasParentInColumn ? 'relative pl-4' : ''}>
                           {isSubtask && hasParentInColumn && (
@@ -4296,7 +4364,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                   <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider shrink-0">
                                     Sub-Status
                                   </span>
-                                  {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && (
+                                  {canTransferTaskMapCard(isPmUser) && !task.isAssumptionBlock && !isPoolWaiting && (
                                     <CardTransferDropdown
                                       taskId={task.id}
                                       currentAssigneeId={getEffectiveTaskMapHandlerId(task)}
@@ -5662,6 +5730,69 @@ export const TaskMapBoardView: React.FC<Props> = ({
           currentSubStatuses={subStatusGuideTarget.task.taskMap?.statuses || []}
           currentMainStatus={subStatusGuideTarget.task.status}
         />
+      )}
+
+      {/* On-Hold Drag Confirmation Modal */}
+      {onHoldDragConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-md bg-zinc-900 border border-amber-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onhold-drag-confirm-title"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-amber-950/20">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-lg border bg-amber-500/15 border-amber-500/35 text-amber-300 shrink-0">
+                  <AlertTriangle className="size-4 shrink-0" />
+                </div>
+                <div className="min-w-0">
+                  <h3 id="onhold-drag-confirm-title" className="text-sm font-semibold text-zinc-100 truncate">
+                    Assign On-Hold Task?
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 truncate mt-0.5">
+                    {onHoldDragConfirm.clientName ? `${onHoldDragConfirm.clientName} — ${onHoldDragConfirm.taskTitle}` : onHoldDragConfirm.taskTitle}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOnHoldDragConfirm(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors shrink-0 cursor-pointer"
+                title="Cancel"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-zinc-200 leading-relaxed">
+                Are you sure you want to drag this to{' '}
+                <span className="font-semibold text-amber-300">{onHoldDragConfirm.targetUserName}</span>?
+              </p>
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setOnHoldDragConfirm(null)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const confirmFn = onHoldDragConfirm.onConfirm;
+                    setOnHoldDragConfirm(null);
+                    await confirmFn();
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 active:bg-amber-700 transition-colors shadow-md cursor-pointer"
+                >
+                  <Check className="size-3.5" />
+                  <span>Confirm</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </DndContext>
   );

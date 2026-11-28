@@ -1643,22 +1643,30 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       return customStatuses.some((cs: string) => cs.toUpperCase().includes('HOLD'));
     };
 
+    const isTaskWaiting = (t: any) => {
+      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      if (s === 'WAITING' || s === 'SENT' || s.includes('WAITING')) return true;
+      const customStatuses = t.taskMap?.statuses || [];
+      return customStatuses.some((cs: string) => {
+        const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+        return up === 'WAITING' || up === 'SENTBUTWAITING' || up.includes('WAITING');
+      });
+    };
+
     const getAvailableTaskStatusRank = (t: any) => {
-      if (isTaskOnHold(t)) return 5;
+      if (isTaskOnHold(t)) return 4;
+      if (isTaskWaiting(t)) return 3;
       const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
       const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
         (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
       if (
-        s === 'WAITING' ||
-        s === 'SENT' ||
-        s.includes('WAITING') ||
-        mapStatuses.some((st: string) => st === 'WAITING' || st === 'SENTBUTWAITING' || st.includes('WAITING'))
+        mapStatuses.some(
+          (st: string) =>
+            st === 'HANDOVER' || st === 'HANDOVERIN' || st === 'HANDOVEROUT' || st.includes('HANDOVER')
+        )
       ) {
         return 0;
-      }
-      if (s === 'INPROGRESS' || mapStatuses.some((st: string) => st === 'INPROGRESS')) {
-        return 1;
       }
       if (
         s === 'REVISION' ||
@@ -1669,12 +1677,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
           (st: string) => st === 'REVISION' || st === 'REVISIONS' || st === 'REVISING' || st.includes('REVIS')
         )
       ) {
-        return 2;
+        return 1;
       }
-      if (s === 'PENDING' || mapStatuses.some((st: string) => st === 'PENDING')) {
-        return 3;
+      if (t.taskMap?.handedOver && !mapStatuses.includes('AVAILABLETASK')) {
+        return 0;
       }
-      return 4;
+      return 2;
     };
 
     const availablePool = filteredTasks
@@ -1683,16 +1691,16 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         return isAvailableTaskStatus(t);
       })
       .sort((a: any, b: any) => {
-        // 0. Always push ALL On-hold tasks (even urgent) to the very bottom
-        const holdA = isTaskOnHold(a) ? 1 : 0;
-        const holdB = isTaskOnHold(b) ? 1 : 0;
-        if (holdA !== holdB) return holdA - holdB;
+        // 0. Bottom tiers: active (0) > Waiting (1) > On-hold (2)
+        const tierA = isTaskOnHold(a) ? 2 : isTaskWaiting(a) ? 1 : 0;
+        const tierB = isTaskOnHold(b) ? 2 : isTaskWaiting(b) ? 1 : 0;
+        if (tierA !== tierB) return tierA - tierB;
 
         // 1. Prioritize by urgency: URGENT > HIGH > NORMAL/MEDIUM > LOW
         const priorityDiff = getTaskPriorityRank(a) - getTaskPriorityRank(b);
         if (priorityDiff !== 0) return priorityDiff;
 
-        // 2. Order by status: WAITING > IN PROGRESS > REVISING > PENDING > other > ON-HOLD
+        // 2. Order within priority: Hand-over > Revision > Available Task / other
         const statusDiff = getAvailableTaskStatusRank(a) - getAvailableTaskStatusRank(b);
         if (statusDiff !== 0) return statusDiff;
 
@@ -2479,9 +2487,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
               date: matchedSubDate || getManilaDateStr(),
               timeIn: matchedSubTimeIn || undefined,
               timeOut: nowManilaTime,
-              taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+              taskDeliverablesDescription: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : null,
               taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
-              description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : subtask.title || '',
+              description: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : '',
               mode: 'STOP',
             });
           }
@@ -2838,9 +2846,9 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             date: matchedMainDate || getManilaDateStr(),
             timeIn: matchedMainTimeIn || undefined,
             timeOut: nowManilaTime,
-            taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+            taskDeliverablesDescription: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : null,
             taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
-            description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : currentTask?.title || '',
+            description: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : '',
             mode: 'STOP',
           });
         }

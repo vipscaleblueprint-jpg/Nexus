@@ -4107,6 +4107,20 @@ export function isTaskMapItemOnHold(task?: Partial<TaskMapItem> | null): boolean
 }
 
 /**
+ * Returns true if the Task Map item is in Waiting status (main status or Task Map sub-status).
+ */
+export function isTaskMapItemWaiting(task?: Partial<TaskMapItem> | null): boolean {
+  if (!task) return false;
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (s === 'WAITING' || s === 'SENT' || s.includes('WAITING')) return true;
+  const customStatuses = task.taskMap?.statuses || [];
+  return customStatuses.some((cs: string) => {
+    const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    return up === 'WAITING' || up === 'SENTBUTWAITING' || up.includes('WAITING');
+  });
+}
+
+/**
  * Returns true if a task's status or Task Map sub-statuses exclude it from the Available Tasks pool.
  * Available Tasks includes Waiting, In Progress, Revision/Revising, Pending, and On-Hold tasks,
  * while excluding CRM, Review/Checking, and recurring/cadence tasks.
@@ -4188,12 +4202,13 @@ export function getTaskPriorityRank(
 }
 
 /**
- * Numeric status rank for Available Tasks sorting (lower = higher priority):
- * WAITING (0) > IN PROGRESS (1) > REVISING/REVISION (2) > PENDING (3) > other (4) > ON-HOLD (5).
+ * Numeric status rank for Available Tasks sorting within the same priority (lower = higher):
+ * Hand-over (0) > Revision (1) > Available Task / other (2) > Waiting (3) > On-Hold (4).
  */
 export function getAvailableTaskStatusRank(task?: Partial<TaskMapItem> | null): number {
-  if (!task) return 4;
-  if (isTaskMapItemOnHold(task)) return 5;
+  if (!task) return 2;
+  if (isTaskMapItemOnHold(task)) return 4;
+  if (isTaskMapItemWaiting(task)) return 3;
 
   const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
   const mapStatuses = (task.taskMap?.statuses || []).map((x: string) =>
@@ -4201,16 +4216,11 @@ export function getAvailableTaskStatusRank(task?: Partial<TaskMapItem> | null): 
   );
 
   if (
-    s === 'WAITING' ||
-    s === 'SENT' ||
-    s.includes('WAITING') ||
-    mapStatuses.some((st) => st === 'WAITING' || st === 'SENTBUTWAITING' || st.includes('WAITING'))
+    mapStatuses.some(
+      (st) => st === 'HANDOVER' || st === 'HANDOVERIN' || st === 'HANDOVEROUT' || st.includes('HANDOVER')
+    )
   ) {
     return 0;
-  }
-
-  if (s === 'INPROGRESS' || mapStatuses.some((st) => st === 'INPROGRESS')) {
-    return 1;
   }
 
   if (
@@ -4222,27 +4232,27 @@ export function getAvailableTaskStatusRank(task?: Partial<TaskMapItem> | null): 
       (st) => st === 'REVISION' || st === 'REVISIONS' || st === 'REVISING' || st.includes('REVIS')
     )
   ) {
-    return 2;
+    return 1;
   }
 
-  if (s === 'PENDING' || mapStatuses.some((st) => st === 'PENDING')) {
-    return 3;
+  if (task.taskMap?.handedOver && !mapStatuses.includes('AVAILABLETASK')) {
+    return 0;
   }
 
-  return 4;
+  return 2;
 }
 
 /**
  * Comparator for Available Tasks pool:
- * 1. On-Hold tasks strictly at the bottom
+ * 1. Bottom tiers: Active tasks (0) > Waiting (1) > On-Hold (2)
  * 2. Priority urgency: URGENT > HIGH > NORMAL/MEDIUM > LOW
- * 3. Status order: WAITING > IN PROGRESS > REVISING > PENDING > other > ON-HOLD
+ * 3. Sub-status bucket within priority: Hand-over > Revision > Available Task / other
  * 4. Newest createdAt first
  */
 export function compareAvailablePoolTasks(a: TaskMapItem, b: TaskMapItem): number {
-  const holdA = isTaskMapItemOnHold(a) ? 1 : 0;
-  const holdB = isTaskMapItemOnHold(b) ? 1 : 0;
-  if (holdA !== holdB) return holdA - holdB;
+  const tierA = isTaskMapItemOnHold(a) ? 2 : isTaskMapItemWaiting(a) ? 1 : 0;
+  const tierB = isTaskMapItemOnHold(b) ? 2 : isTaskMapItemWaiting(b) ? 1 : 0;
+  if (tierA !== tierB) return tierA - tierB;
 
   const priorityDiff = getTaskPriorityRank(a) - getTaskPriorityRank(b);
   if (priorityDiff !== 0) return priorityDiff;

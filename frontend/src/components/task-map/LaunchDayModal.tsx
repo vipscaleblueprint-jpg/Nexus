@@ -235,7 +235,7 @@ const TimeInputWithPresets: React.FC<TimeInputWithPresetsProps> = ({
           onChange={(e) => onChange(e.target.value)}
           onBlur={() => onChange(parseAndFormatTimeInput(value))}
           placeholder={placeholder}
-          className="w-full h-8 pl-3 pr-20 rounded-lg bg-[#121217] border border-[#2e2e3d] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/30 transition-colors"
+          className="w-full h-8 pl-3 pr-20 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/30 transition-colors"
         />
 
         <div className="absolute right-1.5 flex items-center gap-1">
@@ -247,7 +247,7 @@ const TimeInputWithPresets: React.FC<TimeInputWithPresetsProps> = ({
               e.stopPropagation();
               onChange(toggleTimeAmPm(value));
             }}
-            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1e1e28] hover:bg-purple-600/30 text-purple-300 border border-[#36364a] hover:border-purple-500/50 transition-colors cursor-pointer select-none"
+            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[var(--surface)] hover:bg-purple-600/30 text-purple-300 border border-[var(--border)] hover:border-purple-500/50 transition-colors cursor-pointer select-none"
             title="Click to toggle AM / PM without retyping"
           >
             {currentIsPm ? 'PM' : 'AM'}
@@ -271,9 +271,9 @@ const TimeInputWithPresets: React.FC<TimeInputWithPresetsProps> = ({
 
       {/* Preset Dropdown Popover */}
       {dropdownOpen && (
-        <div className="absolute left-0 right-0 top-full mt-1 z-[90] bg-[#161622] border border-[#2e2e42] rounded-xl shadow-2xl p-2 flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100">
+        <div className="absolute left-0 right-0 top-full mt-1 z-[90] bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-2xl p-2 flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100">
           {/* Quick Chips */}
-          <div className="flex flex-wrap gap-1 pb-1.5 border-b border-[#262638]">
+          <div className="flex flex-wrap gap-1 pb-1.5 border-b border-[var(--border)]">
             {QUICK_TIME_CHIPS.map((chip) => (
               <button
                 key={chip.value}
@@ -284,8 +284,8 @@ const TimeInputWithPresets: React.FC<TimeInputWithPresetsProps> = ({
                 }}
                 className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-colors cursor-pointer ${
                   normalizedVal === chip.value
-                    ? 'bg-purple-600 text-white shadow-xs'
-                    : 'bg-[#1f1f2c] text-zinc-300 hover:bg-purple-600/20 hover:text-purple-200'
+                    ? 'bg-purple-600 text-[var(--on-accent)] shadow-xs'
+                    : 'bg-[var(--surface)] text-zinc-300 hover:bg-purple-600/20 hover:text-purple-200'
                 }`}
               >
                 {chip.label}
@@ -312,7 +312,7 @@ const TimeInputWithPresets: React.FC<TimeInputWithPresetsProps> = ({
                   className={`w-full text-left px-2.5 py-1 rounded-md text-xs font-medium flex items-center justify-between transition-colors cursor-pointer ${
                     isSelected
                       ? 'bg-purple-600/25 text-purple-200 font-bold border border-purple-500/40'
-                      : 'text-zinc-300 hover:bg-[#222230] hover:text-white'
+                      : 'text-zinc-300 hover:bg-[var(--hover-subtle)] hover:text-white'
                   }`}
                 >
                   <span>{t}</span>
@@ -643,10 +643,10 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[480px] max-h-[90vh] overflow-y-auto custom-scrollbar bg-[#121216] border border-[#27272e] rounded-2xl shadow-2xl p-4 flex flex-col gap-3 text-zinc-100"
+        className="w-full max-w-[480px] max-h-[90vh] overflow-y-auto custom-scrollbar bg-[var(--popover)] border border-[var(--border)] rounded-2xl shadow-2xl p-4 flex flex-col gap-3 text-zinc-100"
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-2 border-b border-[#22222a]">
+        <div className="flex items-center justify-between pb-2 border-b border-[var(--border)]">
           <div className="flex items-center gap-2.5">
             <div className="size-8 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center shrink-0">
               {isEditMode ? (
@@ -672,13 +672,13 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
         {/* Existing launches on this day (if any) */}
         {existingEntries.length > 0 && (
-          <div className="p-2.5 rounded-xl bg-[#18181f] border border-[#272733] flex flex-col gap-1.5">
+          <div className="p-2.5 rounded-xl bg-[var(--surface)] border border-[var(--border)] flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
                 Existing Launches on this Day ({existingEntries.length})
               </span>
             </div>
-            <div className="flex flex-col gap-1 divide-y divide-[#252530]">
+            <div className="flex flex-col gap-1 divide-y divide-[var(--border)]">
               {existingEntries.map((entry) => (
                 <div
                   key={entry.task.id}
@@ -718,7 +718,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
         {/* Linked Task Banner (if task selected) */}
         {selectedTask && (
-          <div className="p-2 rounded-xl bg-[#18181f] border border-[#272733] flex items-center justify-between gap-2">
+          <div className="p-2 rounded-xl bg-[var(--surface)] border border-[var(--border)] flex items-center justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-[9.5px] font-bold uppercase tracking-wider text-purple-300 px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 truncate max-w-[140px]">
@@ -746,7 +746,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Black Friday Campaign Launch"
               autoFocus
-              className="bg-[#18181f] border border-[#2a2a35] rounded-xl px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
+              className="bg-[var(--surface)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
             />
           </div>
 
@@ -757,8 +757,8 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               <div
                 className={`w-full h-8 flex items-center gap-2 px-3 rounded-xl border text-xs transition-colors ${
                   clientDropdownOpen
-                    ? 'border-purple-500 ring-1 ring-purple-500/40 bg-[#18181f]'
-                    : 'border-[#2a2a35] bg-[#18181f] hover:border-purple-500/50'
+                    ? 'border-purple-500 ring-1 ring-purple-500/40 bg-[var(--surface)]'
+                    : 'border-[var(--border)] bg-[var(--surface)] hover:border-purple-500/50'
                 }`}
               >
                 <Building2 className="size-3.5 text-purple-400 shrink-0" />
@@ -803,7 +803,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               </div>
 
               {clientDropdownOpen && (
-                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#18181f] border border-[#2e2e3d] rounded-xl shadow-2xl max-h-44 overflow-y-auto custom-scrollbar p-1">
+                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-2xl max-h-44 overflow-y-auto custom-scrollbar p-1">
                   {clients.length === 0 ? (
                     <div className="flex items-center justify-center py-5 text-xs text-zinc-500">
                       <Loader2 className="size-3.5 animate-spin mr-1.5" /> Loading clients…
@@ -822,7 +822,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                           setClientSearch(c.name);
                           setClientDropdownOpen(false);
                         }}
-                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 hover:bg-[#252530] transition-colors cursor-pointer ${
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 hover:bg-[var(--hover-subtle)] transition-colors cursor-pointer ${
                           c.id === selectedClientId ? 'bg-purple-950/60 text-purple-300 font-semibold' : 'text-zinc-300'
                         }`}
                       >
@@ -844,7 +844,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
           </div>
 
           {/* CARD 1: Date & Weekday Selectable Box */}
-          <div className="p-2.5 rounded-xl bg-[#18181f] border border-[#272733] flex flex-col gap-2">
+          <div className="p-2.5 rounded-xl bg-[var(--surface)] border border-[var(--border)] flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
                 <CalendarIcon className="size-3.5 text-purple-400" />
@@ -866,7 +866,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               <Popover.Trigger asChild>
                 <button
                   type="button"
-                  className="w-full h-8 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
+                  className="w-full h-8 flex items-center justify-between px-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
                 >
                   <span className="flex items-center gap-2">
                     <CalendarIcon className="size-3 text-purple-400" />
@@ -953,7 +953,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
             </div>
 
             {/* Optional End Date Checkbox */}
-            <div className="pt-1 border-t border-[#272733] flex flex-col gap-1.5">
+            <div className="pt-1 border-t border-[var(--border)] flex flex-col gap-1.5">
               <button
                 type="button"
                 role="checkbox"
@@ -969,7 +969,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                   className={`size-3.5 rounded flex items-center justify-center shrink-0 border transition-colors ${
                     hasEndDate
                       ? 'bg-purple-600 border-purple-600'
-                      : 'border-[#3a3a4c] bg-[#121217] group-hover/check:border-purple-500/60'
+                      : 'border-[var(--border)] bg-[var(--bg)] group-hover/check:border-purple-500/60'
                   }`}
                 >
                   {hasEndDate && <Check className="size-2.5 text-white" strokeWidth={3} />}
@@ -993,7 +993,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                     <Popover.Trigger asChild>
                       <button
                         type="button"
-                        className="w-full h-7 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
+                        className="w-full h-7 flex items-center justify-between px-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
                       >
                         <span className="flex items-center gap-2">
                           <CalendarIcon className="size-3 text-purple-400" />
@@ -1044,7 +1044,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                   </Popover.Root>
 
                   {/* End Time Row with Quick Presets & Manual Typing */}
-                  <div className="flex flex-col gap-1 p-2 rounded-lg bg-[#121217] border border-[#2a2a38]">
+                  <div className="flex flex-col gap-1 p-2 rounded-lg bg-[var(--bg)] border border-[var(--border)]">
                     <label className="text-[10px] font-semibold text-zinc-400 flex items-center gap-1.5">
                       <Clock className="size-3 text-purple-400" />
                       <span>End Time</span>
@@ -1075,8 +1075,8 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               <Popover.Trigger asChild>
                 <button
                   type="button"
-                  className={`w-full h-8 flex items-center justify-between gap-2 px-2.5 rounded-xl border bg-[#18181f] text-xs text-zinc-200 cursor-pointer transition-colors ${
-                    tzOpen ? 'border-purple-500 ring-1 ring-purple-500/40' : 'border-[#2a2a35] hover:border-purple-500/50'
+                  className={`w-full h-8 flex items-center justify-between gap-2 px-2.5 rounded-xl border bg-[var(--surface)] text-xs text-zinc-200 cursor-pointer transition-colors ${
+                    tzOpen ? 'border-purple-500 ring-1 ring-purple-500/40' : 'border-[var(--border)] hover:border-purple-500/50'
                   }`}
                 >
                   <span className="truncate">
@@ -1123,18 +1123,18 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
           </div>
 
           {/* Bottom Action Buttons */}
-          <div className="flex items-center gap-2 pt-1 border-t border-[#22222a]">
+          <div className="flex items-center gap-2 pt-1 border-t border-[var(--border)]">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2 rounded-xl bg-[#1e1e26] hover:bg-[#252530] text-xs font-medium text-zinc-300 transition-colors cursor-pointer"
+              className="flex-1 py-2 rounded-xl bg-[var(--surface)] hover:bg-[var(--hover-subtle)] text-xs font-medium text-zinc-300 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="flex-[2] py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              className="flex-[2] py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-[var(--on-accent)] text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               {saving ? (
                 <Loader2 className="size-3.5 animate-spin" />

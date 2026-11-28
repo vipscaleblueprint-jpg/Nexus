@@ -36,6 +36,16 @@ import {
   type GalaxyTaskPayload,
 } from '@/api/tasks';
 import type { GalaxyModalInitialData } from '@/lib/galaxyTask';
+import { taskMapApi, getManilaDateKey } from '@/api/taskMap';
+
+type LaunchOption = { id: string; title: string; date: string };
+
+function formatLaunchDate(ymd: string): string {
+  const d = new Date(`${ymd}T12:00:00`);
+  return isNaN(d.getTime())
+    ? ymd
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 type GalaxyMode = 'task' | 'subtask';
 
@@ -249,6 +259,81 @@ export function GalaxyTaskModal({ isOpen, onClose, initialData }: GalaxyTaskModa
     return match ? match.clickup_task_link : trimmed;
   }, [taskLink, filteredParentTasks]);
 
+  // Launch picker. New task: the client's upcoming launches from the Launch Map, "No launch"
+  // by default. Subtask: only the parent task's launch (pre-selected), when it has one.
+  const [launchOptions, setLaunchOptions] = useState<LaunchOption[]>([]);
+  const [loadingLaunches, setLoadingLaunches] = useState(false);
+  const [launchOpen, setLaunchOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || mode !== 'task') return;
+    setLaunchOptions([]);
+    setLaunchDate('');
+    const client = clientName.trim();
+    if (!client) return;
+
+    let cancelled = false;
+    const today = getManilaDateKey(new Date()) || new Date().toISOString().slice(0, 10);
+    const yearAhead = new Date(Date.now() + 366 * 86400000).toISOString().slice(0, 10);
+    setLoadingLaunches(true);
+    taskMapApi
+      .getLaunchData({ start: today, end: yearAhead })
+      .then((res) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const options = (res.items || [])
+          .filter((it) => {
+            const date = it.effectiveLaunchDate;
+            const listName = it.list?.name || '';
+            return Boolean(date) && date! >= today && !it.isClosed && listName && isClientMatch(listName, client);
+          })
+          .map((it) => ({ id: it.id, title: it.title, date: it.effectiveLaunchDate as string }))
+          .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        setLaunchOptions(options);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error('Failed to load client launches:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingLaunches(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, mode, clientName]);
+
+  useEffect(() => {
+    if (!isOpen || mode !== 'subtask') return;
+    setLaunchOptions([]);
+    setLaunchDate('');
+    const parentId = extractClickUpTaskId(canonicalTaskLink);
+    if (!parentId) return;
+
+    let cancelled = false;
+    setLoadingLaunches(true);
+    tasksApi
+      .getTask(parentId)
+      .then((res) => {
+        if (cancelled) return;
+        const parent: any = res?.task;
+        const date = parent?.launchDate ? getManilaDateKey(parent.launchDate) : null;
+        if (date) {
+          setLaunchOptions([{ id: `parent-${parent.id}`, title: parent.title || "Parent task's launch", date }]);
+          setLaunchDate(date);
+        }
+      })
+      .catch(() => {
+        // Parent not in Nexus yet, or no launch: no launch field for this subtask
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingLaunches(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, mode, canonicalTaskLink]);
+
   const handleReset = useCallback(() => {
     setTitle('');
     setTaskLink('');
@@ -402,7 +487,7 @@ export function GalaxyTaskModal({ isOpen, onClose, initialData }: GalaxyTaskModa
       ...(goal.trim() ? { goal: goal.trim() } : {}),
       ...(priority ? { priority } : {}),
       ...(complexity ? { complexity } : {}),
-      ...(mode === 'task' && launchDate ? { launch_date: launchDate } : {}),
+      ...(launchDate ? { launch_date: launchDate } : {}),
     };
 
     setSubmitting(true);
@@ -1031,21 +1116,74 @@ export function GalaxyTaskModal({ isOpen, onClose, initialData }: GalaxyTaskModa
                   )}
                 </div>
 
-                {/* Launch date (task mode only) */}
-                {mode === 'task' && (
+                {/* Launch: client's Launch Map launches (task) or the parent's launch (subtask, only if it has one) */}
+                {(mode === 'task' || launchOptions.length > 0) && (() => {
+                  const selected = launchOptions.find((o) => o.date === launchDate);
+                  return (
                 <div className="space-y-1.5">
-                  <label htmlFor="galaxy-launch-date" className="text-sm font-medium text-purple-200 block">
-                    Launch date <span className="text-zinc-500 font-normal">(Optional — sets the due date)</span>
+                  <label className="text-sm font-medium text-purple-200 flex items-center justify-between">
+                    <span>
+                      Launch <span className="text-zinc-500 font-normal">(Optional — sets the due date)</span>
+                    </span>
+                    {loadingLaunches && <Loader2 className="size-3.5 animate-spin text-purple-400" />}
                   </label>
-                  <input
-                    id="galaxy-launch-date"
-                    type="date"
-                    value={launchDate}
-                    onChange={(e) => setLaunchDate(e.target.value)}
-                    className="w-full bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40 [color-scheme:dark]"
-                  />
+                  <Popover.Root open={launchOpen} onOpenChange={setLaunchOpen}>
+                    <Popover.Trigger asChild>
+                      <button
+                        type="button"
+                        disabled={loadingLaunches}
+                        className="w-full flex items-center justify-between gap-2 bg-background border border-purple-500/30 rounded-lg px-3 py-2 text-sm text-left hover:border-purple-500/50 focus:outline-none focus:border-purple-500 transition-colors cursor-pointer disabled:opacity-60"
+                      >
+                        <span className={`truncate ${selected ? 'text-zinc-100' : 'text-zinc-500'}`}>
+                          {selected ? `${selected.title} — ${formatLaunchDate(selected.date)}` : 'No launch'}
+                        </span>
+                        <ChevronDown className="size-4 text-zinc-500 shrink-0" />
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        align="start"
+                        sideOffset={4}
+                        className="z-[100001] w-[var(--radix-popover-trigger-width)] max-h-64 overflow-y-auto custom-scrollbar bg-zinc-950 border border-purple-500/20 rounded-lg shadow-xl p-1 outline-none"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLaunchDate('');
+                            setLaunchOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-zinc-400 hover:bg-purple-500/20 hover:text-white transition-colors cursor-pointer text-left"
+                        >
+                          <span>No launch</span>
+                          {!selected && <Check className="size-3.5 text-purple-400" />}
+                        </button>
+                        {launchOptions.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setLaunchDate(opt.date);
+                              setLaunchOpen(false);
+                            }}
+                            className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-purple-500/20 hover:text-white transition-colors cursor-pointer text-left"
+                          >
+                            <span className="min-w-0 truncate">
+                              {opt.title} <span className="text-zinc-500">— {formatLaunchDate(opt.date)}</span>
+                            </span>
+                            {selected?.id === opt.id && <Check className="size-3.5 text-purple-400 shrink-0" />}
+                          </button>
+                        ))}
+                        {!loadingLaunches && launchOptions.length === 0 && (
+                          <p className="px-2.5 py-1.5 text-[11px] text-zinc-500">
+                            {clientName ? 'No upcoming launches for this client on the Launch Map.' : 'Pick a client to see its launches.'}
+                          </p>
+                        )}
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
                 </div>
-                )}
+                  );
+                })()}
 
                 {/* Prompt */}
                 <div className="space-y-1.5">

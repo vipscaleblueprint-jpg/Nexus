@@ -12,6 +12,7 @@ import {
   isUserInShift,
   getTaskCollaboratorBlock,
 } from '../services/auditAutoAssign';
+import { getManilaClock, worksToday } from '../utils/workSchedule';
 
 /**
  * Checks if a user's roles include any auditor specialization.
@@ -325,13 +326,16 @@ export const getAuditEligibility = async (req: Request, res: Response) => {
     const taskIds: string[] = Array.isArray(req.body?.taskIds) ? req.body.taskIds.map(String).slice(0, 200) : [];
     const users = await prisma.user.findMany({
       where: { isActive: true },
-      select: { id: true, name: true, email: true, roles: true },
+      select: { id: true, name: true, email: true, roles: true, shiftTime: { select: { schedule: true } } },
     });
     const auditors = users.filter((u) => isAuditorRole(u.roles));
 
     const configs = await getDbShiftConfigs();
     const activeShift = await getActiveManilaShift();
-    const onShiftUserIds = auditors.filter((u) => isUserInShift(u, activeShift, configs)).map((u) => u.id);
+    const clock = getManilaClock();
+    const onShiftUserIds = auditors
+      .filter((u) => isUserInShift(u, activeShift, configs) && worksToday(u.shiftTime?.schedule, clock))
+      .map((u) => u.id);
 
     const blocked: Record<string, string[]> = {};
     const subtaskTokens = taskIds.filter((id) => id.startsWith('subtask:'));

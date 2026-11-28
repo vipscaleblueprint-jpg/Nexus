@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { Plus, Trash2, ChevronDown, Check } from 'lucide-react';
+import { PortalDropdown } from '@/components/ui/PortalDropdown';
 import {
   DAYS_OF_WEEK,
   TIME_OPTIONS,
@@ -168,31 +169,19 @@ export function ShiftScheduleEditor({ value, onChange, compact = false }: ShiftS
 
               {/* Time Range */}
               <div className="flex items-center gap-1.5 ml-auto sm:ml-1">
-                <select
-                  aria-label={`Shift ${idx + 1} start time`}
+                <TimeSelect
+                  ariaLabel={`Shift ${idx + 1} start time`}
                   value={rule.startTime}
-                  onChange={(e) => updateRuleTime(rule.id, 'startTime', e.target.value)}
-                  className="h-7 px-2 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-700 focus:border-indigo-500/60 text-[11px] font-medium text-zinc-100 focus:outline-none cursor-pointer"
-                >
-                  {startOpts.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                  options={startOpts}
+                  onChange={(v) => updateRuleTime(rule.id, 'startTime', v)}
+                />
                 <span className="text-[11px] text-zinc-500">to</span>
-                <select
-                  aria-label={`Shift ${idx + 1} end time`}
+                <TimeSelect
+                  ariaLabel={`Shift ${idx + 1} end time`}
                   value={rule.endTime}
-                  onChange={(e) => updateRuleTime(rule.id, 'endTime', e.target.value)}
-                  className="h-7 px-2 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-700 focus:border-indigo-500/60 text-[11px] font-medium text-zinc-100 focus:outline-none cursor-pointer"
-                >
-                  {endOpts.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                  options={endOpts}
+                  onChange={(v) => updateRuleTime(rule.id, 'endTime', v)}
+                />
 
                 {rules.length > 1 && (
                   <button
@@ -227,5 +216,72 @@ export function ShiftScheduleEditor({ value, onChange, compact = false }: ShiftS
         )}
       </div>
     </div>
+  );
+}
+
+function TimeSelect({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+}: {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  const selectedRef = useCallback((el: HTMLButtonElement | null) => {
+    const list = el?.parentElement;
+    if (el && list) list.scrollTop = el.offsetTop - list.clientHeight / 2 + el.offsetHeight / 2;
+  }, []);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={`h-7 min-w-[78px] pl-2.5 pr-1.5 flex items-center justify-between gap-1.5 rounded-lg bg-zinc-900 border text-[11px] font-medium text-zinc-100 transition-colors ${
+          open ? 'border-indigo-500/60' : 'border-zinc-800 hover:border-zinc-700'
+        }`}
+      >
+        {value}
+        <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <PortalDropdown triggerRef={triggerRef} onClose={close}>
+          <div role="listbox" className="relative w-[104px] max-h-60 overflow-y-auto custom-scrollbar">
+            {options.map((t) => {
+              const selected = t === value;
+              return (
+                <button
+                  key={t}
+                  ref={selected ? selectedRef : undefined}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => {
+                    onChange(t);
+                    close();
+                  }}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-[11px] font-medium text-left transition-colors ${
+                    selected ? 'bg-indigo-500/15 text-indigo-300' : 'text-zinc-300 hover:bg-zinc-700/60 hover:text-zinc-100'
+                  }`}
+                >
+                  {t}
+                  {selected && <Check className="w-3 h-3" />}
+                </button>
+              );
+            })}
+          </div>
+        </PortalDropdown>
+      )}
+    </>
   );
 }

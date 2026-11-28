@@ -9,6 +9,7 @@ import {
   Plus,
   MoreHorizontal,
   RefreshCw,
+  Ban,
   Trash2,
   Search,
   AlertTriangle,
@@ -250,6 +251,7 @@ export default function UsersSettingsPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [revokingInvite, setRevokingInvite] = useState<Invitation | null>(null);
+  const [deletingInvite, setDeletingInvite] = useState<Invitation | null>(null);
 
   const [showAllInvites, setShowAllInvites] = useState(false);
   const [syncingUsers, setSyncingUsers] = useState(false);
@@ -347,6 +349,17 @@ export default function UsersSettingsPage() {
       loadData();
     } catch (err) {
       console.error('Failed to revoke invitation:', err);
+    }
+  };
+
+  const handleConfirmDeleteInvite = async () => {
+    if (!deletingInvite) return;
+    try {
+      await invitationsApi.deleteInvitation(deletingInvite.id);
+      setDeletingInvite(null);
+      loadData();
+    } catch (err) {
+      console.error('Failed to delete invitation:', err);
     }
   };
 
@@ -935,20 +948,31 @@ export default function UsersSettingsPage() {
 
                       {/* Actions */}
                       <td className="px-6 py-4 text-right">
-                        <ActionMenu icon={<MoreHorizontal className="w-4 h-4 text-zinc-400" />}>
+                        <ActionMenu width="w-44" icon={<MoreHorizontal className="w-4 h-4 text-zinc-400" />}>
+                          {status !== 'accepted' && (
+                            <button
+                              onClick={() => handleResendInvite(invite.id)}
+                              className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700/80 hover:text-white flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                              Resend / Extend
+                            </button>
+                          )}
+                          {status === 'pending' && (
+                            <button
+                              onClick={() => setRevokingInvite(invite)}
+                              className="w-full text-left px-3 py-2 text-xs text-amber-400 hover:bg-amber-500/15 hover:text-amber-300 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+                            >
+                              <Ban className="w-3.5 h-3.5 text-amber-400" />
+                              Revoke Invitation
+                            </button>
+                          )}
                           <button
-                            onClick={() => handleResendInvite(invite.id)}
-                            className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700/80 hover:text-white flex items-center gap-2 cursor-pointer transition-colors"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
-                            Resend / Extend
-                          </button>
-                          <button
-                            onClick={() => setRevokingInvite(invite)}
-                            className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 cursor-pointer transition-colors"
+                            onClick={() => setDeletingInvite(invite)}
+                            className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
                           >
                             <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                            Revoke Invitation
+                            Delete Record
                           </button>
                         </ActionMenu>
                       </td>
@@ -1008,6 +1032,14 @@ export default function UsersSettingsPage() {
         onConfirm={handleConfirmRevokeInvite}
         title="Revoke Invitation"
         itemName={`invitation for ${revokingInvite?.email || 'user'}`}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={!!deletingInvite}
+        onClose={() => setDeletingInvite(null)}
+        onConfirm={handleConfirmDeleteInvite}
+        title="Delete Invitation Record"
+        itemName={`invitation record for ${deletingInvite?.email || 'user'}`}
       />
     </div>
   );

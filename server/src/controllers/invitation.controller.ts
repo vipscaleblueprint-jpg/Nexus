@@ -109,22 +109,31 @@ export async function createInvitation(req: AuthRequest, res: Response) {
   }
 }
 
-// DELETE /api/invitations/:id - Admin Only
+// POST /api/invitations/:id/revoke - Admin Only: marks the invitation REVOKED (record kept)
 export async function revokeInvitation(req: AuthRequest, res: Response) {
   try {
     const { id } = req.params;
 
-    const invite = await prisma.invitation.findUnique({
-      where: { id },
-    });
-
-    if (!invite) {
+    const { count } = await prisma.invitation.updateMany({ where: { id }, data: { status: 'REVOKED' } });
+    if (!count) {
       return res.status(404).json({ error: 'Invitation not found' });
     }
 
-    await prisma.invitation.delete({ where: { id } });
-
     return res.json({ message: 'Invitation revoked successfully' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// DELETE /api/invitations/:id - Admin Only: removes the invitation record entirely
+export async function deleteInvitation(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const { count } = await prisma.invitation.deleteMany({ where: { id } });
+    if (!count) {
+      return res.status(404).json({ error: 'Invitation not found' });
+    }
+    return res.json({ message: 'Invitation deleted successfully' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

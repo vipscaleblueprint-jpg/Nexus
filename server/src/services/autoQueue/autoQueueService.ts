@@ -17,6 +17,7 @@ import { randomBytes } from 'crypto';
 import { prisma } from '../../config/prisma';
 import { logger, errMsg } from '../../config/logger';
 import { getManilaHourAndMinute } from '../auditAutoAssign';
+import { getManilaClock, worksToday } from '../../utils/workSchedule';
 import { resolveEffectiveTaskMapOwnerId } from '../../utils/taskMapPermissions';
 import { invokeHandler } from './invokeHandler';
 import {
@@ -203,14 +204,21 @@ async function loadParentInfo(items: BoardItem[]): Promise<Map<string, { roles: 
 async function loadPeople(): Promise<{ users: QueueUser[]; shifts: ShiftWindow[] }> {
   const [users, shifts] = await Promise.all([
     prisma.user.findMany({
-      where: { isActive: true, autoQueueExcluded: false },
+      // No Shift Schedule = not working, so those users are skipped in the query itself
+      where: { isActive: true, autoQueueExcluded: false, shiftTime: { isNot: null } },
       select: {
         id: true, name: true, email: true, roles: true, systemRole: true, isActive: true, starRating: true, teamId: true,
+        shiftTime: { select: { schedule: true } },
       },
     }),
     prisma.auditShiftConfig.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
   ]);
-  return { users: users as QueueUser[], shifts: shifts as ShiftWindow[] };
+  // Day off per the user's Shift Schedule (e.g. M-F people on Sat/Sun) = not queued at all.
+  const clock = getManilaClock();
+  const working = users
+    .filter((u) => worksToday(u.shiftTime?.schedule, clock))
+    .map(({ shiftTime: _s, ...u }) => u);
+  return { users: working as QueueUser[], shifts: shifts as ShiftWindow[] };
 }
 
 const HISTORY_DAYS = 180;

@@ -12,6 +12,8 @@ import {
   Building2,
   Sparkles,
   Trash2,
+  Pencil,
+  Check,
 } from 'lucide-react';
 import { DayPicker, DateRange } from 'react-day-picker';
 import 'react-day-picker/style.css';
@@ -139,6 +141,217 @@ const RDP_STYLE = `
   .ldm-rdp .rdp-outside .rdp-day_button { color: #52525b; opacity: 0.4; }
 `;
 
+const TIME_PRESETS: string[] = [];
+for (let h = 0; h < 24; h++) {
+  for (const m of [0, 30]) {
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const displayH = h % 12 || 12;
+    TIME_PRESETS.push(
+      `${displayH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${ampm}`
+    );
+  }
+}
+if (!TIME_PRESETS.includes('11:59 PM')) {
+  TIME_PRESETS.push('11:59 PM');
+}
+
+const QUICK_TIME_CHIPS = [
+  { label: '9:00 AM', value: '09:00 AM' },
+  { label: '12:00 PM', value: '12:00 PM' },
+  { label: '3:00 PM', value: '03:00 PM' },
+  { label: '6:00 PM', value: '06:00 PM' },
+  { label: '9:00 PM', value: '09:00 PM' },
+  { label: '11:59 PM', value: '11:59 PM' },
+];
+
+function parseAndFormatTimeInput(val: string): string {
+  const raw = val.trim();
+  if (!raw) return '09:00 AM';
+
+  // Handle 12-hour format e.g. "9", "9am", "9:30pm", "09:00 AM"
+  const match12 = raw.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?$/i);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = match12[2] ? parseInt(match12[2], 10) : 0;
+    const ampmSpec = match12[3]?.toUpperCase();
+    const clampedM = Math.min(59, Math.max(0, m));
+
+    if (ampmSpec) {
+      if (h > 12) h = h % 12 || 12;
+      if (h === 0) h = 12;
+      return `${h.toString().padStart(2, '0')}:${clampedM.toString().padStart(2, '0')} ${ampmSpec}`;
+    }
+
+    // No AM/PM specified: check 24-hr
+    if (h >= 13 && h <= 23) {
+      return `${(h - 12).toString().padStart(2, '0')}:${clampedM.toString().padStart(2, '0')} PM`;
+    }
+    if (h === 12) {
+      return `12:${clampedM.toString().padStart(2, '0')} PM`;
+    }
+    if (h === 0) {
+      return `12:${clampedM.toString().padStart(2, '0')} AM`;
+    }
+
+    const existingAmpm = /pm/i.test(val) ? 'PM' : 'AM';
+    return `${h.toString().padStart(2, '0')}:${clampedM.toString().padStart(2, '0')} ${existingAmpm}`;
+  }
+
+  return val;
+}
+
+function toggleTimeAmPm(timeStr: string): string {
+  const trimmed = timeStr.trim();
+  if (/am/i.test(trimmed)) {
+    return trimmed.replace(/am/i, 'PM');
+  }
+  if (/pm/i.test(trimmed)) {
+    return trimmed.replace(/pm/i, 'AM');
+  }
+  return `${trimmed} PM`;
+}
+
+interface TimeInputWithPresetsProps {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  className?: string;
+}
+
+const TimeInputWithPresets: React.FC<TimeInputWithPresetsProps> = ({
+  value,
+  onChange,
+  placeholder = '09:00 AM',
+  className = '',
+}) => {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [dropdownOpen]);
+
+  useEffect(() => {
+    if (dropdownOpen && listRef.current) {
+      const activeEl = listRef.current.querySelector('[data-selected="true"]');
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [dropdownOpen]);
+
+  const currentIsPm = /pm/i.test(value);
+  const normalizedVal = formatTime12h(value);
+
+  return (
+    <div className={`relative w-full ${className}`} ref={containerRef}>
+      <div className="relative flex items-center">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => onChange(parseAndFormatTimeInput(value))}
+          placeholder={placeholder}
+          className="w-full h-8 pl-3 pr-20 rounded-lg bg-[#121217] border border-[#2e2e3d] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/30 transition-colors"
+        />
+
+        <div className="absolute right-1.5 flex items-center gap-1">
+          {/* Quick AM/PM Toggle Pill: 1 click flips between AM and PM */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onChange(toggleTimeAmPm(value));
+            }}
+            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1e1e28] hover:bg-purple-600/30 text-purple-300 border border-[#36364a] hover:border-purple-500/50 transition-colors cursor-pointer select-none"
+            title="Click to toggle AM / PM without retyping"
+          >
+            {currentIsPm ? 'PM' : 'AM'}
+          </button>
+
+          {/* Clock Icon Button (toggles preset popover) */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDropdownOpen((v) => !v);
+            }}
+            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+            title="Choose time preset"
+          >
+            <Clock className="size-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Preset Dropdown Popover */}
+      {dropdownOpen && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-[90] bg-[#161622] border border-[#2e2e42] rounded-xl shadow-2xl p-2 flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100">
+          {/* Quick Chips */}
+          <div className="flex flex-wrap gap-1 pb-1.5 border-b border-[#262638]">
+            {QUICK_TIME_CHIPS.map((chip) => (
+              <button
+                key={chip.value}
+                type="button"
+                onClick={() => {
+                  onChange(chip.value);
+                  setDropdownOpen(false);
+                }}
+                className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-colors cursor-pointer ${
+                  normalizedVal === chip.value
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'bg-[#1f1f2c] text-zinc-300 hover:bg-purple-600/20 hover:text-purple-200'
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Scrollable list of 30-min presets */}
+          <div
+            ref={listRef}
+            className="max-h-44 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 pr-0.5"
+          >
+            {TIME_PRESETS.map((t) => {
+              const isSelected = normalizedVal === t;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  data-selected={isSelected ? 'true' : 'false'}
+                  onClick={() => {
+                    onChange(t);
+                    setDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-2.5 py-1 rounded-md text-xs font-medium flex items-center justify-between transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-purple-600/25 text-purple-200 font-bold border border-purple-500/40'
+                      : 'text-zinc-300 hover:bg-[#222230] hover:text-white'
+                  }`}
+                >
+                  <span>{t}</span>
+                  {isSelected && <span className="size-1.5 rounded-full bg-purple-400" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   initialDate,
   initialTask = null,
@@ -207,6 +420,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   }, [spaces, allLists]);
 
   const [selectedTask] = useState<LaunchMapLightItem | null>(initialTask);
+  const isEditMode = Boolean(initialTask || selectedTask);
 
   // Schedule fields
   const [title, setTitle] = useState(initialTask?.title || '');
@@ -240,6 +454,37 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
   // When initialTask is passed, preset matching client
   useEffect(() => {
+    if (initialTask) {
+      setTitle(initialTask.title || '');
+      const d = getTaskEffectiveLaunchDate(initialTask);
+      if (d) setStartDate(d);
+      const rawDetails = initialTask.launchMeta?.details || initialTask.description || '';
+      const timeMatch = rawDetails.match(/Scheduled Time:\s*([^\(|]+)/i);
+      if (timeMatch?.[1]) {
+        setLaunchTime(formatTime12h(timeMatch[1].trim()));
+      } else if ((initialTask as any).startTime) {
+        setLaunchTime(formatTime12h((initialTask as any).startTime));
+      }
+      const tzMatch = rawDetails.match(/\(([^)]+)\)/);
+      if (tzMatch?.[1]) {
+        setTimezone(tzMatch[1].trim());
+      } else if ((initialTask as any).timezone) {
+        setTimezone((initialTask as any).timezone);
+      }
+      const endMatch = rawDetails.match(/End:\s*(\d{4}-\d{2}-\d{2})\s*([^\(|)]+)/i);
+      if (endMatch) {
+        setHasEndDate(true);
+        setEndDate(endMatch[1]);
+        setEndTime(formatTime12h(endMatch[2].trim()));
+      } else if ((initialTask as any).endDate) {
+        setHasEndDate(true);
+        setEndDate((initialTask as any).endDate);
+        if ((initialTask as any).endTime) {
+          setEndTime(formatTime12h((initialTask as any).endTime));
+        }
+      }
+    }
+
     if (!initialTask || selectedClientId) return;
     const clientName = initialTask.list?.name || initialTask.list?.folder?.name || '';
     const match = clients.find(
@@ -340,10 +585,12 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
   const handleDeleteExisting = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!onDeleteLaunch) return;
     setDeletingId(taskId);
     try {
-      await onDeleteLaunch(taskId);
+      await taskMapApi.deleteLaunchRecord(taskId);
+      if (onDeleteLaunch) {
+        await onDeleteLaunch(taskId);
+      }
       toast.success('Launch deleted from calendar');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete launch');
@@ -369,51 +616,57 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
     setSaving(true);
     try {
-      let taskId = selectedTask?.id;
-
-      if (!taskId) {
-        // Fallback: search candidate by title if no task was explicitly chosen
-        const q = title.trim();
-        const res = await taskMapApi.getLaunchCandidates({ q, limit: 10 });
-        const clientName = selectedClient?.name || '';
-
-        const match =
-          (res.candidates || []).find((t) => (t.list?.name || '').toLowerCase() === clientName.toLowerCase()) ||
-          res.candidates?.[0];
-
-        if (match) {
-          taskId = match.id;
-        } else {
-          const createRes = await tasksApi.createTask({
-            title: q,
-            listId: selectedClientId,
-            creatorId: currentUser?.id,
-            dueDate: startDate ? `${startDate}T23:59:59.000Z` : undefined,
-          });
-          taskId = createRes.task.id;
-        }
-      }
-
       const endMetaStr = hasEndDate && endDate ? ` | End: ${endDate} ${formatTime12h(endTime)}` : '';
-      const saveRes = await taskMapApi.updateLaunchMeta(taskId, {
-        launchDate: startDate,
-        targetPeriod: null,
-        isLaunchDate: true,
-        workstream: null,
-        details: `Scheduled Time: ${formatTime12h(launchTime)}${endMetaStr} (${timezone})`,
-        notes: hasEndDate && endDate ? `End Date: ${endDate} ${formatTime12h(endTime)}` : null,
-        syncDueDate: true,
-      });
+      const detailsStr = `Scheduled Time: ${formatTime12h(launchTime)}${endMetaStr} (${timezone})`;
+      const notesStr = hasEndDate && endDate ? `End Date: ${endDate} ${formatTime12h(endTime)}` : null;
 
-      if (saveRes.success) {
-        onSaved(taskId, {
-          launchMeta: saveRes.launchMeta,
-          effectiveLaunchDate: saveRes.effectiveLaunchDate,
-          targetPeriod: saveRes.targetPeriod ?? null,
-          dueDate: saveRes.dueDate,
+      // Case A: Editing an existing launch item
+      if (selectedTask?.id) {
+        const saveRes = await taskMapApi.updateLaunchMeta(selectedTask.id, {
+          launchDate: startDate,
+          targetPeriod: null,
+          isLaunchDate: true,
+          workstream: null,
+          details: detailsStr,
+          notes: notesStr,
+          syncDueDate: true,
         });
-        toast.success('Launch scheduled successfully!');
-        onClose();
+
+        if (saveRes.success) {
+          onSaved(selectedTask.id, {
+            launchMeta: saveRes.launchMeta,
+            effectiveLaunchDate: saveRes.effectiveLaunchDate,
+            targetPeriod: saveRes.targetPeriod ?? null,
+            dueDate: saveRes.dueDate,
+          });
+          toast.success('Launch updated successfully!');
+          onClose();
+        }
+      } else {
+        // Case B: Creating a pure LaunchRecord in dedicated LaunchRecord table (NO task created in Nexus!)
+        const createRes = await taskMapApi.createLaunchRecord({
+          title: title.trim(),
+          listId: selectedClientId,
+          startDate,
+          startTime: launchTime,
+          endDate: hasEndDate && endDate ? endDate : null,
+          endTime: hasEndDate && endTime ? endTime : null,
+          timezone,
+          isMilestone: true,
+          details: detailsStr,
+          notes: notesStr,
+        });
+
+        if (createRes.success) {
+          onSaved(createRes.item.id, {
+            launchMeta: createRes.launchMeta,
+            effectiveLaunchDate: createRes.effectiveLaunchDate,
+            targetPeriod: createRes.targetPeriod ?? null,
+            dueDate: createRes.dueDate,
+          });
+          toast.success('Launch saved directly to LaunchRecord table!');
+          onClose();
+        }
       }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to schedule launch');
@@ -438,11 +691,15 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
         <div className="flex items-center justify-between pb-2 border-b border-[#22222a]">
           <div className="flex items-center gap-2.5">
             <div className="size-8 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center shrink-0">
-              <Rocket className="size-4 text-purple-400" />
+              {isEditMode ? (
+                <Pencil className="size-4 text-purple-400" />
+              ) : (
+                <Rocket className="size-4 text-purple-400" />
+              )}
             </div>
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
-                Schedule Deliverable on Launch Map
+                {isEditMode ? 'Edit Launch' : 'Schedule Deliverable on Launch Map'}
               </h3>
             </div>
           </div>
@@ -709,22 +966,17 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               )}
             </div>
 
-            {/* Launch Starting Time (Free text input) */}
+            {/* Launch Starting Time with Quick Presets & Manual Typing */}
             <div className="flex flex-col gap-1">
               <label className="flex items-center gap-1.5 text-[10.5px] font-semibold text-zinc-400">
                 <Clock className="size-3 text-purple-400" />
                 <span>Launch Starting Time</span>
               </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={launchTime}
-                  onChange={(e) => setLaunchTime(e.target.value)}
-                  placeholder="e.g. 09:00 PM"
-                  className="w-full h-8 px-3 pr-8 rounded-lg bg-[#121217] border border-[#2e2e3d] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/30 transition-colors"
-                />
-                <Clock className="absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
-              </div>
+              <TimeInputWithPresets
+                value={launchTime}
+                onChange={setLaunchTime}
+                placeholder="09:00 AM"
+              />
             </div>
 
             {/* Optional End Date Checkbox */}
@@ -785,22 +1037,17 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                     )}
                   </div>
 
-                  {/* End Time Row (Free text input) */}
+                  {/* End Time Row with Quick Presets & Manual Typing */}
                   <div className="flex flex-col gap-1 p-2 rounded-lg bg-[#121217] border border-[#2a2a38]">
                     <label className="text-[10px] font-semibold text-zinc-400 flex items-center gap-1.5">
                       <Clock className="size-3 text-purple-400" />
                       <span>End Time</span>
                     </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                        placeholder="e.g. 11:59 PM"
-                        className="w-full h-7 px-2.5 pr-7 rounded-lg bg-[#18181f] border border-[#333344] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
-                      />
-                      <Clock className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
-                    </div>
+                    <TimeInputWithPresets
+                      value={endTime}
+                      onChange={setEndTime}
+                      placeholder="11:59 PM"
+                    />
                   </div>
                 </div>
               )}
@@ -845,8 +1092,14 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
               disabled={saving}
               className="flex-[2] py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-              <span>Add Launch</span>
+              {saving ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : isEditMode ? (
+                <Check className="size-3.5" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+              <span>{isEditMode ? 'Save' : 'Add Launch'}</span>
             </button>
           </div>
       </form>

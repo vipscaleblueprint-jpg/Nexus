@@ -385,6 +385,11 @@ export const LaunchMapContainer: React.FC = () => {
               : t
           )
           .filter((t) => {
+            if ((t as any).isDedicatedLaunchRecord) {
+              return Boolean(
+                t.effectiveLaunchDate || t.targetPeriod || t.launchMeta?.launchDate || t.launchMeta?.targetPeriod
+              );
+            }
             const hasMarker =
               Boolean(t.launchMeta?.isLaunchDate) ||
               /\blaunch\s*date\b/i.test(t.status || '') ||

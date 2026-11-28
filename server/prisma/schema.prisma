@@ -91,6 +91,8 @@ model User {
   subtasksAssignedMulti Subtask[]             @relation("SubtaskMultiAssignees")
   assignedTasksMulti    Task[]                @relation("TaskMultiAssignees")
   pageVersions          PageVersion[]
+  createdLaunches       LaunchRecord[]        @relation("LaunchRecordCreator")
+  assignedLaunches      LaunchRecord[]        @relation("LaunchRecordAssignees")
 
   @@index([email])
   @@index([systemRole])
@@ -151,6 +153,7 @@ model List {
   space        Space?       @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   statuses     ListStatus[]
   tasks        Task[]
+  launchRecords LaunchRecord[]
 
   @@index([spaceId])
   @@index([folderId])
@@ -276,6 +279,7 @@ model Task {
   notifications            TaskNotification[]
   assignees                User[]             @relation("TaskMultiAssignees")
   taskMapRecord            TaskMapRecord?
+  launchRecords            LaunchRecord[]
 
   /// Board load: tasks of one list ordered by createdAt (also serves listId-only lookups)
   @@index([listId, createdAt])
@@ -815,4 +819,37 @@ model SuperviseCheck {
 
   @@index([dateKey])
   @@index([reappearAt])
+}
+
+model LaunchRecord {
+  id           String    @id @default(uuid())
+  title        String
+  listId       String
+  list         List      @relation(fields: [listId], references: [id], onDelete: Cascade)
+  startDate    DateTime
+  startTime    String?
+  endDate      DateTime?
+  endTime      String?
+  timezone     String    @default("Asia/Manila")
+  targetPeriod String?
+  isMilestone  Boolean   @default(true)
+  workstream   String?
+  details      String?   @db.Text
+  notes        String?   @db.Text
+  status       String    @default("SCHEDULED")
+  priority     Priority  @default(MEDIUM)
+  creatorId    String?
+  creator      User?     @relation("LaunchRecordCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  assignees    User[]    @relation("LaunchRecordAssignees")
+  taskId       String?
+  task         Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([startDate])
+  @@index([listId])
+  @@index([status])
+  @@index([targetPeriod])
+  @@index([creatorId])
+  @@index([taskId])
 }

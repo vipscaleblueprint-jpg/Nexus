@@ -319,8 +319,9 @@ export async function invalidateCache(...keys: string[]) {
   keys.forEach(bumpFamilyGeneration);
   keys.forEach((key) => {
     inMemoryCacheStore.delete(key);
+    const prefix = key.replace(/:all$/, '').replace(/\*$/, '');
     for (const memKey of inMemoryCacheStore.keys()) {
-      if (memKey.startsWith(key.replace(/:all$/, ''))) {
+      if (memKey.startsWith(prefix)) {
         inMemoryCacheStore.delete(memKey);
       }
     }

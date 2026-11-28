@@ -19,6 +19,8 @@ import {
   updateTaskMeta,
   getLaunchMapData,
   getLaunchCandidates,
+  createLaunchRecordHandler,
+  deleteLaunchRecordHandler,
   updateTaskLaunchMeta,
   getTaskTimeline,
   getUpworkClientsHandler,
@@ -59,6 +61,8 @@ taskMapRouter.use(authenticateToken);
 taskMapRouter.get('/data', getTaskMapData);
 taskMapRouter.get('/admin-tasks', getAdminTasks);
 taskMapRouter.get('/launch', getLaunchMapData);
+taskMapRouter.post('/launch', createLaunchRecordHandler);
+taskMapRouter.delete('/launch/:id', deleteLaunchRecordHandler);
 taskMapRouter.get('/launch/candidates', getLaunchCandidates);
 taskMapRouter.get('/options', getOptions);
 taskMapRouter.post('/options', upsertOption);

@@ -1253,6 +1253,44 @@ export const taskMapApi = {
     return apiClient(`/api/task-map/client-lock-status?client=${encodeURIComponent(client)}&_t=${Date.now()}`);
   },
 
+  createLaunchRecord: async (payload: {
+    title: string;
+    listId: string;
+    startDate: string;
+    startTime?: string | null;
+    endDate?: string | null;
+    endTime?: string | null;
+    timezone?: string;
+    targetPeriod?: string | null;
+    isMilestone?: boolean;
+    workstream?: string | null;
+    details?: string | null;
+    notes?: string | null;
+    status?: string;
+    priority?: string;
+    assigneeIds?: string[];
+    taskId?: string | null;
+  }): Promise<{
+    success: boolean;
+    launch: any;
+    item: LaunchMapLightItem;
+    launchMeta: LaunchMeta;
+    effectiveLaunchDate: string | null;
+    targetPeriod?: string | null;
+    dueDate: string | null;
+  }> => {
+    return apiClient('/api/task-map/launch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteLaunchRecord: async (id: string): Promise<{ success: boolean; message?: string }> => {
+    return apiClient(`/api/task-map/launch/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
   updateLaunchMeta: async (
     taskId: string,
     payload: {

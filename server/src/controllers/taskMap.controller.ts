@@ -21,6 +21,9 @@ import {
   hasLaunchDateMarker,
   upsertTaskLaunchMeta,
   triggerLaunchReviewAlertIfNeeded,
+  createLaunchRecord,
+  updateLaunchRecord,
+  formatLaunchRecordToItem,
 } from '../services/launchMapService';
 import {
   isWaitingMainStatus,
@@ -4572,7 +4575,7 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
       return res.json(cached);
     }
 
-    const [rawTasks, clientDashboardLists] = await Promise.all([
+    const [rawTasks, launchRecords, clientDashboardLists] = await Promise.all([
       prisma.task.findMany({
         where: {
           status: { notIn: ['KYC', 'PIN BOARD', 'PINBOARD'] },
@@ -4609,6 +4612,25 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
         },
         orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }],
       }),
+      prisma.launchRecord.findMany({
+        include: {
+          list: {
+            select: {
+              id: true,
+              name: true,
+              folder: { select: { name: true } },
+              statuses: {
+                select: { name: true, color: true, groupName: true, order: true },
+                orderBy: { order: 'asc' },
+              },
+            },
+          },
+          assignees: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+          creator: { select: { id: true, name: true } },
+          task: { select: { id: true, title: true, status: true, priority: true } },
+        },
+        orderBy: [{ startDate: 'asc' }, { updatedAt: 'desc' }],
+      }),
       fetchClientDashboardLists().catch((err) => {
         logger.warn({ err }, 'Failed to query client dashboard folders for Launch Map');
         return [] as Array<{ id: string; name: string }>;
@@ -4628,8 +4650,40 @@ export const getLaunchMapData = async (req: Request, res: Response) => {
     let totalInReview = 0;
     let totalMilestones = 0;
     let totalTbd = 0;
+    const linkedTaskIds = new Set<string>();
 
+    // 1. Process dedicated LaunchRecord entries
+    for (const lr of launchRecords) {
+      if (lr.taskId) linkedTaskIds.add(lr.taskId);
+
+      const formatted = formatLaunchRecordToItem(lr);
+      const effectiveLaunchDate = formatted.effectiveLaunchDate;
+      const targetPeriod = formatted.targetPeriod;
+
+      const closed = formatted.isClosed;
+      const inReview = !closed && isReviewStatus(lr.status);
+
+      totalScheduled++;
+      if (inReview) totalInReview++;
+      if (lr.isMilestone) totalMilestones++;
+      if (!effectiveLaunchDate && targetPeriod) totalTbd++;
+
+      if (lr.list?.id && lr.list?.name) {
+        const cur = clientMap.get(lr.list.id);
+        if (cur) cur.count++;
+        else clientMap.set(lr.list.id, { id: lr.list.id, name: lr.list.name, count: 1 });
+      }
+
+      if (effectiveLaunchDate && start && end && (effectiveLaunchDate < start || effectiveLaunchDate > end)) {
+        continue;
+      }
+
+      items.push(formatted);
+    }
+
+    // 2. Process legacy Task entries (skip if already represented by a LaunchRecord)
     for (const t of rawTasks) {
+      if (linkedTaskIds.has(t.id)) continue;
       const taskMapStatuses = Array.isArray(t.taskMapRecord?.statuses) ? t.taskMapRecord!.statuses : [];
       const { launchMeta, effectiveLaunchDate, targetPeriod, isLaunchDate } = extractLaunchMeta(
         t.taskMapRecord?.pmReviews,
@@ -4851,6 +4905,48 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
     const { launchDate, targetPeriod, isLaunchDate, workstream, details, notes, syncDueDate } = req.body || {};
     const user = (req as any).user;
 
+    // Check if :id is an existing LaunchRecord
+    const existingLaunchRecord = await prisma.launchRecord.findUnique({ where: { id } });
+    if (existingLaunchRecord) {
+      if (isLaunchDate === false && (launchDate === null || launchDate === undefined) && !targetPeriod) {
+        await prisma.launchRecord.delete({ where: { id } });
+        await invalidateCache('task_map:*', 'launch_map:all', 'launch_map:*').catch(() => {});
+        io.emit('launch_map:deleted', { id });
+        io.emit('task_map:updated', { taskId: id, deleted: true });
+        return res.json({ success: true, deleted: true });
+      }
+
+      const updated = await updateLaunchRecord(
+        id,
+        {
+          startDate: launchDate ? new Date(`${launchDate}T12:00:00+08:00`) : undefined,
+          targetPeriod,
+          isMilestone: isLaunchDate !== undefined ? Boolean(isLaunchDate) : undefined,
+          workstream,
+          details,
+          notes,
+        },
+        user?.id || null
+      );
+
+      if (!updated) {
+        return res.status(404).json({ error: 'Launch record not found' });
+      }
+
+      const formatted = formatLaunchRecordToItem(updated);
+      io.emit('task_map:updated', { taskId: id, ...formatted });
+      io.emit('launch_map:updated', { ...formatted });
+
+      return res.json({
+        success: true,
+        launchMeta: formatted.launchMeta,
+        effectiveLaunchDate: formatted.effectiveLaunchDate,
+        targetPeriod: formatted.targetPeriod,
+        dueDate: formatted.dueDate,
+        alertSent: false,
+      });
+    }
+
     const target = parseTaskMapTargetId(id);
     if (target.isSubtask) {
       return res.status(400).json({ error: 'Launch Map schedules apply to main tasks' });
@@ -4894,6 +4990,117 @@ export const updateTaskLaunchMeta = async (req: Request, res: Response) => {
     res.status(error?.message === 'Task not found' ? 404 : 400).json({
       error: error?.message || 'Failed to update launch metadata',
     });
+  }
+};
+
+/**
+ * Create a new LaunchRecord directly in the dedicated LaunchRecord table
+ */
+export const createLaunchRecordHandler = async (req: Request, res: Response) => {
+  try {
+    const {
+      title,
+      listId,
+      startDate,
+      startTime,
+      endDate,
+      endTime,
+      timezone,
+      targetPeriod,
+      isMilestone,
+      workstream,
+      details,
+      notes,
+      status,
+      priority,
+      assigneeIds,
+      taskId,
+    } = req.body || {};
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ error: 'Title is required' });
+    }
+    if (!listId) {
+      return res.status(400).json({ error: 'Client listId is required' });
+    }
+
+    const user = (req as any).user;
+    const cleanStartDate = startDate
+      ? new Date(`${String(startDate).slice(0, 10)}T12:00:00+08:00`)
+      : new Date();
+
+    const cleanEndDate = endDate
+      ? new Date(`${String(endDate).slice(0, 10)}T12:00:00+08:00`)
+      : null;
+
+    const record = await createLaunchRecord(
+      {
+        title: title.trim(),
+        listId,
+        startDate: cleanStartDate,
+        startTime: startTime || null,
+        endDate: cleanEndDate,
+        endTime: endTime || null,
+        timezone: timezone || 'Asia/Manila',
+        targetPeriod: targetPeriod || null,
+        isMilestone: isMilestone !== undefined ? Boolean(isMilestone) : true,
+        workstream: workstream || null,
+        details: details || null,
+        notes: notes || null,
+        status: status || 'SCHEDULED',
+        priority: priority || 'MEDIUM',
+        assigneeIds: Array.isArray(assigneeIds) ? assigneeIds : [],
+        taskId: taskId || null,
+      },
+      user?.id || null
+    );
+
+    const formatted = formatLaunchRecordToItem(record);
+
+    io.emit('launch_map:created', formatted);
+    io.emit('task_map:updated', { taskId: record.id, ...formatted });
+
+    res.status(201).json({
+      success: true,
+      launch: record,
+      item: formatted,
+      launchMeta: formatted.launchMeta,
+      effectiveLaunchDate: formatted.effectiveLaunchDate,
+      targetPeriod: formatted.targetPeriod,
+      dueDate: formatted.dueDate,
+    });
+  } catch (error: any) {
+    logger.error({ error }, 'Error creating launch record');
+    res.status(500).json({ error: error?.message || 'Failed to create launch record' });
+  }
+};
+
+/**
+ * Delete a LaunchRecord directly
+ */
+export const deleteLaunchRecordHandler = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.launchRecord.findUnique({ where: { id } });
+    if (!existing) {
+      // Fallback: check if it's a task with launch meta
+      const existingTask = await prisma.task.findUnique({ where: { id } });
+      if (existingTask) {
+        await upsertTaskLaunchMeta(id, { launchDate: null, targetPeriod: null, isLaunchDate: false }, (req as any).user?.id);
+        return res.json({ success: true, message: 'Task unscheduled from Launch Map' });
+      }
+      return res.status(404).json({ error: 'Launch record not found' });
+    }
+
+    await prisma.launchRecord.delete({ where: { id } });
+    await invalidateCache('task_map:*', 'launch_map:all', 'launch_map:*').catch(() => {});
+    io.emit('launch_map:deleted', { id });
+    io.emit('task_map:updated', { taskId: id, deleted: true });
+
+    res.json({ success: true, message: 'Launch record deleted successfully' });
+  } catch (error: any) {
+    logger.error({ error }, 'Error deleting launch record');
+    res.status(500).json({ error: 'Failed to delete launch record' });
   }
 };
 

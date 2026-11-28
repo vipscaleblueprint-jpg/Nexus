@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
@@ -223,20 +224,46 @@ function formatRelativeDayTag(dateKey: string, todayKey: string): string | null 
   }
 }
 
+export type LaunchTimingState = 'PASSED' | 'TODAY' | 'UPCOMING' | 'FAR';
+
+export function getLaunchTiming(
+  dateKey: string | null | undefined,
+  todayKey: string,
+  isClosed: boolean
+): LaunchTimingState {
+  if (isClosed) return 'PASSED';
+  if (!dateKey) return 'FAR';
+  if (dateKey < todayKey) return 'PASSED';
+  if (dateKey === todayKey) return 'TODAY';
+
+  try {
+    const target = new Date(`${dateKey}T12:00:00+08:00`);
+    const today = new Date(`${todayKey}T12:00:00+08:00`);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+    if (diffDays <= 7) return 'UPCOMING';
+    return 'FAR';
+  } catch {
+    return 'FAR';
+  }
+}
+
 interface MonthCellProps {
   dateKey: string;
   dayNum: number;
   inCurrentMonth: boolean;
   isWeekend: boolean;
   isToday: boolean;
+  todayKey: string;
   entries: EnrichedLaunchEntry[];
   heatOpacity: number;
+  isPopoutOpen: boolean;
   onSelectDay: (dateKey: string) => void;
   onQuickSchedule: (dateKey: string) => void;
-  onOpenDetail: (task: LaunchMapLightItem) => void;
-  onEditLaunch: (task: LaunchMapLightItem) => void;
-  onDeleteLaunch: (taskId: string) => void;
+  onEditLaunch: (task: LaunchMapLightItem, dateKey: string) => void;
+  onRequestMenu: (task: LaunchMapLightItem, dateKey: string, anchorRect: DOMRect) => void;
   onMoveLaunch: (taskId: string, targetDateKey: string) => void;
+  onOpenPopout: (dateKey: string, anchorRect: DOMRect) => void;
+  onClosePopout: () => void;
 }
 
 const MonthDayCell = React.memo<MonthCellProps>(
@@ -246,27 +273,22 @@ const MonthDayCell = React.memo<MonthCellProps>(
     inCurrentMonth,
     isWeekend,
     isToday,
+    todayKey,
     entries,
     heatOpacity,
+    isPopoutOpen,
     onSelectDay,
     onQuickSchedule,
-    onOpenDetail,
     onEditLaunch,
-    onDeleteLaunch,
+    onRequestMenu,
     onMoveLaunch,
+    onOpenPopout,
+    onClosePopout,
   }) => {
-    const [expandedClients, setExpandedClients] = React.useState(false);
+    const cellRef = React.useRef<HTMLDivElement | null>(null);
     const [isDragOver, setIsDragOver] = React.useState(false);
-    const [openMenuTaskId, setOpenMenuTaskId] = React.useState<string | null>(null);
 
-    React.useEffect(() => {
-      if (!openMenuTaskId) return;
-      const handleClose = () => setOpenMenuTaskId(null);
-      window.addEventListener('click', handleClose);
-      return () => window.removeEventListener('click', handleClose);
-    }, [openMenuTaskId]);
-
-    // Group entries by client for the expandable list
+    // Group entries by client for summary view
     const byClient = React.useMemo(() => {
       const map = new Map<string, EnrichedLaunchEntry[]>();
       for (const e of entries) {
@@ -278,9 +300,6 @@ const MonthDayCell = React.memo<MonthCellProps>(
     }, [entries]);
 
     const multiClient = byClient.size >= 2;
-    // Show inline pills only when there's 1 client or expanded
-    const visiblePills = multiClient && !expandedClients ? [] : entries.slice(0, 4);
-    const overflowCount = multiClient && !expandedClients ? 0 : Math.max(0, entries.length - 4);
     const hasInReview = entries.some((e) => e.isInReview);
 
     const cellVariantClass = isToday
@@ -291,8 +310,99 @@ const MonthDayCell = React.memo<MonthCellProps>(
       ? 'launch-cell-weekend'
       : 'launch-cell-weekday';
 
+    const renderPill = (entry: EnrichedLaunchEntry) => {
+      const timing = getLaunchTiming(entry.dateKey || dateKey, todayKey, entry.isClosed);
+
+      let pillClasses = 'launch-pill-default text-[var(--text)] border border-[var(--border)]';
+      let icon = (
+        <span
+          className="size-2 rounded-full shrink-0"
+          style={{ backgroundColor: entry.statusColor }}
+        />
+      );
+
+      if (entry.isInReview) {
+        pillClasses =
+          'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500';
+        icon = <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />;
+      } else if (entry.isUrgent) {
+        pillClasses =
+          'border-l-2 border-red-400 bg-red-500/20 text-red-100 hover:bg-red-500/30 [.theme-light_&]:bg-red-50 [.theme-light_&]:text-red-950 [.theme-light_&]:border-red-500';
+        icon = <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />;
+      } else if (timing === 'PASSED') {
+        // Date passed: Done styling in emerald green
+        pillClasses =
+          'border-l-2 border-emerald-400 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:text-emerald-950 [.theme-light_&]:border-emerald-600';
+        icon = <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />;
+      } else if (timing === 'TODAY') {
+        // Today's launch: active purple pulse
+        pillClasses =
+          'border-l-2 border-purple-400 bg-purple-500/25 text-purple-100 hover:bg-purple-500/35 ring-1 ring-purple-500/40 [.theme-light_&]:bg-purple-50 [.theme-light_&]:text-purple-950 [.theme-light_&]:border-purple-600';
+        icon = <Rocket className="size-3 shrink-0 text-purple-300 animate-pulse" />;
+      } else if (timing === 'UPCOMING') {
+        // Upcoming in next 7 days: rose milestone
+        pillClasses =
+          'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500';
+        icon = <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />;
+      } else {
+        // Farther away (> 7 days, later months, or TBD): sky blue
+        pillClasses =
+          'border-l-2 border-sky-400 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25 [.theme-light_&]:bg-sky-50 [.theme-light_&]:text-sky-950 [.theme-light_&]:border-sky-500';
+        icon = <CalendarClock className="size-3 shrink-0 text-sky-400 [.theme-light_&]:text-sky-600" />;
+      }
+
+      return (
+        <div
+          key={entry.task.id}
+          draggable={true}
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('text/plain', entry.task.id);
+            e.dataTransfer.effectAllowed = 'move';
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEditLaunch(entry.task, dateKey);
+          }}
+          className={`group/pill relative w-full text-left flex items-center justify-between gap-1.5 px-2 py-1 rounded-md text-[11px] leading-tight transition-colors cursor-pointer ${pillClasses}`}
+          title={`${entry.task.title} (${entry.clientName}) - ${
+            timing === 'PASSED'
+              ? 'Passed / Done'
+              : timing === 'TODAY'
+              ? 'Today'
+              : timing === 'UPCOMING'
+              ? 'Upcoming in next 7 days'
+              : 'Farther away launch'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            {icon}
+            <span className="truncate font-medium">{entry.task.title}</span>
+            <span className="shrink-0 text-[9.5px] opacity-75 max-w-[65px] truncate">
+              {entry.clientName}
+            </span>
+          </div>
+
+          {/* ... Action Menu Button (opens Portal dropdown for Delete) */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              onRequestMenu(entry.task, dateKey, rect);
+            }}
+            className="opacity-0 group-hover/pill:opacity-100 p-0.5 rounded hover:bg-black/30 text-current transition-opacity cursor-pointer shrink-0"
+            title="Launch options"
+          >
+            <MoreHorizontal className="size-3.5" />
+          </button>
+        </div>
+      );
+    };
+
     return (
       <div
+        ref={cellRef}
         onClick={() => onSelectDay(dateKey)}
         onDragOver={(e) => {
           e.preventDefault();
@@ -314,7 +424,9 @@ const MonthDayCell = React.memo<MonthCellProps>(
         }}
         className={`launch-map-cell ${cellVariantClass} ${
           isDragOver ? 'ring-2 ring-purple-500 bg-purple-500/20' : ''
-        } group relative flex flex-col p-2 border-r border-b border-[var(--border)] min-h-[140px] sm:min-h-[155px] transition-colors cursor-pointer`}
+        } ${
+          isPopoutOpen ? 'ring-2 ring-purple-500/70 border-purple-500/60' : ''
+        } group relative flex flex-col p-2 border-r border-b border-[var(--border)] min-h-[140px] sm:min-h-[155px] transition-colors cursor-pointer overflow-hidden`}
         style={
           heatOpacity > 0 && !isDragOver
             ? {
@@ -324,7 +436,7 @@ const MonthDayCell = React.memo<MonthCellProps>(
             : undefined
         }
       >
-        <div className="flex items-center justify-between gap-1 mb-1 px-0.5">
+        <div className="flex items-center justify-between gap-1 mb-1 px-0.5 shrink-0">
           <div className="flex items-center gap-1.5">
             <span
               className={`text-[11px] font-semibold leading-none ${
@@ -359,246 +471,66 @@ const MonthDayCell = React.memo<MonthCellProps>(
         </div>
 
         <div className="flex flex-col gap-1 min-w-0 flex-1 overflow-hidden">
-          {/* Multi-client expandable summary */}
-          {multiClient && !expandedClients && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setExpandedClients(true); }}
-              className="w-full text-left flex flex-col gap-0.5 px-2 py-1.5 rounded bg-[var(--accent)]/10 border border-[var(--accent)]/25 hover:bg-[var(--accent)]/18 transition-colors cursor-pointer"
-              title="Click to expand launches for this day"
-            >
-              <div className="flex items-center justify-between gap-1">
-                <span className="text-[10.5px] font-bold text-[var(--accent)]">
-                  {entries.length} Launches ({byClient.size} Clients)
-                </span>
-                <ChevronDown className="size-3 text-[var(--accent)]" />
-              </div>
-              <div className="flex flex-wrap gap-1 mt-0.5">
-                {Array.from(byClient.entries()).map(([client, items]) => (
-                  <span
-                    key={client}
-                    className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] truncate max-w-[85px]"
-                    title={`${client}: ${items.length} launch${items.length > 1 ? 'es' : ''}`}
-                  >
-                    {client} ({items.length})
-                  </span>
-                ))}
-              </div>
-            </button>
-          )}
-
-          {/* Expanded multi-client view */}
-          {multiClient && expandedClients && (
-            <>
+          {/* Multi-launch summary pill: opens outward-expanding popover instead of cramped in-cell scroll */}
+          {entries.length > 2 || multiClient ? (
+            <div className="flex flex-col gap-1 min-w-0 flex-1">
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); setExpandedClients(false); }}
-                className="w-full text-left flex items-center justify-between px-1.5 py-0.5 rounded hover:bg-[var(--hover-subtle)] transition-colors cursor-pointer"
-              >
-                <span className="text-[9.5px] font-semibold text-[var(--accent)] uppercase tracking-wider">
-                  {entries.length} launches ▲ Collapse
-                </span>
-              </button>
-              {entries.map((entry) => {
-                const assigneeNames = entry.assignees.map((a) => a.name).join(', ');
-                return (
-                  <div
-                    key={entry.task.id}
-                    draggable={true}
-                    onDragStart={(e) => {
-                      e.stopPropagation();
-                      e.dataTransfer.setData('text/plain', entry.task.id);
-                      e.dataTransfer.effectAllowed = 'move';
-                    }}
-                    onClick={(e) => { e.stopPropagation(); onOpenDetail(entry.task); }}
-                    className={`group/pill relative w-full text-left flex items-center justify-between gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-grab active:cursor-grabbing truncate ${
-                      entry.isInReview
-                        ? 'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500'
-                        : entry.isMilestone
-                        ? 'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500'
-                        : entry.isClosed
-                        ? 'launch-pill-closed text-[var(--muted)]'
-                        : 'launch-pill-default text-[var(--text)] border border-[var(--border)]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                      {entry.isInReview ? (
-                        <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
-                      ) : entry.isUrgent ? (
-                        <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />
-                      ) : entry.isMilestone ? (
-                        <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
-                      ) : entry.isClosed ? (
-                        <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
-                      ) : (
-                        <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: entry.statusColor }} />
-                      )}
-                      <span className="truncate font-medium">{entry.task.title}</span>
-                      <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
-                        {entry.clientName}
-                      </span>
-                    </div>
-
-                    {/* Hover ... Menu Button */}
-                    <div className="relative shrink-0">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuTaskId((prev) => (prev === entry.task.id ? null : entry.task.id));
-                        }}
-                        className="opacity-0 group-hover/pill:opacity-100 p-0.5 rounded hover:bg-zinc-700/60 text-[var(--muted)] hover:text-zinc-100 transition-opacity cursor-pointer shrink-0"
-                        title="Launch actions"
-                      >
-                        <MoreHorizontal className="size-3.5" />
-                      </button>
-
-                      {openMenuTaskId === entry.task.id && (
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          className="absolute right-0 top-full mt-1 z-40 min-w-[125px] bg-[#1a1a24] border border-[#2e2e3f] rounded-lg shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200"
-                        >
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenMenuTaskId(null);
-                              onEditLaunch(entry.task);
-                            }}
-                            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-[#272738] text-zinc-200 hover:text-white cursor-pointer"
-                          >
-                            <Pencil className="size-3 text-purple-400" />
-                            <span>Edit Launch</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenMenuTaskId(null);
-                              onDeleteLaunch(entry.task.id);
-                            }}
-                            className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 cursor-pointer"
-                          >
-                            <Trash2 className="size-3 text-red-400" />
-                            <span>Delete Launch</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </>
-          )}
-
-          {/* Normal single-client pills */}
-          {!multiClient && visiblePills.map((entry) => {
-            const assigneeNames = entry.assignees.map((a) => a.name).join(', ');
-            return (
-              <div
-                key={entry.task.id}
-                draggable={true}
-                onDragStart={(e) => {
-                  e.stopPropagation();
-                  e.dataTransfer.setData('text/plain', entry.task.id);
-                  e.dataTransfer.effectAllowed = 'move';
-                }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onOpenDetail(entry.task);
+                  if (isPopoutOpen) {
+                    onClosePopout();
+                  } else {
+                    const rect =
+                      cellRef.current?.getBoundingClientRect() ||
+                      e.currentTarget.getBoundingClientRect();
+                    onOpenPopout(dateKey, rect);
+                  }
                 }}
-                className={`group/pill relative w-full text-left flex items-center justify-between gap-1.5 px-1.5 py-1 rounded text-[11px] leading-tight transition-colors cursor-grab active:cursor-grabbing truncate ${
-                  entry.isInReview
-                    ? 'border-l-2 border-orange-400 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30 [.theme-light_&]:bg-orange-50 [.theme-light_&]:text-orange-950 [.theme-light_&]:hover:bg-orange-100 [.theme-light_&]:border-orange-500'
-                    : entry.isMilestone
-                    ? 'border-l-2 border-rose-400 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30 [.theme-light_&]:bg-rose-50 [.theme-light_&]:text-rose-950 [.theme-light_&]:hover:bg-rose-100 [.theme-light_&]:border-rose-500'
-                    : entry.isClosed
-                    ? 'launch-pill-closed text-[var(--muted)]'
-                    : 'launch-pill-default text-[var(--text)] border border-[var(--border)]'
+                className={`w-full text-left flex items-center justify-between px-2 py-1 rounded transition-all cursor-pointer shrink-0 ${
+                  isPopoutOpen
+                    ? 'bg-purple-600/30 border border-purple-500/50 text-white shadow-xs'
+                    : 'bg-purple-500/15 border border-purple-500/30 hover:bg-purple-500/25 text-purple-300 hover:text-white'
                 }`}
+                title={isPopoutOpen ? 'Click to collapse launches' : 'Click to expand all launches outward'}
               >
-                <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  {entry.isInReview ? (
-                    <AlertTriangle className="size-3 shrink-0 text-orange-400 [.theme-light_&]:text-orange-600" />
-                  ) : entry.isUrgent ? (
-                    <Flag className="size-3 shrink-0 text-red-400 [.theme-light_&]:text-red-600" />
-                  ) : entry.isMilestone ? (
-                    <Rocket className="size-3 shrink-0 text-rose-400 [.theme-light_&]:text-rose-600" />
-                  ) : entry.isClosed ? (
-                    <CheckCircle2 className="size-3 shrink-0 text-emerald-400 [.theme-light_&]:text-emerald-600" />
-                  ) : (
-                    <span
-                      className="size-2 rounded-full shrink-0"
-                      style={{ backgroundColor: entry.statusColor }}
-                    />
-                  )}
-                  <span className="truncate font-medium">{entry.task.title}</span>
-                  <span className="shrink-0 text-[9.5px] text-[var(--muted)] max-w-[60px] truncate">
-                    {entry.clientName}
-                  </span>
-                </div>
+                <span className="text-[9.5px] font-bold uppercase tracking-wider">
+                  {entries.length} LAUNCHES
+                </span>
+                <span className="text-[9.5px] font-semibold flex items-center gap-0.5">
+                  {isPopoutOpen ? '▲ Collapse' : '▼ Expand'}
+                </span>
+              </button>
 
-                {/* Hover ... Menu Button */}
-                <div className="relative shrink-0">
+              {/* Show top 2 pills directly in cell for quick glance */}
+              <div className="flex flex-col gap-1 overflow-hidden">
+                {entries.slice(0, 2).map(renderPill)}
+                {entries.length > 2 && (
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setOpenMenuTaskId((prev) => (prev === entry.task.id ? null : entry.task.id));
+                      if (isPopoutOpen) {
+                        onClosePopout();
+                      } else {
+                        const rect =
+                          cellRef.current?.getBoundingClientRect() ||
+                          e.currentTarget.getBoundingClientRect();
+                        onOpenPopout(dateKey, rect);
+                      }
                     }}
-                    className="opacity-0 group-hover/pill:opacity-100 p-0.5 rounded hover:bg-zinc-700/60 text-[var(--muted)] hover:text-zinc-100 transition-opacity cursor-pointer shrink-0"
-                    title="Launch actions"
+                    className="text-left text-[9.5px] font-medium text-purple-400/90 hover:text-purple-300 pl-1 py-0.5 cursor-pointer transition-colors truncate"
                   >
-                    <MoreHorizontal className="size-3.5" />
+                    +{entries.length - 2} more launches...
                   </button>
-
-                  {openMenuTaskId === entry.task.id && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute right-0 top-full mt-1 z-40 min-w-[125px] bg-[#1a1a24] border border-[#2e2e3f] rounded-lg shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200"
-                    >
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuTaskId(null);
-                          onEditLaunch(entry.task);
-                        }}
-                        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-[#272738] text-zinc-200 hover:text-white cursor-pointer"
-                      >
-                        <Pencil className="size-3 text-purple-400" />
-                        <span>Edit Launch</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuTaskId(null);
-                          onDeleteLaunch(entry.task.id);
-                        }}
-                        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 cursor-pointer"
-                      >
-                        <Trash2 className="size-3 text-red-400" />
-                        <span>Delete Launch</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
-            );
-          })}
-
-          {overflowCount > 0 && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectDay(dateKey);
-              }}
-              className="text-left px-1.5 py-0.5 text-[10.5px] font-semibold text-[var(--accent)] hover:underline cursor-pointer"
-            >
-              +{overflowCount} more
-            </button>
+            </div>
+          ) : (
+            /* 1 or 2 launches fit comfortably directly inside cell */
+            <div className="flex flex-col gap-1 overflow-hidden">
+              {entries.map(renderPill)}
+            </div>
           )}
         </div>
       </div>
@@ -641,6 +573,46 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     task?: LaunchMapLightItem | null;
   } | null>(null);
   const calendarContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Outward-Expanding Popover for Multi-Launch days
+  const [popoverDay, setPopoverDay] = useState<{
+    dateKey: string;
+    rect: DOMRect;
+  } | null>(null);
+
+  // Floating Portal Menu for launch actions ("...")
+  const [activeMenu, setActiveMenu] = useState<{
+    task: LaunchMapLightItem;
+    dateKey: string;
+    rect: DOMRect;
+  } | null>(null);
+
+  // Confirmation modal for deleting a launch
+  const [confirmDeleteState, setConfirmDeleteState] = useState<{
+    open: boolean;
+    task: LaunchMapLightItem;
+  } | null>(null);
+  const [deletingLaunch, setDeletingLaunch] = useState(false);
+
+  // Wheel navigation refs
+  const wheelCooldownRef = useRef<number>(0);
+  const wheelAccumulatorRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!activeMenu) return;
+    const handleClose = () => setActiveMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActiveMenu(null);
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('scroll', handleClose, true);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('scroll', handleClose, true);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeMenu]);
 
   const handleSetViewMode = useCallback((mode: CalendarViewMode) => {
     try {
@@ -737,16 +709,17 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   // Close drawer/modal on Esc
   useEffect(() => {
-    if (!selectedDayKey && !dayModalState?.open) return;
+    if (!selectedDayKey && !dayModalState?.open && !popoverDay) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (dayModalState?.open) setDayModalState(null);
+        if (popoverDay) setPopoverDay(null);
+        else if (dayModalState?.open) setDayModalState(null);
         else if (selectedDayKey) setSelectedDayKey(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedDayKey, dayModalState]);
+  }, [selectedDayKey, dayModalState, popoverDay]);
 
   const searchLower = search.trim().toLowerCase();
 
@@ -829,6 +802,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     }
     return map;
   }, [allEntries]);
+
+  // Reactive entries for outward-expanding popover
+  const popoverEntries = useMemo(() => {
+    if (!popoverDay?.dateKey) return [];
+    return entriesByDate.get(popoverDay.dateKey) || [];
+  }, [popoverDay?.dateKey, entriesByDate]);
 
   // ── Heatmap: compute max launches per day in the visible month grid ──────────
   // Used to darken calendar cells — cells with more launches are darker.
@@ -1055,6 +1034,8 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const handleNavigatePrev = useCallback(() => {
     userInteractedRef.current = true;
+    setPopoverDay(null);
+    setActiveMenu(null);
     if (viewMode === 'WEEK') {
       const d = new Date(Date.UTC(cursorYear, cursorMonth, cursorDay - 7, 12, 0, 0));
       setCursorYear(d.getUTCFullYear());
@@ -1073,6 +1054,8 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const handleNavigateNext = useCallback(() => {
     userInteractedRef.current = true;
+    setPopoverDay(null);
+    setActiveMenu(null);
     if (viewMode === 'WEEK') {
       const d = new Date(Date.UTC(cursorYear, cursorMonth, cursorDay + 7, 12, 0, 0));
       setCursorYear(d.getUTCFullYear());
@@ -1091,10 +1074,102 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const handleGoToday = useCallback(() => {
     userInteractedRef.current = true;
+    setPopoverDay(null);
+    setActiveMenu(null);
     setCursorYear(todayParts.year);
     setCursorMonth(todayParts.month);
     setCursorDay(todayParts.day);
   }, [todayParts]);
+
+  // On-wheel calendar navigation with scroll-boundary detection
+  // Vertically scrolling inside the month scrolls smoothly without changing months;
+  // wheeling past the top or bottom boundary advances/retreats the month with debounce.
+  const handleCalendarWheel = useCallback(
+    (e: React.WheelEvent<HTMLDivElement>) => {
+      // Don't intercept wheel if scrolling inside a nested scrollable element like the popover list
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest('.custom-scrollbar') &&
+        target.closest('.custom-scrollbar') !== calendarContainerRef.current
+      ) {
+        return;
+      }
+
+      const container = calendarContainerRef.current;
+      if (!container) return;
+
+      const now = Date.now();
+      // Cooldown between month navigations (500ms) to avoid multiple rapid flips
+      if (now - wheelCooldownRef.current < 500) {
+        return;
+      }
+
+      // 1. Horizontal trackpad gesture (left/right)
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 40) {
+        wheelCooldownRef.current = now;
+        wheelAccumulatorRef.current = 0;
+        setPopoverDay(null);
+        setActiveMenu(null);
+        if (e.deltaX > 0) {
+          handleNavigateNext();
+        } else {
+          handleNavigatePrev();
+        }
+        return;
+      }
+
+      // 2. Vertical wheel boundary check
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isAtTop = scrollTop <= 4;
+      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 6;
+      const isScrollable = scrollHeight > clientHeight + 10;
+
+      // When the container is scrollable and the user is scrolling within its body,
+      // allow natural vertical scrolling without navigating months
+      if (isScrollable) {
+        if (e.deltaY > 0 && !isAtBottom) {
+          wheelAccumulatorRef.current = 0;
+          return;
+        }
+        if (e.deltaY < 0 && !isAtTop) {
+          wheelAccumulatorRef.current = 0;
+          return;
+        }
+      }
+
+      // 3. User is at boundary (top or bottom) and scrolling past it with intent
+      wheelAccumulatorRef.current += e.deltaY;
+
+      if (e.deltaY > 0 && (isAtBottom || !isScrollable)) {
+        if (wheelAccumulatorRef.current > 50) {
+          wheelCooldownRef.current = now;
+          wheelAccumulatorRef.current = 0;
+          setPopoverDay(null);
+          setActiveMenu(null);
+          handleNavigateNext();
+          requestAnimationFrame(() => {
+            if (calendarContainerRef.current) {
+              calendarContainerRef.current.scrollTop = 0;
+            }
+          });
+        }
+      } else if (e.deltaY < 0 && (isAtTop || !isScrollable)) {
+        if (wheelAccumulatorRef.current < -50) {
+          wheelCooldownRef.current = now;
+          wheelAccumulatorRef.current = 0;
+          setPopoverDay(null);
+          setActiveMenu(null);
+          handleNavigatePrev();
+          requestAnimationFrame(() => {
+            if (calendarContainerRef.current) {
+              calendarContainerRef.current.scrollTop = calendarContainerRef.current.scrollHeight;
+            }
+          });
+        }
+      }
+    },
+    [handleNavigateNext, handleNavigatePrev]
+  );
 
   const openScheduleModal = useCallback(
     (opts?: { task?: LaunchMapLightItem; dateKey?: string }) => {
@@ -1140,6 +1215,20 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const handleMoveLaunch = useCallback(
     async (taskId: string, targetDateKey: string) => {
+      // 1. Optimistic update immediately so the user sees the pill move with zero delay
+      onLaunchMetaUpdated?.(taskId, {
+        launchMeta: {
+          type: 'LAUNCH_META',
+          launchDate: targetDateKey,
+          targetPeriod: null,
+          isLaunchDate: true,
+          updatedAt: new Date().toISOString(),
+        },
+        effectiveLaunchDate: targetDateKey,
+        targetPeriod: null,
+        dueDate: `${targetDateKey}T12:00:00+08:00`,
+      });
+
       try {
         const res = await taskMapApi.updateLaunchMeta(taskId, {
           launchDate: targetDateKey,
@@ -1158,37 +1247,10 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
         }
       } catch (err: unknown) {
         toast.error(err instanceof Error ? err.message : 'Failed to move launch');
+        onDataRefresh?.();
       }
     },
     [onLaunchMetaUpdated, onDataRefresh]
-  );
-
-  const wheelCooldownRef = useRef<number>(0);
-  const handleCalendarWheel = useCallback(
-    (e: React.WheelEvent) => {
-      const target = e.target as HTMLElement;
-      // Do not navigate month if scrolling inside an internal dialog, form, input or textarea
-      if (target?.closest?.('[role="dialog"], form, input, textarea, select')) {
-        return;
-      }
-      // Check if target is inside an inner scrollable dropdown menu (other than the calendar container itself)
-      const scrollableParent = target?.closest?.('.overflow-y-auto, .overflow-y-scroll, .custom-scrollbar');
-      if (scrollableParent && scrollableParent !== calendarContainerRef.current) {
-        return;
-      }
-
-      const now = Date.now();
-      if (now - wheelCooldownRef.current < 250) return;
-
-      if (e.deltaY > 20) {
-        wheelCooldownRef.current = now;
-        handleNavigateNext();
-      } else if (e.deltaY < -20) {
-        wheelCooldownRef.current = now;
-        handleNavigatePrev();
-      }
-    },
-    [handleNavigateNext, handleNavigatePrev]
   );
 
   const handleToggleMilestoneQuick = useCallback(
@@ -1227,7 +1289,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
     return (
       <tr
         key={entry.task.id}
-        onClick={() => onOpenDetail(entry.task)}
+        onClick={() => openScheduleModal({ task: entry.task, dateKey: entry.dateKey || todayKey })}
         className={`group border-b border-[var(--border)]/65 transition-colors cursor-pointer hover:bg-[var(--hover-subtle)] ${
           entry.isInReview
             ? 'bg-orange-500/[0.05] [.theme-light_&]:bg-orange-50/70'
@@ -1813,14 +1875,17 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                   inCurrentMonth={cell.inCurrentMonth}
                   isWeekend={cell.isWeekend}
                   isToday={cell.isToday}
+                  todayKey={todayKey}
                   entries={entriesByDate.get(cell.dateKey) || []}
                   heatOpacity={monthHeatmap.getHeatOpacity(cell.dateKey)}
+                  isPopoutOpen={popoverDay?.dateKey === cell.dateKey}
                   onSelectDay={(dk) => openScheduleModal({ dateKey: dk })}
                   onQuickSchedule={(dk) => openScheduleModal({ dateKey: dk })}
-                  onOpenDetail={onOpenDetail}
-                  onEditLaunch={(task) => openScheduleModal({ task, dateKey: getTaskEffectiveLaunchDate(task) || undefined })}
-                  onDeleteLaunch={handleUnscheduleTask}
+                  onEditLaunch={(task, dk) => openScheduleModal({ task, dateKey: dk })}
+                  onRequestMenu={(task, dk, rect) => setActiveMenu({ task, dateKey: dk, rect })}
                   onMoveLaunch={handleMoveLaunch}
+                  onOpenPopout={(dk, rect) => setPopoverDay({ dateKey: dk, rect })}
+                  onClosePopout={() => setPopoverDay(null)}
                 />
               ))}
             </div>
@@ -1829,7 +1894,11 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
         {/* WEEK VIEW */}
         {viewMode === 'WEEK' && (
-          <div className="grid grid-cols-1 md:grid-cols-7 flex-1 min-h-0 overflow-auto custom-scrollbar">
+          <div
+            ref={calendarContainerRef}
+            onWheel={handleCalendarWheel}
+            className="grid grid-cols-1 md:grid-cols-7 flex-1 min-h-0 overflow-auto custom-scrollbar"
+          >
             {weekGridDays.map((day) => {
               const dayEntries = entriesByDate.get(day.dateKey) || [];
               return (
@@ -1879,45 +1948,60 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                         No launches
                       </div>
                     ) : (
-                      dayEntries.map((entry) => (
-                        <div
-                          key={entry.task.id}
-                          onClick={() => onOpenDetail(entry.task)}
-                          className={`group rounded-lg border p-2.5 flex flex-col gap-1.5 cursor-pointer transition-colors ${
-                            entry.isInReview
-                              ? 'border-orange-500/60 bg-orange-500/15 hover:bg-orange-500/25 [.theme-light_&]:bg-orange-50 [.theme-light_&]:border-orange-300'
-                              : entry.isMilestone
-                              ? 'border-rose-500/50 bg-rose-500/15 hover:bg-rose-500/25 [.theme-light_&]:bg-rose-50 [.theme-light_&]:border-rose-300'
-                              : 'launch-pill-default border-[var(--border)]'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span className="text-[10px] font-medium text-[var(--muted)] truncate max-w-[130px]">
-                              {entry.clientName}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              {entry.isUrgent && (
-                                <Flag className="size-3 text-red-400 [.theme-light_&]:text-red-600" />
-                              )}
-                              {entry.isMilestone && (
-                                <Rocket className="size-3 text-rose-400 [.theme-light_&]:text-rose-600" />
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openScheduleModal({ task: entry.task });
-                                }}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--hover-subtle)] text-[var(--muted)] hover:text-[var(--text)] cursor-pointer"
-                              >
-                                <Pencil className="size-3" />
-                              </button>
-                            </div>
-                          </div>
+                      dayEntries.map((entry) => {
+                        const timing = getLaunchTiming(entry.dateKey || day.dateKey, todayKey, entry.isClosed);
+                        let weekCardClasses = 'launch-pill-default border-[var(--border)]';
+                        let weekIcon = null;
 
-                          <p className="text-xs font-semibold text-[var(--text)] line-clamp-2 leading-snug">
-                            {entry.task.title}
-                          </p>
+                        if (entry.isInReview) {
+                          weekCardClasses = 'border-orange-500/60 bg-orange-500/15 hover:bg-orange-500/25 [.theme-light_&]:bg-orange-50 [.theme-light_&]:border-orange-300';
+                          weekIcon = <AlertTriangle className="size-3 text-orange-400 [.theme-light_&]:text-orange-600" />;
+                        } else if (entry.isUrgent) {
+                          weekCardClasses = 'border-red-500/60 bg-red-500/15 hover:bg-red-500/25 [.theme-light_&]:bg-red-50 [.theme-light_&]:border-red-300';
+                          weekIcon = <Flag className="size-3 text-red-400 [.theme-light_&]:text-red-600" />;
+                        } else if (timing === 'PASSED') {
+                          weekCardClasses = 'border-emerald-500/60 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 [.theme-light_&]:bg-emerald-50 [.theme-light_&]:border-emerald-300';
+                          weekIcon = <CheckCircle2 className="size-3 text-emerald-400 [.theme-light_&]:text-emerald-600" />;
+                        } else if (timing === 'TODAY') {
+                          weekCardClasses = 'border-purple-500/60 bg-purple-500/25 hover:bg-purple-500/35 ring-1 ring-purple-500/40 text-purple-100 [.theme-light_&]:bg-purple-50 [.theme-light_&]:border-purple-300';
+                          weekIcon = <Rocket className="size-3 text-purple-300 animate-pulse" />;
+                        } else if (timing === 'UPCOMING') {
+                          weekCardClasses = 'border-rose-500/50 bg-rose-500/15 hover:bg-rose-500/25 text-rose-100 [.theme-light_&]:bg-rose-50 [.theme-light_&]:border-rose-300';
+                          weekIcon = <Rocket className="size-3 text-rose-400 [.theme-light_&]:text-rose-600" />;
+                        } else {
+                          weekCardClasses = 'border-sky-500/50 bg-sky-500/15 hover:bg-sky-500/25 text-sky-200 [.theme-light_&]:bg-sky-50 [.theme-light_&]:border-sky-300';
+                          weekIcon = <CalendarClock className="size-3 text-sky-400 [.theme-light_&]:text-sky-600" />;
+                        }
+
+                        return (
+                          <div
+                            key={entry.task.id}
+                            onClick={() => openScheduleModal({ task: entry.task, dateKey: day.dateKey })}
+                            className={`group rounded-lg border p-2.5 flex flex-col gap-1.5 cursor-pointer transition-colors ${weekCardClasses}`}
+                          >
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="text-[10px] font-medium opacity-80 truncate max-w-[130px]">
+                                {entry.clientName}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                {weekIcon}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openScheduleModal({ task: entry.task, dateKey: day.dateKey });
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-black/30 text-current cursor-pointer"
+                                  title="Edit launch"
+                                >
+                                  <Pencil className="size-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <p className="text-xs font-semibold line-clamp-2 leading-snug">
+                              {entry.task.title}
+                            </p>
 
                           {entry.details && (
                             <p className="text-[10.5px] text-[var(--muted)] line-clamp-2 leading-snug">
@@ -1952,8 +2036,8 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                             )}
                           </div>
                         </div>
-                      ))
-                    )}
+                      );
+                    }))}
                   </div>
                 </div>
               );
@@ -1993,35 +2077,44 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             {/* Block Scroll Timeline — No Flex Height Compression */}
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               {(() => {
-                const renderAgendaItem = (entry: EnrichedLaunchEntry) => (
-                  <div
-                    key={entry.task.id}
-                    onClick={() => onOpenDetail(entry.task)}
-                    className={`group flex items-start justify-between gap-4 px-4 py-2.5 transition-colors cursor-pointer hover:bg-[var(--hover-subtle)] ${
-                      entry.isInReview
-                        ? 'border-l-2 border-l-orange-400 bg-orange-500/[0.06] [.theme-light_&]:bg-orange-50/70'
-                        : entry.isMilestone
-                        ? 'border-l-2 border-l-rose-400 bg-rose-500/[0.05] [.theme-light_&]:bg-rose-50/60'
-                        : ''
-                    }`}
-                  >
-                    <div className="flex items-start gap-3 min-w-0 flex-1">
-                      <div className="mt-1 shrink-0">
-                        {entry.isInReview ? (
-                          <AlertTriangle className="size-3.5 text-orange-400 [.theme-light_&]:text-orange-600" />
-                        ) : entry.isUrgent ? (
-                          <Flag className="size-3.5 text-red-400 [.theme-light_&]:text-red-600" />
-                        ) : entry.isMilestone ? (
-                          <Rocket className="size-3.5 text-rose-400 [.theme-light_&]:text-rose-600" />
-                        ) : entry.isClosed ? (
-                          <CheckCircle2 className="size-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />
-                        ) : (
-                          <span
-                            className="block size-2.5 rounded-full mt-0.5"
-                            style={{ backgroundColor: entry.statusColor }}
-                          />
-                        )}
-                      </div>
+                const renderAgendaItem = (entry: EnrichedLaunchEntry) => {
+                  const timing = getLaunchTiming(entry.dateKey, todayKey, entry.isClosed);
+                  let itemClasses = 'border-l-2 border-l-transparent hover:bg-[var(--hover-subtle)]';
+                  let itemIcon = (
+                    <span
+                      className="block size-2.5 rounded-full mt-0.5"
+                      style={{ backgroundColor: entry.statusColor }}
+                    />
+                  );
+
+                  if (entry.isInReview) {
+                    itemClasses = 'border-l-2 border-l-orange-400 bg-orange-500/[0.06] [.theme-light_&]:bg-orange-50/70';
+                    itemIcon = <AlertTriangle className="size-3.5 text-orange-400 [.theme-light_&]:text-orange-600" />;
+                  } else if (entry.isUrgent) {
+                    itemClasses = 'border-l-2 border-l-red-400 bg-red-500/[0.06] [.theme-light_&]:bg-red-50/70';
+                    itemIcon = <Flag className="size-3.5 text-red-400 [.theme-light_&]:text-red-600" />;
+                  } else if (timing === 'PASSED') {
+                    itemClasses = 'border-l-2 border-l-emerald-400 bg-emerald-500/[0.06] [.theme-light_&]:bg-emerald-50/70';
+                    itemIcon = <CheckCircle2 className="size-3.5 text-emerald-400 [.theme-light_&]:text-emerald-600" />;
+                  } else if (timing === 'TODAY') {
+                    itemClasses = 'border-l-2 border-l-purple-400 bg-purple-500/[0.08] ring-1 ring-purple-500/20 [.theme-light_&]:bg-purple-50/70';
+                    itemIcon = <Rocket className="size-3.5 text-purple-300 [.theme-light_&]:text-purple-600 animate-pulse" />;
+                  } else if (timing === 'UPCOMING') {
+                    itemClasses = 'border-l-2 border-l-rose-400 bg-rose-500/[0.05] [.theme-light_&]:bg-rose-50/60';
+                    itemIcon = <Rocket className="size-3.5 text-rose-400 [.theme-light_&]:text-rose-600" />;
+                  } else {
+                    itemClasses = 'border-l-2 border-l-sky-400 bg-sky-500/[0.05] [.theme-light_&]:bg-sky-50/60';
+                    itemIcon = <CalendarClock className="size-3.5 text-sky-400 [.theme-light_&]:text-sky-600" />;
+                  }
+
+                  return (
+                    <div
+                      key={entry.task.id}
+                      onClick={() => openScheduleModal({ task: entry.task, dateKey: entry.dateKey || todayKey })}
+                      className={`group flex items-start justify-between gap-4 px-4 py-2.5 transition-colors cursor-pointer ${itemClasses}`}
+                    >
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div className="mt-1 shrink-0">{itemIcon}</div>
 
                       <div className="min-w-0 flex-1 flex flex-col gap-1">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -2100,6 +2193,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                     </div>
                   </div>
                 );
+              };
 
                 const renderDateGroup = (group: {
                   dateKey: string;
@@ -2289,8 +2383,8 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
           entries={entriesByDate.get(selectedDayKey) || []}
           onClose={() => setSelectedDayKey(null)}
           onAddTask={(dateKey) => openScheduleModal({ dateKey })}
-          onEditTask={(task) => openScheduleModal({ task })}
-          onOpenDetail={onOpenDetail}
+          onEditTask={(task) => openScheduleModal({ task, dateKey: selectedDayKey })}
+          onOpenDetail={(task) => openScheduleModal({ task, dateKey: selectedDayKey })}
           onToggleMilestone={handleToggleMilestoneQuick}
           onUnschedule={handleUnscheduleTask}
         />
@@ -2310,6 +2404,251 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
             setDayModalState(null);
           }}
         />
+      )}
+
+      {/* Outward-Expanding Multi-Launch Popover via Portal */}
+      {popoverDay && popoverEntries.length > 0 && typeof document !== 'undefined' && createPortal(
+        <>
+          {/* Backdrop to close on outside click */}
+          <div
+            className="fixed inset-0 z-[9990] bg-black/30 backdrop-blur-[1px] animate-in fade-in duration-100"
+            onClick={() => setPopoverDay(null)}
+          />
+
+          {/* Elevated Floating Popover Panel */}
+          <div
+            className="fixed z-[9995] bg-[#14141e] border border-purple-500/40 rounded-2xl shadow-2xl p-3 flex flex-col gap-2.5 text-zinc-100 animate-in fade-in zoom-in-95 duration-150"
+            style={{
+              width: Math.min(380, Math.max(300, popoverDay.rect.width + 50)),
+              top: Math.max(12, Math.min(popoverDay.rect.top - 8, window.innerHeight - 380)),
+              left: Math.max(12, Math.min(popoverDay.rect.left - 12, window.innerWidth - 392)),
+              maxHeight: 'min(440px, calc(100vh - 32px))',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#29293d] shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-xs font-bold text-white truncate">
+                  {formatReadableDate(popoverDay.dateKey)}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/35 shrink-0">
+                  {popoverEntries.length} Launches
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const dk = popoverDay.dateKey;
+                    setPopoverDay(null);
+                    openScheduleModal({ dateKey: dk });
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/35 border border-purple-500/30 text-purple-300 hover:text-white text-[11px] font-semibold transition-colors cursor-pointer"
+                  title="Add launch on this date"
+                >
+                  <Plus className="size-3" />
+                  <span>Add</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPopoverDay(null)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-zinc-800 text-purple-300 hover:text-white text-xs font-semibold transition-colors cursor-pointer"
+                  title="Collapse"
+                >
+                  <span>▲ Collapse</span>
+                </button>
+              </div>
+            </div>
+
+            {/* List of Launches */}
+            <div className="flex flex-col gap-1.5 overflow-y-auto custom-scrollbar pr-1 max-h-[330px]">
+              {popoverEntries.map((entry) => {
+                const entryDateKey = entry.dateKey || popoverDay.dateKey;
+                const timing = getLaunchTiming(entryDateKey, todayKey, entry.isClosed);
+
+                let pillClasses = 'border-[#2d2d3f] bg-[#1a1a26] hover:bg-[#222232] text-zinc-100 hover:border-purple-500/40 shadow-xs';
+                let icon = (
+                  <span
+                    className="size-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: entry.statusColor }}
+                  />
+                );
+
+                if (entry.isInReview) {
+                  pillClasses = 'border-orange-500/50 bg-orange-500/15 text-orange-200 hover:bg-orange-500/25';
+                  icon = <AlertTriangle className="size-3.5 shrink-0 text-orange-400" />;
+                } else if (entry.isUrgent) {
+                  pillClasses = 'border-red-500/50 bg-red-500/20 text-red-200 hover:bg-red-500/30';
+                  icon = <Flag className="size-3.5 shrink-0 text-red-400" />;
+                } else if (timing === 'PASSED') {
+                  pillClasses = 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25';
+                  icon = <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400" />;
+                } else if (timing === 'TODAY') {
+                  pillClasses = 'border-purple-500/60 bg-purple-500/25 text-purple-100 hover:bg-purple-500/35 ring-1 ring-purple-500/40';
+                  icon = <Rocket className="size-3.5 shrink-0 text-purple-300 animate-pulse" />;
+                } else if (timing === 'UPCOMING') {
+                  pillClasses = 'border-rose-500/50 bg-rose-500/20 text-rose-100 hover:bg-rose-500/30';
+                  icon = <Rocket className="size-3.5 shrink-0 text-rose-400" />;
+                } else {
+                  pillClasses = 'border-sky-500/40 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25';
+                  icon = <CalendarClock className="size-3.5 shrink-0 text-sky-400" />;
+                }
+
+                return (
+                  <div
+                    key={entry.task.id}
+                    draggable={true}
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      e.dataTransfer.setData('text/plain', entry.task.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPopoverDay(null);
+                      openScheduleModal({ task: entry.task, dateKey: entryDateKey });
+                    }}
+                    className={`group/popover-pill relative w-full text-left flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs leading-tight transition-all cursor-pointer border ${pillClasses}`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      {icon}
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="font-semibold text-zinc-100 truncate">
+                          {entry.task.title}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 mt-0.5">
+                          <span className="truncate max-w-[120px] font-medium text-zinc-300">
+                            {entry.clientName}
+                          </span>
+                          {entry.workstream && (
+                            <>
+                              <span>·</span>
+                              <span className="truncate max-w-[100px]">{entry.workstream}</span>
+                            </>
+                          )}
+                          {entry.canonicalStatus && (
+                            <>
+                              <span>·</span>
+                              <span
+                                className="px-1.5 py-0.5 rounded uppercase font-bold text-[9px]"
+                                style={{
+                                  color: entry.statusColor,
+                                  backgroundColor: `${entry.statusColor}22`,
+                                }}
+                              >
+                                {entry.canonicalStatus}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ... Action Menu Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setActiveMenu({ task: entry.task, dateKey: entryDateKey, rect });
+                      }}
+                      className="p-1 rounded-md hover:bg-zinc-700/80 text-zinc-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                      title="Launch actions"
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {/* Floating Action Menu for "..." button rendered via Portal outside clipped elements */}
+      {activeMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed z-[99999] min-w-[135px] bg-[#1a1a24] border border-[#2e2e3f] rounded-xl shadow-2xl p-1 flex flex-col gap-0.5 text-xs text-zinc-200 backdrop-blur-md animate-in fade-in duration-100"
+          style={{
+            top: Math.min(activeMenu.rect.bottom + 4, window.innerHeight - 55),
+            left: Math.max(8, Math.min(activeMenu.rect.right - 135, window.innerWidth - 145)),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const { task } = activeMenu;
+              setActiveMenu(null);
+              setConfirmDeleteState({ open: true, task });
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-500/20 text-red-300 hover:text-red-200 cursor-pointer font-medium transition-colors"
+          >
+            <Trash2 className="size-3.5 text-red-400" />
+            <span>Delete Launch</span>
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDeleteState?.open && (
+        <div
+          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-100"
+          onClick={() => setConfirmDeleteState(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-[#16161e] border border-[#2d2d3d] rounded-2xl p-5 shadow-2xl flex flex-col gap-4 text-zinc-100 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="size-5 text-red-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-bold text-zinc-100">Delete Launch?</h3>
+                <p className="text-xs text-zinc-400 mt-1 truncate">
+                  Remove <span className="font-semibold text-zinc-200">"{confirmDeleteState.task.title}"</span> from calendar?
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#262636]">
+              <button
+                type="button"
+                disabled={deletingLaunch}
+                onClick={() => setConfirmDeleteState(null)}
+                className="px-3 py-1.5 rounded-xl border border-zinc-700 hover:bg-zinc-800 text-xs text-zinc-300 font-medium transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingLaunch}
+                onClick={async () => {
+                  setDeletingLaunch(true);
+                  try {
+                    await handleUnscheduleTask(confirmDeleteState.task.id);
+                    setConfirmDeleteState(null);
+                  } finally {
+                    setDeletingLaunch(false);
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {deletingLaunch ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+                <span>Delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

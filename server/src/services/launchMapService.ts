@@ -402,3 +402,199 @@ export async function sweepLaunchInReviewAlerts(): Promise<{ checked: number; al
     return { checked: 0, alerted: 0 };
   }
 }
+
+/**
+ * Format a LaunchRecord from the DB into the exact LaunchMapLightItem structure
+ * expected by the Launch Map UI (calendar, week view, drawer, modals).
+ */
+export function formatLaunchRecordToItem(lr: any) {
+  const effectiveLaunchDate = lr.startDate ? getManilaDateStr(lr.startDate) : null;
+  const resolvedTargetPeriod = !effectiveLaunchDate ? (lr.targetPeriod || 'TBD') : (lr.targetPeriod || null);
+  const closed = isClosedStatus(lr.status);
+
+  return {
+    id: lr.id,
+    title: lr.title,
+    description: lr.details || lr.notes || '',
+    status: lr.status,
+    priority: lr.priority,
+    dueDate: lr.startDate ? (lr.startDate instanceof Date ? lr.startDate.toISOString() : String(lr.startDate)) : null,
+    listId: lr.listId,
+    list: lr.list,
+    assignee: lr.assignees?.[0] || null,
+    assignees: lr.assignees || [],
+    taskMapStatuses: [lr.status],
+    isClosed: closed,
+    isAdminTask: false,
+    launchMeta: {
+      type: 'LAUNCH_META' as const,
+      launchDate: effectiveLaunchDate,
+      targetPeriod: resolvedTargetPeriod,
+      isLaunchDate: Boolean(lr.isMilestone),
+      workstream: lr.workstream || null,
+      details: lr.details || null,
+      notes: lr.notes || null,
+      updatedAt: lr.updatedAt instanceof Date ? lr.updatedAt.toISOString() : new Date().toISOString(),
+      updatedById: lr.creatorId || null,
+    },
+    effectiveLaunchDate,
+    targetPeriod: resolvedTargetPeriod,
+    isLaunchDate: Boolean(lr.isMilestone),
+    isDedicatedLaunchRecord: true,
+    createdAt: lr.createdAt instanceof Date ? lr.createdAt.toISOString() : new Date().toISOString(),
+    updatedAt: lr.updatedAt instanceof Date ? lr.updatedAt.toISOString() : new Date().toISOString(),
+  };
+}
+
+/**
+ * Create a new LaunchRecord directly in the LaunchRecord table
+ */
+export async function createLaunchRecord(
+  input: {
+    title: string;
+    listId: string;
+    startDate: string | Date;
+    startTime?: string | null;
+    endDate?: string | Date | null;
+    endTime?: string | null;
+    timezone?: string;
+    targetPeriod?: string | null;
+    isMilestone?: boolean;
+    workstream?: string | null;
+    details?: string | null;
+    notes?: string | null;
+    status?: string;
+    priority?: any;
+    assigneeIds?: string[];
+    taskId?: string | null;
+  },
+  actorId?: string | null
+) {
+  const startDateObj = typeof input.startDate === 'string' ? new Date(input.startDate) : input.startDate;
+  const endDateObj = input.endDate ? (typeof input.endDate === 'string' ? new Date(input.endDate) : input.endDate) : null;
+
+  const record = await prisma.launchRecord.create({
+    data: {
+      title: input.title,
+      listId: input.listId,
+      startDate: startDateObj,
+      startTime: input.startTime || null,
+      endDate: endDateObj,
+      endTime: input.endTime || null,
+      timezone: input.timezone || 'Asia/Manila',
+      targetPeriod: input.targetPeriod || null,
+      isMilestone: input.isMilestone !== undefined ? Boolean(input.isMilestone) : true,
+      workstream: input.workstream || null,
+      details: input.details || null,
+      notes: input.notes || null,
+      status: input.status || 'SCHEDULED',
+      priority: input.priority || 'MEDIUM',
+      creatorId: actorId || null,
+      taskId: input.taskId || null,
+      assignees: input.assigneeIds && input.assigneeIds.length > 0
+        ? { connect: input.assigneeIds.map((id) => ({ id })) }
+        : undefined,
+    },
+    include: {
+      list: {
+        select: {
+          id: true,
+          name: true,
+          folder: { select: { name: true } },
+          statuses: {
+            select: { name: true, color: true, groupName: true, order: true },
+            orderBy: { order: 'asc' },
+          },
+        },
+      },
+      assignees: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+      creator: { select: { id: true, name: true } },
+      task: { select: { id: true, title: true, status: true, priority: true } },
+    },
+  });
+
+  await invalidateCache('task_map:*', 'launch_map:all', 'launch_map:*').catch(() => {});
+  return record;
+}
+
+/**
+ * Update an existing LaunchRecord in the LaunchRecord table
+ */
+export async function updateLaunchRecord(
+  id: string,
+  input: {
+    title?: string;
+    listId?: string;
+    startDate?: string | Date | null;
+    startTime?: string | null;
+    endDate?: string | Date | null;
+    endTime?: string | null;
+    timezone?: string;
+    targetPeriod?: string | null;
+    isMilestone?: boolean;
+    workstream?: string | null;
+    details?: string | null;
+    notes?: string | null;
+    status?: string;
+    priority?: any;
+    assigneeIds?: string[];
+  },
+  actorId?: string | null
+) {
+  const existing = await prisma.launchRecord.findUnique({ where: { id } });
+  if (!existing) return null;
+
+  const data: any = {};
+  if (input.title !== undefined) data.title = input.title;
+  if (input.listId !== undefined) data.listId = input.listId;
+  if (input.startDate !== undefined) {
+    data.startDate = input.startDate
+      ? (typeof input.startDate === 'string' ? new Date(input.startDate) : input.startDate)
+      : existing.startDate;
+  }
+  if (input.startTime !== undefined) data.startTime = input.startTime;
+  if (input.endDate !== undefined) {
+    data.endDate = input.endDate
+      ? (typeof input.endDate === 'string' ? new Date(input.endDate) : input.endDate)
+      : null;
+  }
+  if (input.endTime !== undefined) data.endTime = input.endTime;
+  if (input.timezone !== undefined) data.timezone = input.timezone;
+  if (input.targetPeriod !== undefined) data.targetPeriod = input.targetPeriod;
+  if (input.isMilestone !== undefined) data.isMilestone = Boolean(input.isMilestone);
+  if (input.workstream !== undefined) data.workstream = input.workstream;
+  if (input.details !== undefined) data.details = input.details;
+  if (input.notes !== undefined) data.notes = input.notes;
+  if (input.status !== undefined) data.status = input.status;
+  if (input.priority !== undefined) data.priority = input.priority;
+  if (input.assigneeIds !== undefined) {
+    data.assignees = {
+      set: input.assigneeIds.map((aid) => ({ id: aid })),
+    };
+  }
+
+  const updated = await prisma.launchRecord.update({
+    where: { id },
+    data,
+    include: {
+      list: {
+        select: {
+          id: true,
+          name: true,
+          folder: { select: { name: true } },
+          statuses: {
+            select: { name: true, color: true, groupName: true, order: true },
+            orderBy: { order: 'asc' },
+          },
+        },
+      },
+      assignees: { select: { id: true, name: true, avatarUrl: true, imageUrl: true } },
+      creator: { select: { id: true, name: true } },
+      task: { select: { id: true, title: true, status: true, priority: true } },
+    },
+  });
+
+  await invalidateCache('task_map:*', 'launch_map:all', 'launch_map:*').catch(() => {});
+  return updated;
+}
+

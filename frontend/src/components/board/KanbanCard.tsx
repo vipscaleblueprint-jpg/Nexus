@@ -662,6 +662,10 @@ const CardContent = memo(({
                 'CRM NEEDED TO FOLLOW UP': 'text-[#6366F1]',
                 'crm_follow_up': 'text-[#6366F1]',
                 'CRM': 'text-[#22A3AE]',
+                'TO SEND': 'text-[#0284c7]',
+                'To Send': 'text-[#0284c7]',
+                'TO FOLLOW UP': 'text-[#6366F1]',
+                'To Follow Up': 'text-[#6366F1]',
                 'ON-HOLD': 'text-[#8A8F98]',
               };
 
@@ -718,6 +722,10 @@ const CardContent = memo(({
                     'CRM NEEDED TO FOLLOW UP': 'text-[#6366F1]',
                     'crm_follow_up': 'text-[#6366F1]',
                     'CRM': 'text-[#22A3AE]',
+                'TO SEND': 'text-[#0284c7]',
+                'To Send': 'text-[#0284c7]',
+                'TO FOLLOW UP': 'text-[#6366F1]',
+                'To Follow Up': 'text-[#6366F1]',
                     'ON-HOLD': 'text-[#8A8F98]',
                   };
 

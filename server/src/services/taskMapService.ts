@@ -1064,6 +1064,7 @@ export async function executeTaskMapDailyRollover(params?: {
       if (
         s === 'WAITING' || s.includes('WAITING') ||
         s === 'CRM' || s.includes('CRM') ||
+        s === 'TOSEND' || s === 'TOFOLLOWUP' ||
         s === 'INREVIEW' || s === 'TOREVIEW' || s === 'REVIEW' ||
         s === 'CHECKING' || s === 'INCHECKING' ||
         s === 'DAILY' || s.includes('DAILY') ||

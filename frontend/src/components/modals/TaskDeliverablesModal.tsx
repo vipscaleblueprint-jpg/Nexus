@@ -36,6 +36,7 @@ export interface TaskDeliverablesModalProps {
 
 const DEFAULT_DELIVERABLE_STATUS_OPTIONS: DeliverableStatusOption[] = [
   { label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW },
+  { label: 'Hand-over In', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
   { label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
   { label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
   { label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED },

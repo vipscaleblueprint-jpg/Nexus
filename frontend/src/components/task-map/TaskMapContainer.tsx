@@ -1701,6 +1701,8 @@ export const TaskMapContainer: React.FC = () => {
       nextStatusUp === 'IN REVIEW' ||
       nextStatusUp === 'CHECKING' ||
       nextStatusUp === 'CRM' ||
+      nextStatusUp === 'TO SEND' ||
+      nextStatusUp === 'TO FOLLOW UP' ||
       Boolean(normalizedFields.assigneeId && normalizedFields.assigneeId !== null);
 
     const resolvePrevStatus = (t: TaskMapItem) => {
@@ -2373,7 +2375,7 @@ export const TaskMapContainer: React.FC = () => {
       );
       const hasAskClient = mapStatusesNorm.includes('ASKCLIENT');
       const isSentOrWaiting = s === 'WAITING' || mapStatusesNorm.includes('SENTBUTWAITING') || mapStatusesNorm.includes('SENT');
-      if (!isSentOrWaiting && (s === 'CRM' || hasAskClient)) {
+      if (!isSentOrWaiting && (s === 'CRM' || s === 'TO SEND' || s === 'TO FOLLOW UP' || hasAskClient)) {
         count++;
       }
     }

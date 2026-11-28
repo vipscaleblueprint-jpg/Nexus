@@ -3336,7 +3336,11 @@ export const TASK_MAP_STATUS_COLORS = {
   REVISION: '#5B6BD6',       // -> REVISION (Indigo)
   TO_SEND: '#0284c7',        // -> CRM Needed to Send (Sky-600)
   READY_TO_SEND: '#0284c7',  // -> CRM Needed to Send (Sky-600)
-  FOLLOW_UP: '#6366F1',      // -> CRM Needed to Follow Up (Indigo)
+  FOLLOW_UP: '#6366F1',      // -> To Follow Up (Indigo)
+  FOLLOW_UP_1D: '#eab308',   // Follow-up 1 Day (Yellow)
+  FOLLOW_UP_3D: '#f97316',   // Follow-up 3rd Day (Orange)
+  FOLLOW_UP_5D: '#ef4444',   // Follow-up 5th Day (Red)
+  FOLLOW_UP_1W: '#8b5cf6',   // Follow-up 1 Week (Violet)
   CRM: '#22A3AE',            // Existing historical CRM (Teal)
   CRM_TO_SEND: '#0284c7',    // CRM Needed to Send (Sky-600)
   CRM_FOLLOW_UP: '#6366F1',  // CRM Needed to Follow Up (Indigo)
@@ -3408,6 +3412,10 @@ export function getTaskMapSubStatusStyle(
     TOSEND: { color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff' },
     READYTOSEND: { color: TASK_MAP_STATUS_COLORS.READY_TO_SEND, textColor: '#ffffff' },
     FOLLOWUP: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff' },
+    FOLLOWUP1DAY: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1D, textColor: '#ffffff' },
+    FOLLOWUP3RDDAY: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_3D, textColor: '#ffffff' },
+    FOLLOWUP5THDAY: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_5D, textColor: '#ffffff' },
+    FOLLOWUP1WEEK: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1W, textColor: '#ffffff' },
     CRM: { color: TASK_MAP_STATUS_COLORS.CRM, textColor: '#ffffff' },
     CRMTOSEND: { color: TASK_MAP_STATUS_COLORS.CRM_TO_SEND, textColor: '#ffffff' },
     CRMNEEDEDTOSEND: { color: TASK_MAP_STATUS_COLORS.CRM_TO_SEND, textColor: '#ffffff' },
@@ -3618,7 +3626,7 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     label: 'Ready to Send',
     title: 'Approve & Move to CRM (To Send)',
     summary: 'Verifies all required audits & subtasks are complete, then transfers the task to CRM Map.',
-    destination: 'CRM Map -> CRM Needed to Send',
+    destination: 'CRM Map -> To Send',
     mainStatusChange: 'CRM',
     sideEffects: [
       'Checks audit checklist and open subtasks gate before moving.',
@@ -3633,7 +3641,7 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     label: 'To send',
     title: 'Mark Ready to Send (CRM)',
     summary: 'Places the task in the CRM To Send queue ready for client outreach.',
-    destination: 'CRM Map -> CRM Needed to Send',
+    destination: 'CRM Map -> To Send',
     mainStatusChange: 'CRM',
     sideEffects: [
       'Verifies completion gate before entering CRM.',
@@ -3858,13 +3866,18 @@ const SUB_STATUS_DB_ALIAS: Record<string, string> = {
   SENTBUTWAITING: 'WAITING',
   ONHOLD: 'ON-HOLD',
   TOREVIEW: 'IN REVIEW',
-  TOSEND: 'CRM Needed to Send',
-  READYTOSEND: 'CRM Needed to Send',
-  CRMTOSEND: 'CRM Needed to Send',
-  CRMNEEDEDTOSEND: 'CRM Needed to Send',
-  FOLLOWUP: 'CRM Needed to Follow Up',
-  CRMFOLLOWUP: 'CRM Needed to Follow Up',
-  CRMNEEDEDTOFOLLOWUP: 'CRM Needed to Follow Up',
+  TOSEND: 'TO SEND',
+  READYTOSEND: 'TO SEND',
+  CRMTOSEND: 'TO SEND',
+  CRMNEEDEDTOSEND: 'TO SEND',
+  FOLLOWUP: 'TO FOLLOW UP',
+  TOFOLLOWUP: 'TO FOLLOW UP',
+  FOLLOWUP1DAY: 'TO FOLLOW UP',
+  FOLLOWUP3RDDAY: 'TO FOLLOW UP',
+  FOLLOWUP5THDAY: 'TO FOLLOW UP',
+  FOLLOWUP1WEEK: 'TO FOLLOW UP',
+  CRMFOLLOWUP: 'TO FOLLOW UP',
+  CRMNEEDEDTOFOLLOWUP: 'TO FOLLOW UP',
   CRM: 'CRM',
   CLOSED: 'CLOSED',
 };
@@ -3905,10 +3918,12 @@ const CANONICAL_STATUS_MAP: Record<string, string> = {
   CHECKING: 'CHECKING',
   INCHECKING: 'CHECKING',
   CRM: 'CRM',
-  CRMNEEDEDTOSEND: 'CRM Needed to Send',
-  CRMTOSEND: 'CRM Needed to Send',
-  CRMNEEDEDTOFOLLOWUP: 'CRM Needed to Follow Up',
-  CRMFOLLOWUP: 'CRM Needed to Follow Up',
+  TOSEND: 'TO SEND',
+  TOFOLLOWUP: 'TO FOLLOW UP',
+  CRMNEEDEDTOSEND: 'TO SEND',
+  CRMTOSEND: 'TO SEND',
+  CRMNEEDEDTOFOLLOWUP: 'TO FOLLOW UP',
+  CRMFOLLOWUP: 'TO FOLLOW UP',
   CLOSED: 'CLOSED',
   DONE: 'CLOSED',
   ONHOLD: 'ON-HOLD',
@@ -3939,8 +3954,8 @@ export function getDefaultTaskMapSubStatuses(
   _options?: { isAssigned?: boolean }
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
-  if (canonical === 'CRM Needed to Send' || canonical === 'CRM') return ['To send'];
-  if (canonical === 'CRM Needed to Follow Up') return ['Follow up'];
+  if (canonical === 'TO SEND' || canonical === 'CRM') return ['To send'];
+  if (canonical === 'TO FOLLOW UP') return ['Follow up'];
   if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
   if (canonical === 'REVISION') return ['Revision'];
@@ -4058,7 +4073,7 @@ export function normalizeTaskMapSubStatuses(
     return clean.slice(0, 1);
   }
 
-  if (canonical === 'CRM' || canonical === 'CRM Needed to Send') {
+  if (canonical === 'CRM' || canonical === 'TO SEND') {
     if (
       clean.length === 0 ||
       clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
@@ -4068,7 +4083,7 @@ export function normalizeTaskMapSubStatuses(
     return clean.slice(0, 1);
   }
 
-  if (canonical === 'CRM Needed to Follow Up') {
+  if (canonical === 'TO FOLLOW UP') {
     if (
       clean.length === 0 ||
       clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
@@ -4139,6 +4154,8 @@ export function isAvailablePoolExcludedTask(
   return (
     s === 'CRM' ||
     s.includes('CRM') ||
+    s === 'TOSEND' ||
+    s === 'TOFOLLOWUP' ||
     s === 'INREVIEW' ||
     s === 'TOREVIEW' ||
     s === 'REVIEW' ||
@@ -4266,12 +4283,138 @@ export function compareAvailablePoolTasks(a: TaskMapItem, b: TaskMapItem): numbe
   return dateB - dateA;
 }
 
+export const CRM_FOLLOW_UP_STAGE_OPTIONS = [
+  { id: 'opt-crm-followup-1d', label: 'Follow-up 1 Day', days: 1, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1D, textColor: '#ffffff' },
+  { id: 'opt-crm-followup-3d', label: 'Follow-up 3rd Day', days: 3, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_3D, textColor: '#ffffff' },
+  { id: 'opt-crm-followup-5d', label: 'Follow-up 5th Day', days: 5, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_5D, textColor: '#ffffff' },
+  { id: 'opt-crm-followup-1w', label: 'Follow-up 1 Week', days: 7, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1W, textColor: '#ffffff' },
+] as const;
+
+export function parseFollowUpScheduleDays(label?: string | null): number | null {
+  const compact = (label || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (compact === 'FOLLOWUP1DAY') return 1;
+  if (compact === 'FOLLOWUP3RDDAY') return 3;
+  if (compact === 'FOLLOWUP5THDAY') return 5;
+  if (compact === 'FOLLOWUP1WEEK') return 7;
+  return null;
+}
+
+export function isTimedFollowUpSubStatus(label?: string | null): boolean {
+  return parseFollowUpScheduleDays(label) !== null;
+}
+
+export interface TaskFollowUpScheduleInfo {
+  selectedLabel: string;
+  targetDays: number;
+  selectedDateKey: string;
+  dueDateKey: string;
+  daysRemaining: number;
+  isDue: boolean;
+  effectiveLabel: string;
+  color: string;
+}
+
+function diffManilaDateKeys(fromKey: string, toKey: string): number {
+  const m1 = fromKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m2 = toKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m1 || !m2) return 0;
+  const d1 = Date.UTC(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]));
+  const d2 = Date.UTC(Number(m2[1]), Number(m2[2]) - 1, Number(m2[3]));
+  return Math.round((d2 - d1) / (24 * 60 * 60 * 1000));
+}
+
+/**
+ * Computes the live countdown state for a timed Follow-up task
+ * (Follow-up 1 Day / 3rd Day / 5th Day / 1 Week) based on the date it was selected + target days.
+ * Automatically transitions down through the tiers and becomes "Follow up" once due (daysRemaining <= 0).
+ */
+export function getTaskFollowUpScheduleInfo(
+  task?: Partial<TaskMapItem> | null,
+  now: Date = new Date()
+): TaskFollowUpScheduleInfo | null {
+  if (!task) return null;
+  const rawReviews = task.taskMap?.pmReviews;
+  let reviews: any[] = [];
+  if (Array.isArray(rawReviews)) {
+    reviews = rawReviews;
+  } else if (typeof rawReviews === 'string') {
+    try {
+      const parsed = JSON.parse(rawReviews);
+      if (Array.isArray(parsed)) reviews = parsed;
+    } catch {}
+  }
+
+  const subId = task.isSubtask ? (task.subtaskId || null) : null;
+  const meta = reviews.find(
+    (r: any) =>
+      r &&
+      r.type === 'CRM_FOLLOW_UP_SCHEDULE' &&
+      (subId ? r.subtaskId === subId : !r.subtaskId)
+  );
+
+  const matchedStatusLabel = (task.taskMap?.statuses || []).find((st) => isTimedFollowUpSubStatus(st));
+  const selectedLabel = meta?.selectedLabel || matchedStatusLabel || null;
+  const targetDays = Number(meta?.targetDays || parseFollowUpScheduleDays(selectedLabel) || 0);
+  if (!selectedLabel || !targetDays) return null;
+
+  const selectedDateKey =
+    (typeof meta?.selectedDateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(meta.selectedDateKey)
+      ? meta.selectedDateKey
+      : null) ||
+    getManilaDateKey(meta?.selectedAt || task.taskMap?.updatedAt || task.updatedAt || now) ||
+    getManilaDateKey(now);
+
+  const dueDateKey = selectedDateKey ? shiftDateKeyByDays(selectedDateKey, targetDays) : null;
+  const todayKey = getManilaDateKey(now);
+  if (!selectedDateKey || !dueDateKey || !todayKey) return null;
+  const daysRemaining = diffManilaDateKeys(todayKey, dueDateKey);
+  const isDue = daysRemaining <= 0;
+
+  let effectiveLabel: string;
+  let color: string;
+  if (isDue) {
+    effectiveLabel = 'Follow up';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP;
+  } else if (daysRemaining <= 1) {
+    effectiveLabel = 'Follow-up 1 Day';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_1D;
+  } else if (daysRemaining <= 3) {
+    effectiveLabel = 'Follow-up 3rd Day';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_3D;
+  } else if (daysRemaining <= 5) {
+    effectiveLabel = 'Follow-up 5th Day';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_5D;
+  } else {
+    effectiveLabel = 'Follow-up 1 Week';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_1W;
+  }
+
+  return {
+    selectedLabel,
+    targetDays,
+    selectedDateKey,
+    dueDateKey,
+    daysRemaining,
+    isDue,
+    effectiveLabel,
+    color,
+  };
+}
+
 /**
  * Counts active Task Map items excluding On-Hold tasks for task number indicators.
  */
 export function countNonOnHoldTasks(items?: Array<Partial<TaskMapItem>> | null): number {
   if (!items || items.length === 0) return 0;
   return items.filter((t) => !isTaskMapItemOnHold(t)).length;
+}
+
+/**
+ * Counts actionable Available Tasks excluding both On-Hold and Waiting tasks.
+ */
+export function countAvailablePoolTasks(items?: Array<Partial<TaskMapItem>> | null): number {
+  if (!items || items.length === 0) return 0;
+  return items.filter((t) => !isTaskMapItemOnHold(t) && !isTaskMapItemWaiting(t)).length;
 }
 
 /**

@@ -102,23 +102,52 @@ const STALE_REVIEW_SUBSTATUSES = new Set([
  * Syncs TaskMapRecord.statuses when a task's main status moves to WAITING/SENT, CRM, IN REVIEW, REVISION, or ON-HOLD
  * so stale pool/workflow tags (e.g. "Available Task", "Hand-over", "Revision") are replaced with the matching sub-status.
  */
-async function syncTaskMapSubStatusesOnStatusChange(taskId: string, nextStatus: string, io?: any): Promise<void> {
+async function syncTaskMapSubStatusesOnStatusChange(
+  taskId: string,
+  nextStatus: string,
+  io?: any,
+  subtaskId?: string | null
+): Promise<void> {
   const nextStatusNorm = (nextStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  const isCrmStatus = nextStatusNorm === 'CRM' || nextStatusNorm === 'CRMNEEDEDTOSEND' || nextStatusNorm === 'CRMTOSEND';
-  const isFollowUpStatus = nextStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || nextStatusNorm === 'CRMFOLLOWUP';
+  const isToSendStatus =
+    nextStatusNorm === 'TO SEND'.replace(/\s+/g, '') ||
+    nextStatusNorm === 'CRM' ||
+    nextStatusNorm === 'CRMNEEDEDTOSEND' ||
+    nextStatusNorm === 'CRMTOSEND';
+  const isFollowUpStatus =
+    nextStatusNorm === 'TOFOLLOWUP' ||
+    nextStatusNorm === 'CRMNEEDEDTOFOLLOWUP' ||
+    nextStatusNorm === 'CRMFOLLOWUP';
   const isWaitingStatus = nextStatusNorm === 'WAITING' || nextStatusNorm === 'SENT';
-  const isReviewStatus = nextStatusNorm === 'INREVIEW' || nextStatusNorm === 'TOREVIEW' || nextStatusNorm === 'REVIEW' || nextStatusNorm === 'CHECKING' || nextStatusNorm === 'INCHECKING';
+  const isReviewStatus =
+    nextStatusNorm === 'INREVIEW' ||
+    nextStatusNorm === 'TOREVIEW' ||
+    nextStatusNorm === 'REVIEW' ||
+    nextStatusNorm === 'CHECKING' ||
+    nextStatusNorm === 'INCHECKING';
   const isRevisionStatus = nextStatusNorm === 'REVISION' || nextStatusNorm === 'REVISIONS';
   const isOnHoldStatusNext = nextStatusNorm === 'ONHOLD';
   const isClosedStatus = ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED'].includes(nextStatusNorm);
+  const isPendingStatus = nextStatusNorm === 'PENDING';
 
-  if (!isWaitingStatus && !isCrmStatus && !isFollowUpStatus && !isReviewStatus && !isRevisionStatus && !isOnHoldStatusNext && !isClosedStatus) return;
+  if (
+    !isWaitingStatus &&
+    !isToSendStatus &&
+    !isFollowUpStatus &&
+    !isReviewStatus &&
+    !isRevisionStatus &&
+    !isOnHoldStatusNext &&
+    !isClosedStatus &&
+    !isPendingStatus
+  ) {
+    return;
+  }
 
   const targetSubStatuses = isClosedStatus
     ? ['Closed']
     : isFollowUpStatus
       ? ['Follow up']
-      : isCrmStatus
+      : isToSendStatus
         ? ['To send']
         : isWaitingStatus
           ? ['Sent but Waiting']
@@ -126,23 +155,77 @@ async function syncTaskMapSubStatusesOnStatusChange(taskId: string, nextStatus: 
             ? ['To Review']
             : isRevisionStatus
               ? ['Revision']
-              : ['On-hold'];
-  const staleSet =
-    isFollowUpStatus || isCrmStatus
-      ? STALE_CRM_SUBSTATUSES
-      : isWaitingStatus
-        ? STALE_WAITING_SUBSTATUSES
-        : STALE_REVIEW_SUBSTATUSES;
+              : isOnHoldStatusNext
+                ? ['On-hold']
+                : ['Available Task'];
+
+  const isTimedFollowUpKey = (s: string) => {
+    const k = (s || '').toUpperCase().replace(/[\s_-]+/g, '');
+    return k === 'FOLLOWUP1DAY' || k === 'FOLLOWUP3RDDAY' || k === 'FOLLOWUP5THDAY' || k === 'FOLLOWUP1WEEK';
+  };
+
   const existingRecord = await getOrCreateTaskMapRecord(taskId).catch(() => null);
-  const curStatuses = Array.isArray(existingRecord?.statuses) ? existingRecord!.statuses : [];
-  if (
-    isClosedStatus ||
-    curStatuses.length === 0 ||
-    curStatuses.every((s: string) => staleSet.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')) || (isRevisionStatus && (s || '').toUpperCase().replace(/[\s_-]+/g, '') === 'TOREVIEW'))
-  ) {
-    await updateTaskMapRecord(taskId, { statuses: targetSubStatuses }).catch(() => {});
-    io?.emit('task_map:updated', { taskId, statuses: targetSubStatuses });
+  if (!existingRecord) return;
+
+  if (subtaskId) {
+    let pmReviews: any[] = [];
+    if (Array.isArray(existingRecord.pmReviews)) {
+      pmReviews = [...existingRecord.pmReviews];
+    } else if (typeof existingRecord.pmReviews === 'string') {
+      try {
+        const parsed = JSON.parse(existingRecord.pmReviews);
+        if (Array.isArray(parsed)) pmReviews = parsed;
+      } catch {}
+    }
+    const subIdx = pmReviews.findIndex((r: any) => r?.type === 'SUBTASK_STATE' && r?.subtaskId === subtaskId);
+    const curSubStatuses: string[] = subIdx !== -1 && Array.isArray(pmReviews[subIdx]?.statuses) ? pmReviews[subIdx].statuses : [];
+    // Preserve an active timed follow-up stage when status is already TO FOLLOW UP
+    if (isFollowUpStatus && curSubStatuses.some(isTimedFollowUpKey)) return;
+    if (isPendingStatus && curSubStatuses.length > 0 && !curSubStatuses.every((s) => STALE_CRM_SUBSTATUSES.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')) || ['TOSEND', 'FOLLOWUP', 'SENTBUTWAITING', 'TOREVIEW', 'REVISION', 'ONHOLD', 'CLOSED'].includes((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
+      return;
+    }
+
+    const nextEntry = {
+      ...(subIdx !== -1 ? pmReviews[subIdx] : {}),
+      type: 'SUBTASK_STATE',
+      subtaskId,
+      statuses: targetSubStatuses,
+      updatedAt: new Date().toISOString(),
+    };
+    if (subIdx !== -1) {
+      pmReviews[subIdx] = nextEntry;
+    } else {
+      pmReviews.push(nextEntry);
+    }
+    await updateTaskMapRecord(taskId, { pmReviews }).catch(() => {});
+    io?.emit('task_map:updated', {
+      taskId: `subtask:${subtaskId}`,
+      subtaskId,
+      parentTaskId: taskId,
+      statuses: targetSubStatuses,
+    });
+    return;
   }
+
+  const curStatuses = Array.isArray(existingRecord.statuses) ? existingRecord.statuses : [];
+  // Preserve an active timed follow-up stage when status is TO FOLLOW UP
+  if (isFollowUpStatus && curStatuses.some(isTimedFollowUpKey)) return;
+  if (
+    isPendingStatus &&
+    curStatuses.length > 0 &&
+    !curStatuses.every((s: string) => {
+      const k = (s || '').toUpperCase().replace(/[\s_-]+/g, '');
+      return (
+        STALE_CRM_SUBSTATUSES.has(k) ||
+        ['TOSEND', 'FOLLOWUP', 'SENTBUTWAITING', 'TOREVIEW', 'REVISION', 'ONHOLD', 'CLOSED', 'FOLLOWUP1DAY', 'FOLLOWUP3RDDAY', 'FOLLOWUP5THDAY', 'FOLLOWUP1WEEK'].includes(k)
+      );
+    })
+  ) {
+    return;
+  }
+
+  await updateTaskMapRecord(taskId, { statuses: targetSubStatuses }).catch(() => {});
+  io?.emit('task_map:updated', { taskId, statuses: targetSubStatuses });
 }
 
 // In-memory maps: nexus ID -> ClickUp ID (avoids needing a DB migration)
@@ -1164,7 +1247,7 @@ export async function updateTask(req: Request, res: Response) {
     if (
       status &&
       !areStatusesEqual(status, currentTask.status) &&
-      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM' || (status || '').toUpperCase().includes('CRM')) &&
+      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM' || (status || '').toUpperCase().includes('CRM') || ['TO SEND', 'TO FOLLOW UP'].includes((status || '').toUpperCase().trim())) &&
       currentTask.assigneeId
     ) {
       await recordOriginalAssignedMa({ taskId, userId: currentTask.assigneeId });
@@ -1795,7 +1878,7 @@ export async function moveTask(req: Request, res: Response) {
     if (
       status &&
       !areStatusesEqual(oldStatus, status) &&
-      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM' || (status || '').toUpperCase().includes('CRM')) &&
+      (isReviewStatus(status) || isCheckingStatus(status) || isWaitingMainStatus(status) || status === 'CRM' || (status || '').toUpperCase().includes('CRM') || ['TO SEND', 'TO FOLLOW UP'].includes((status || '').toUpperCase().trim())) &&
       currentTask.assigneeId
     ) {
       await recordOriginalAssignedMa({ taskId: id, userId: currentTask.assigneeId });
@@ -3380,6 +3463,10 @@ export async function updateSubtask(req: Request, res: Response) {
         team: { select: { id: true, name: true, color: true } }
       } as any
     });
+
+    if (status !== undefined && existingSubtask && status !== existingSubtask.status) {
+      await syncTaskMapSubStatusesOnStatusChange(taskId, status, io, subtask.id);
+    }
 
     if (title !== undefined && existingSubtask && title !== existingSubtask.title) {
       repickAuditsAfterRename({ taskId, subtaskId }).catch((err) => console.error('Subtask audit re-pick after rename failed:', err));

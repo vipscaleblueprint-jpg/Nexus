@@ -1,4 +1,4 @@
-import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd, isClosedStatus } from '@/lib/taskTokens';
+import { STATUS_COLORS, ALL_STATUSES, CustomCircleDot, CustomCircleDotted, sortStatusesWithClosedAndKycAtEnd, isClosedStatus, isHiddenBoardStatus } from '@/lib/taskTokens';
 import { CheckCircle2 } from 'lucide-react';
 import { canTransitionTaskStatus } from '@/lib/permissions';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
@@ -62,7 +62,9 @@ const LiveTaskItem = ({ task, currentUser }: { task: any, currentUser: any }) =>
     const rawStatuses = listStatuses.length > 0 ? listStatuses : [];
     if (rawStatuses.length === 0) return ALL_STATUSES;
 
-    const sortedInternals = [...rawStatuses].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sortedInternals = [...rawStatuses]
+      .filter((s) => !isHiddenBoardStatus(s))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
     const list = listObj?.list || listObj;
 

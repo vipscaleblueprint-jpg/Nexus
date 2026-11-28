@@ -150,6 +150,8 @@ export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
 export const COMPLETION_GATE_STATUSES = [
   'closed',
   'crm',
+  'to send',
+  'to follow up',
   'crm needed to send',
   'crm_to_send',
   'crm needed to follow up',

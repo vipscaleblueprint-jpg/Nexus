@@ -186,6 +186,8 @@ const OTHER_BOARD_STATUS_SET = new Set([
   'INCHECKING',
   'WAITING',
   'CRM',
+  'TOSEND',
+  'TOFOLLOWUP',
   'ASKCLIENT',
 ]);
 

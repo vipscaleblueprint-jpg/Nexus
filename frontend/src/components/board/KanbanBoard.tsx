@@ -811,7 +811,15 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     const filteredTasks = isGalaxyFilterActive ? localTasks.filter((t) => isGalaxyTask(t)) : localTasks;
     const map = filteredTasks.reduce((acc: Record<string, Task[]>, task) => {
       const raw = task.status || 'PENDING';
-      const normalizedRaw = isHiddenBoardStatus(raw) ? 'CRM' : raw;
+      const compactRaw = raw.trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const normalizedRaw =
+        compactRaw === 'CRM' || compactRaw === 'CRMNEEDEDTOSEND' || compactRaw === 'CRMTOSEND'
+          ? 'TO SEND'
+          : compactRaw === 'CRMNEEDEDTOFOLLOWUP' || compactRaw === 'CRMFOLLOWUP'
+            ? 'TO FOLLOW UP'
+            : isHiddenBoardStatus(raw)
+              ? 'TO SEND'
+              : raw;
       const status = canonicalStatus[normalizedRaw.trim().toUpperCase()] || normalizedRaw;
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);

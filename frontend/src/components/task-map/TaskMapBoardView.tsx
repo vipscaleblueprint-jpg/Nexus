@@ -14,7 +14,9 @@ import {
   isTaskHandedOver,
   getEffectiveTaskMapHandlerId,
   countNonOnHoldTasks,
+  countAvailablePoolTasks,
   isAvailablePoolExcludedTask,
+  isTaskInClientDashboard,
   TASK_MAP_STATUS_COLORS,
   getTaskMapSubStatusStyle,
   getDefaultTaskMapSubStatuses,
@@ -39,6 +41,8 @@ import {
   SubStatusTransitionGuide,
   isTaskMapItemOnHold,
   isTaskMapItemWaiting,
+  CRM_FOLLOW_UP_STAGE_OPTIONS,
+  isTimedFollowUpSubStatus,
 } from '@/api/taskMap';
 import { tasksApi } from '@/api/tasks';
 import { NexusLogoLoader } from '@/components/ui/NexusLogo';
@@ -61,6 +65,7 @@ import {
   isTaskOnHold,
   sortAvailablePoolTasks,
   groupTasksWithSubtasks,
+  shouldSubtaskAttachToParent,
   resolveTaskStatusColor,
   hexToRgba,
   resolveSubStatusColor,
@@ -1467,9 +1472,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
   const [userQueueVisibleCounts, setUserQueueVisibleCounts] = useState<Record<string, number>>({});
 
   // Hidden columns state: for non-PM users, other users' columns are hidden by default instead of collapsed
-  const hiddenStorageKey = currentUser?.id
-    ? `nexus_taskmap_hidden_columns_v1_${currentUser.id}`
-    : 'nexus_taskmap_hidden_columns_v1';
   const [hiddenColumns, setHiddenColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return {};
     try {
@@ -1482,9 +1484,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
       return {};
     }
   });
-  const [hiddenDropdownOpen, setHiddenDropdownOpen] = useState(false);
-  const [hiddenSearch, setHiddenSearch] = useState('');
-  const hiddenDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !currentUser?.id) return;
@@ -1495,39 +1494,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
       setHiddenColumns({});
     }
   }, [currentUser?.id]);
-
-  useEffect(() => {
-    if (!hiddenDropdownOpen) return;
-    const handleOutside = (e: MouseEvent) => {
-      if (hiddenDropdownRef.current && !hiddenDropdownRef.current.contains(e.target as Node)) {
-        setHiddenDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, [hiddenDropdownOpen]);
-
-  const setColumnHidden = useCallback(
-    (columnId: string, hide: boolean) => {
-      setHiddenColumns((prev) => {
-        const next = { ...prev, [columnId]: hide };
-        try {
-          localStorage.setItem(hiddenStorageKey, JSON.stringify(next));
-        } catch (e) {
-          console.error('Failed to save hidden columns', e);
-        }
-        return next;
-      });
-    },
-    [hiddenStorageKey]
-  );
-
-  const resetHiddenColumnsToDefault = useCallback(() => {
-    setHiddenColumns({});
-    try {
-      localStorage.removeItem(hiddenStorageKey);
-    } catch {}
-  }, [hiddenStorageKey]);
 
   useEffect(() => {
     const el = boardScrollRef.current;
@@ -1543,7 +1509,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
         sub.isSubtask &&
         sub.parentTaskId === activeDragTask.id &&
         !sub.isClosed &&
-        !sub.assigneeId
+        !sub.assigneeId &&
+        shouldSubtaskAttachToParent(sub, activeDragTask)
     );
   }, [activeDragTask, availablePool]);
   const [localShowAdmin, setLocalShowAdmin] = useState(false);
@@ -1624,6 +1591,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
     taskTitle: string;
     clientName?: string;
     onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [waitingDragAlert, setWaitingDragAlert] = useState<{
+    taskTitle: string;
+    clientName: string | null;
   } | null>(null);
   const submittingDeliverablesRef = useRef<Set<string>>(new Set());
   const recentlyClockedOutRef = useRef<Map<string, number>>(new Map());
@@ -2059,20 +2030,22 @@ export const TaskMapBoardView: React.FC<Props> = ({
       if (!hasProgress && isExcludedForUser(task)) return;
 
       // For hidden-by-default admin/dormant/startups/HR tasks inputted from the spreadsheet,
-      // attach strictly to the MA column matching the spreadsheet input IF not handed over.
+      // attach strictly to the current effective handler (if assigned) or to the MA column
+      // matching the spreadsheet input ONLY when unassigned. Never leak a task assigned to
+      // another user (e.g. filtered-out Leo) back into the previous worker's column.
       if (!effectiveShowAdmin && isAdmin && !isDev && hasSheetInput) {
         if (isTaskHandedOver(task)) return;
-        const workerCol = findColumnForMa(task.progress?.maName);
-        if (
-          effectiveHandlerId &&
-          effectiveHandlerId !== 'unassigned' &&
-          userColumnsMap[effectiveHandlerId] &&
-          doesProgressMatchUser(task.progress?.maName, targetUser?.name)
-        ) {
-          if (!userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)) {
+        if (effectiveHandlerId && effectiveHandlerId !== 'unassigned') {
+          if (
+            userColumnsMap[effectiveHandlerId] &&
+            !userColumnsMap[effectiveHandlerId].tasks.some((t) => t.id === task.id)
+          ) {
             userColumnsMap[effectiveHandlerId].tasks.push(task);
           }
-        } else if (workerCol && !workerCol[1].tasks.some((t) => t.id === task.id)) {
+          return;
+        }
+        const workerCol = findColumnForMa(task.progress?.maName);
+        if (workerCol && !workerCol[1].tasks.some((t) => t.id === task.id)) {
           workerCol[1].tasks.push(task);
         }
         return;
@@ -2210,6 +2183,24 @@ export const TaskMapBoardView: React.FC<Props> = ({
           const tClient = (t.list?.name || '').trim().toLowerCase();
           return tClient === cleanSessionClient || tClient.startsWith(cleanSessionClient);
         });
+
+        // If this task is now explicitly assigned to a different user (e.g. handed over to Leo who is
+        // currently filtered out of userColumnsMap), do not synthesize a fallback card in this user's column.
+        const matchedHandlerId = matchedLocalTask ? getEffectiveTaskMapHandlerId(matchedLocalTask) : null;
+        const isSessionLiveNow = Boolean(
+          activeSession?.timeIn &&
+          !activeSession?.timeOut &&
+          !activeSession?.isMissingTime &&
+          !isStaleLiveSession(activeSession.timeIn, activeSession.date, boardTime)
+        );
+        if (
+          matchedHandlerId &&
+          matchedHandlerId !== 'unassigned' &&
+          matchedHandlerId !== userId &&
+          !isSessionLiveNow
+        ) {
+          return;
+        }
 
         const generalBlock = createEmptyUserBlock({
           userId,
@@ -2458,6 +2449,13 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     const isFromAvailable = poolIds.has(task.id);
     const isPoolWaiting = isFromAvailable && isTaskMapItemWaiting(task);
+    if (isPoolWaiting) {
+      setWaitingDragAlert({
+        taskTitle: task.isSubtask ? (task.title || '').replace(/^--\s*/, '') : task.title,
+        clientName: task.progress?.client || task.list?.name || null,
+      });
+      return;
+    }
     const activeSourceUserId = event.active.data.current?.sourceUserId as string | null | undefined;
     const sourceOwnerId = isFromAvailable ? null : (activeSourceUserId ?? getEffectiveTaskMapHandlerId(task));
     if (
@@ -2553,6 +2551,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const isFromAvailable = poolIds.has(taskId);
 
     const currentTask = dragTask || tasks.find((t) => t.id === taskId) || availablePool.find((t) => t.id === taskId);
+    if (isFromAvailable && isTaskMapItemWaiting(currentTask)) {
+      return;
+    }
     const activeSourceUserId = active.data.current?.sourceUserId as string | null | undefined;
     const sourceOwnerId = isFromAvailable ? null : (activeSourceUserId ?? getEffectiveTaskMapHandlerId(currentTask));
     const currentAssigneeId =
@@ -2704,17 +2705,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
       // Dragging from In Progress to Queue opens the Deliverables & Time-Out modal;
       // timing out only happens once the user inputs and submits inside the modal.
       if (isDraggedFromInProgress && currentTask) {
+        const isCrossUserDrag = Boolean(sourceOwnerId && sourceOwnerId !== targetUserId);
         const openQueueTimeoutModal = async () => {
           setDeliverablesModalTarget({
             task: currentTask,
-            targetStatus: 'Paused',
+            targetStatus: isCrossUserDrag ? 'Hand-over In' : 'Paused',
             user: sourceOwnerUser || targetUser,
             realTaskId: currentTask.id,
             queueTargetUserId: targetUserId,
           });
         };
 
-        if (sourceOwnerId !== targetUserId) {
+        if (isCrossUserDrag) {
           await executeWithInactiveCheck(targetUserId, targetUser, currentTask?.title || 'Task', openQueueTimeoutModal);
         } else {
           openQueueTimeoutModal();
@@ -3368,8 +3370,58 @@ export const TaskMapBoardView: React.FC<Props> = ({
             : 'Task marked Hand-over Out & moved to Queue'
         );
       } else if (isHandoverIn) {
+        const queueDestinationUserId = deliverablesModalTarget.queueTargetUserId;
+        const effectiveQueueUserId = queueDestinationUserId || ownerId;
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over In'], statusPayloadExtra).catch(console.error);
-        toast.info('Task marked Hand-over In');
+        const handoverInOverride: TaskMapItem = {
+          ...task,
+          status: ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes((task.status || '').trim().toUpperCase())
+            ? task.status
+            : 'PENDING',
+          progress: task.progress
+            ? {
+                ...task.progress,
+                timeOut: task.progress.timeOut || (hasActiveTimeIn ? nowTimeOut : null),
+              }
+            : task.progress,
+          taskMap: {
+            ...(task.taskMap || {
+              taskId: effectiveTaskId,
+              statuses: ['Hand-over In'],
+              shift: 'DAY',
+              stepOrder: 0,
+              dontRollover: false,
+            }),
+            statuses: ['Hand-over In'],
+            handedOver: false,
+          },
+        };
+        if (effectiveQueueUserId) {
+          if (onAssignTask) {
+            await onAssignTask(
+              effectiveTaskId,
+              effectiveQueueUserId,
+              'QUEUE',
+              undefined,
+              undefined,
+              handoverInOverride,
+              true
+            );
+          } else {
+            await taskMapApi.assignTask(effectiveTaskId, effectiveQueueUserId, 'QUEUE', {
+              preserveHandover: true,
+            });
+            onDataRefresh();
+          }
+        } else {
+          onDataRefresh();
+        }
+        const destUser = queueDestinationUserId ? getUserProfile(queueDestinationUserId) : null;
+        toast.info(
+          destUser?.name
+            ? `Task handed over to ${destUser.name} (Hand-over In)`
+            : 'Task marked Hand-over In'
+        );
       } else if (isHandoverToPool) {
         const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], statusPayloadExtra).catch(console.error);
@@ -3710,6 +3762,76 @@ export const TaskMapBoardView: React.FC<Props> = ({
         return;
       }
 
+      // 1c. CRM-style transitions available on Waiting tasks inside Available Tasks
+      if (compactNorm === 'tosend' || compactNorm === 'readytosend') {
+        if (isSelecting) {
+          onStatusChange(task.id, ['To send']);
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'CRM' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info("Task marked 'To send' — moved to CRM Map");
+        }
+        return;
+      }
+
+      if (compactNorm === 'sentbutwaiting') {
+        if (isSelecting) {
+          onStatusChange(task.id, ['Sent but Waiting']);
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'WAITING' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'WAITING' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.success('Task marked Sent but Waiting');
+        } else {
+          onStatusChange(task.id, ['To send']);
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'CRM' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'CRM' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info("Reverted 'Sent but Waiting' — returned to CRM");
+        }
+        return;
+      }
+
+      if (compactNorm === 'followup' || isTimedFollowUpSubStatus(label)) {
+        if (isSelecting) {
+          onStatusChange(task.id, [label]);
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'TO FOLLOW UP' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'TO FOLLOW UP' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.info(
+            isTimedFollowUpSubStatus(label)
+              ? `Scheduled ${label} — moved to CRM Map (To Follow Up)`
+              : 'Task marked for Follow up — moved to CRM Map (To Follow Up)'
+          );
+        }
+        return;
+      }
+
+      if (compactNorm === 'closed') {
+        if (isSelecting) {
+          onStatusChange(task.id, ['Closed']);
+          if (onTaskUpdate) {
+            await onTaskUpdate(task.id, { status: 'CLOSED' });
+          } else {
+            await tasksApi.updateTask(task.id, { status: 'CLOSED' } as any).catch(console.error);
+            onDataRefresh();
+          }
+          toast.success('Task marked CLOSED');
+        }
+        return;
+      }
+
       // 2. Paused: stays at IN PROGRESS main status, stays in current MA Queue
       if (norm === 'paused') {
         if (isSelecting) {
@@ -3832,7 +3954,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
       }
     };
 
-    const baseGuide = getSubStatusTransitionGuide(label, 'TASK_MAP', {
+    const isPoolWaitingCrmTransition =
+      poolIds.has(task.id) &&
+      isTaskMapItemWaiting(task) &&
+      (
+        ['tosend', 'readytosend', 'sentbutwaiting', 'followup', 'revision', 'revisions', 'closed'].includes(compactNorm) ||
+        isTimedFollowUpSubStatus(label)
+      );
+    const baseGuide = getSubStatusTransitionGuide(label, isPoolWaitingCrmTransition ? 'CRM_MAP' : 'TASK_MAP', {
       isSelecting,
       isLiveSession: false,
     });
@@ -3895,7 +4024,29 @@ export const TaskMapBoardView: React.FC<Props> = ({
             matchesSearchFilter(t, searchQuery)
           );
           // Exclude On-hold tasks from the task number indicator per user requirement
-          const availableActiveCount = countNonOnHoldTasks(displayPool);
+          const availableActiveCount = countAvailablePoolTasks(displayPool);
+          const getAvailableWaitingOptions = (task: TaskMapItem): TaskMapOption[] => {
+            const ls = task.list?.statuses;
+            const inClientDashboard = isTaskInClientDashboard(task, clients);
+            const opts: TaskMapOption[] = [
+              { id: 'opt-avail-crm-tosend', label: 'To send', color: resolveSubStatusColor('To send', TASK_MAP_STATUS_COLORS.TO_SEND, task.list?.id, ls), textColor: '#ffffff', order: 0 },
+            ];
+            if (inClientDashboard) {
+              opts.push({ id: 'opt-avail-crm-sent', label: 'Sent but Waiting', color: resolveSubStatusColor('Sent but Waiting', TASK_MAP_STATUS_COLORS.SENT, task.list?.id, ls), textColor: '#ffffff', order: 1 });
+            }
+            opts.push(
+              ...CRM_FOLLOW_UP_STAGE_OPTIONS.map((stage, idx) => ({
+                id: `opt-avail-${stage.id}`,
+                label: stage.label,
+                color: stage.color,
+                textColor: stage.textColor,
+                order: 2 + idx,
+              })),
+              { id: 'opt-avail-crm-revision', label: 'Revision', color: resolveSubStatusColor('Revision', TASK_MAP_STATUS_COLORS.REVISION, task.list?.id, ls), textColor: '#ffffff', order: 6 },
+              { id: 'opt-avail-crm-closed', label: 'Closed', color: resolveSubStatusColor('Closed', TASK_MAP_STATUS_COLORS.CLOSED, task.list?.id, ls), textColor: '#ffffff', order: 7 }
+            );
+            return opts;
+          };
 
           if (isCollapsed) {
             return (
@@ -4143,12 +4294,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       (task.status || '').toUpperCase() === 'CLOSED' ||
                       (task.status || '').toUpperCase() === 'DONE';
                     const isSubtask = Boolean(task.isSubtask);
+                    const parentInColumn = isSubtask && task.parentTaskId
+                      ? filteredDisplayPool.find((p) => !p.isSubtask && p.id === task.parentTaskId)
+                      : undefined;
                     const hasParentInColumn = Boolean(
-                      isSubtask &&
-                      task.parentTaskId &&
-                      filteredDisplayPool.some((p) => !p.isSubtask && p.id === task.parentTaskId)
+                      parentInColumn && shouldSubtaskAttachToParent(task, parentInColumn)
                     );
-                    const isSeparatedSubtask = isSubtask && !hasParentInColumn;
+                    const hasDifferentColorParent = Boolean(parentInColumn && !hasParentInColumn);
+                    const isSeparatedSubtask = isSubtask && !hasParentInColumn && !hasDifferentColorParent;
 
                     const clientName = task.progress?.client || task.list?.name || '';
                     const isClientConfiguredUpwork = upworkClients.some(
@@ -4202,7 +4355,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                       <DraggableTaskCard
                         key={task.id}
                         task={task}
-                        disabled={!isPmUser || isPoolWaiting}
+                        disabled={!isPmUser}
                       >
                         <div className={isSubtask && hasParentInColumn ? 'relative pl-4' : ''}>
                           {isSubtask && hasParentInColumn && (
@@ -4375,7 +4528,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                 </div>
                                 <TaskMapStatusDropdown
                                   selectedStatuses={normalizeTaskMapSubStatuses(task.status, task.taskMap?.statuses, { isAssigned: false })}
-                                  options={getUnifiedTaskMapOptions(task)}
+                                  options={isPoolWaiting ? getAvailableWaitingOptions(task) : getUnifiedTaskMapOptions(task)}
                                   onToggleStatus={(label, nextStatuses) =>
                                     handleTaskMapSubStatusToggle(task, label, nextStatuses)
                                   }
@@ -4472,7 +4625,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
         ) : (() => {
           const customSelectedSet = new Set(selectedCustomMAs || []);
           const visibleUserColumns: typeof sortedUserColumns = [];
-          const hiddenUserColumns: typeof sortedUserColumns = [];
 
           for (const entry of sortedUserColumns) {
             const [uId] = entry;
@@ -4480,9 +4632,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             const isHidden =
               !explicitlySelected &&
               resolveColumnHiddenState(uId, hiddenColumns, currentUser?.id, isPmUser);
-            if (isHidden) {
-              hiddenUserColumns.push(entry);
-            } else {
+            if (!isHidden) {
               visibleUserColumns.push(entry);
             }
           }
@@ -4664,17 +4814,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
                           <RotateCcw className="size-3.5" />
                         </button>
 
-                        {userId !== currentUser?.id && (
-                          <button
-                            type="button"
-                            onClick={() => setColumnHidden(userId, true)}
-                            className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-md cursor-pointer transition-colors"
-                            title={`Hide ${user.name}'s column`}
-                          >
-                            <EyeOff className="size-3.5" />
-                          </button>
-                        )}
-
                         <button
                           type="button"
                           onClick={() => toggleCollapseColumn(userId)}
@@ -4816,12 +4955,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
                     (task.status || '').toUpperCase() === 'CLOSED' ||
                     (task.status || '').toUpperCase() === 'DONE';
                   const isSubtask = Boolean(task.isSubtask);
+                  const parentInColumn = isSubtask && task.parentTaskId
+                    ? sorted.find((p) => !p.isSubtask && p.id === task.parentTaskId)
+                    : undefined;
                   const hasParentInColumn = Boolean(
-                    isSubtask &&
-                    task.parentTaskId &&
-                    sorted.some((p) => !p.isSubtask && p.id === task.parentTaskId)
+                    parentInColumn && shouldSubtaskAttachToParent(task, parentInColumn)
                   );
-                  const isSeparatedSubtask = isSubtask && !hasParentInColumn;
+                  const hasDifferentColorParent = Boolean(parentInColumn && !hasParentInColumn);
+                  const isSeparatedSubtask = isSubtask && !hasParentInColumn && !hasDifferentColorParent;
 
                   // Worker isolation: only display sheet progress if it was logged by THIS column's user!
                   const isMyProgress = Boolean(task.isAssumptionBlock || doesProgressMatchUser(task.progress?.maName, user.name));
@@ -5471,120 +5612,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
             </LazyUserColumnShell>
           );
         })}
-
-              {hiddenUserColumns.length > 0 && (
-                <div ref={hiddenDropdownRef} className="relative shrink-0 self-start pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setHiddenDropdownOpen((prev) => !prev)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-card/90 border border-zinc-800/80 hover:border-zinc-700 text-xs font-medium text-zinc-300 hover:text-white shadow-lg transition-colors cursor-pointer"
-                    title="View or unhide hidden team columns"
-                  >
-                    <Eye className="size-3.5 text-zinc-400" />
-                    <span>Hidden columns</span>
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
-                      {hiddenUserColumns.length}
-                    </span>
-                    <ChevronDown className={`size-3.5 text-zinc-400 transition-transform ${hiddenDropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {hiddenDropdownOpen && (
-                    <div className="absolute left-0 top-full mt-2 w-64 rounded-xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-md shadow-2xl p-2 z-40 space-y-2">
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800">
-                        <Search className="size-3 text-zinc-500 shrink-0" />
-                        <input
-                          type="text"
-                          value={hiddenSearch}
-                          onChange={(e) => setHiddenSearch(e.target.value)}
-                          placeholder="Find member column..."
-                          className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
-                        />
-                        {hiddenSearch && (
-                          <button
-                            type="button"
-                            onClick={() => setHiddenSearch('')}
-                            className="text-zinc-500 hover:text-zinc-300 cursor-pointer"
-                          >
-                            <X className="size-3" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="max-h-64 overflow-y-auto custom-scrollbar space-y-0.5">
-                        {hiddenUserColumns
-                          .filter(([, { user }]) =>
-                            !hiddenSearch.trim() ||
-                            (user.name || '').toLowerCase().includes(hiddenSearch.trim().toLowerCase())
-                          )
-                          .map(([hUserId, { user, tasks: hTasks }]) => {
-                            const hInitials = (user.name || 'U').substring(0, 2).toUpperCase();
-                            const hAvatarBg = getAssigneeAvatarColor(user.name || 'U');
-                            const hCount = countNonOnHoldTasks(hTasks);
-                            return (
-                              <button
-                                key={hUserId}
-                                type="button"
-                                onClick={() => setColumnHidden(hUserId, false)}
-                                className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-zinc-800/70 text-left transition-colors cursor-pointer"
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  {user.avatarUrl ? (
-                                    <img
-                                      src={user.avatarUrl}
-                                      alt={user.name}
-                                      className="size-5 rounded-full object-cover border border-zinc-700/80 shrink-0"
-                                      loading="lazy"
-                                    />
-                                  ) : (
-                                    <div className={`size-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${hAvatarBg}`}>
-                                      {hInitials}
-                                    </div>
-                                  )}
-                                  <span className="text-xs text-zinc-200 truncate">{user.name}</span>
-                                </div>
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/70 shrink-0">
-                                  {hCount}
-                                </span>
-                              </button>
-                            );
-                          })}
-                      </div>
-
-                      <div className="flex items-center justify-between pt-1.5 border-t border-zinc-800/80">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next: Record<string, boolean> = { ...hiddenColumns };
-                            for (const [hUserId] of hiddenUserColumns) {
-                              next[hUserId] = false;
-                            }
-                            setHiddenColumns(next);
-                            try {
-                              localStorage.setItem(hiddenStorageKey, JSON.stringify(next));
-                            } catch {}
-                            setHiddenDropdownOpen(false);
-                          }}
-                          className="text-[11px] font-medium text-[#0099ff] hover:text-sky-300 px-1.5 py-0.5 cursor-pointer"
-                        >
-                          Show all
-                        </button>
-                        {Object.keys(hiddenColumns).length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              resetHiddenColumnsToDefault();
-                              setHiddenDropdownOpen(false);
-                            }}
-                            className="text-[11px] text-zinc-400 hover:text-zinc-200 px-1.5 py-0.5 cursor-pointer"
-                          >
-                            Reset default
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </>
           );
         })()}
@@ -5730,6 +5757,57 @@ export const TaskMapBoardView: React.FC<Props> = ({
           currentSubStatuses={subStatusGuideTarget.task.taskMap?.statuses || []}
           currentMainStatus={subStatusGuideTarget.task.status}
         />
+      )}
+
+      {/* Waiting Drag Blocked Alert Modal */}
+      {waitingDragAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-md bg-zinc-900 border border-amber-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="waiting-drag-alert-title"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-amber-950/20">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-lg border bg-amber-500/15 border-amber-500/35 text-amber-300 shrink-0">
+                  <AlertTriangle className="size-4 shrink-0" />
+                </div>
+                <div className="min-w-0">
+                  <h3 id="waiting-drag-alert-title" className="text-sm font-semibold text-zinc-100 truncate">
+                    Cannot Drag Waiting Task
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 truncate mt-0.5">
+                    {waitingDragAlert.clientName ? `${waitingDragAlert.clientName} — ${waitingDragAlert.taskTitle}` : waitingDragAlert.taskTitle}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWaitingDragAlert(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors shrink-0 cursor-pointer"
+                title="Close"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-zinc-200 leading-relaxed">
+                You cannot drag a <span className="font-semibold text-amber-300">Waiting</span> task directly from Available Tasks. Please change its sub-status to <span className="font-semibold text-zinc-100">Revision</span> first before assigning it.
+              </p>
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setWaitingDragAlert(null)}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 active:bg-amber-700 transition-colors shadow-md cursor-pointer"
+                >
+                  <Check className="size-3.5" />
+                  <span>Got it</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* On-Hold Drag Confirmation Modal */}

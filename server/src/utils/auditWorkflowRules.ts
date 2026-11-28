@@ -124,6 +124,8 @@ export function resolveHandOverAvailablePoolVisibility(task: {
     s.includes('WAITING') ||
     s === 'CRM' ||
     s.includes('CRM') ||
+    s === 'TOSEND' ||
+    s === 'TOFOLLOWUP' ||
     s === 'INREVIEW' ||
     s === 'TOREVIEW' ||
     s === 'REVIEW' ||

@@ -24,7 +24,8 @@ export const ALL_STATUSES = [
   'WAITING',
   'IN REVIEW',
   'CHECKING',
-  'CRM',
+  'TO SEND',
+  'TO FOLLOW UP',
   'ON-HOLD',
   'CLOSED',
   'KYC',
@@ -32,6 +33,7 @@ export const ALL_STATUSES = [
 ];
 
 const HIDDEN_BOARD_STATUS_KEYS = new Set([
+  'CRM',
   'CRMNEEDEDTOSEND',
   'CRMTOSEND',
   'CRMNEEDEDTOFOLLOWUP',
@@ -154,6 +156,10 @@ export const STATUS_COLORS: Record<string, string> = {
   'CRM NEEDED TO FOLLOW UP': 'bg-[#6366F1] text-white',
   'crm_follow_up': 'bg-[#6366F1] text-white',
   'CRM': 'bg-[#22A3AE] text-white',
+  'TO SEND': 'bg-[#0284c7] text-white',
+  'To Send': 'bg-[#0284c7] text-white',
+  'TO FOLLOW UP': 'bg-[#6366F1] text-white',
+  'To Follow Up': 'bg-[#6366F1] text-white',
   'CLOSED': 'bg-[#2FA37A] text-white',
   'ON-HOLD': 'bg-[#8A8F98] text-white',
 

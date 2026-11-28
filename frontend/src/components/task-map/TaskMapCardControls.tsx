@@ -218,8 +218,41 @@ export const sortAvailablePoolTasks = (items: TaskMapItem[]) =>
   groupTasksWithSubtasks([...items].sort(compareAvailablePoolTasks));
 
 /**
+ * Returns true if a subtask should visually nest/attach directly below its parent task.
+ * A subtask with a different status color than its parent (or On-Hold/Waiting mismatch)
+ * acts independently like a whole task even when its parent is in the same column.
+ */
+export const shouldSubtaskAttachToParent = (
+  subtask: TaskMapItem,
+  parent?: TaskMapItem | null
+): boolean => {
+  if (!subtask.isSubtask || !subtask.parentTaskId || !parent || parent.isSubtask) return false;
+  if (parent.id !== subtask.parentTaskId) return false;
+  // Keep On-Hold subtasks at the very bottom rather than pulling them up under an active parent
+  if (isTaskOnHold(subtask) && !isTaskOnHold(parent)) return false;
+
+  const subColor = resolveTaskStatusColor(
+    subtask.status || 'PENDING',
+    subtask.listId || subtask.list?.id,
+    subtask.list?.statuses
+  )
+    .trim()
+    .toLowerCase();
+  const parentColor = resolveTaskStatusColor(
+    parent.status || 'PENDING',
+    parent.listId || parent.list?.id,
+    parent.list?.statuses
+  )
+    .trim()
+    .toLowerCase();
+
+  if (subColor !== parentColor) return false;
+  return true;
+};
+
+/**
  * Places subtasks directly below their parent main task whenever both exist in the same column
- * (unless a subtask is On-Hold under an active parent, keeping On-Hold at the bottom),
+ * and share the same status color (subtasks with a different status color act like whole tasks),
  * while keeping separated subtasks at their natural sorted positions.
  */
 export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[] => {
@@ -231,10 +264,7 @@ export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[
   const shouldAttachToParent = (item: TaskMapItem): boolean => {
     if (!item.isSubtask || !item.parentTaskId) return false;
     const parent = parentById.get(item.parentTaskId);
-    if (!parent) return false;
-    // Keep On-Hold subtasks at the very bottom rather than pulling them up under an active parent
-    if (isTaskOnHold(item) && !isTaskOnHold(parent)) return false;
-    return true;
+    return shouldSubtaskAttachToParent(item, parent);
   };
 
   const attachedByParent = new Map<string, TaskMapItem[]>();

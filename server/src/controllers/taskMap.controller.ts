@@ -101,7 +101,13 @@ const CRM_TAG_SET = new Set([
   'OUTREACH SENT',
   'CLIENT SENT',
   'TO SEND',
+  'TO FOLLOW UP',
+  'TOFOLLOWUP',
   'FOLLOW UP',
+  'FOLLOW-UP 1 DAY',
+  'FOLLOW-UP 3RD DAY',
+  'FOLLOW-UP 5TH DAY',
+  'FOLLOW-UP 1 WEEK',
   'TOSEND',
   'READY TO SEND',
   'READYTOSEND',
@@ -993,8 +999,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-      if (statusKey === 'CRM' || statusKey === 'CRMNEEDEDTOSEND' || statusKey === 'CRMTOSEND') return ['To send'];
-      if (statusKey === 'CRMNEEDEDTOFOLLOWUP' || statusKey === 'CRMFOLLOWUP') return ['Follow up'];
+      if (statusKey === 'CRM' || statusKey === 'TOSEND' || statusKey === 'CRMNEEDEDTOSEND' || statusKey === 'CRMTOSEND') return ['To send'];
+      if (statusKey === 'TOFOLLOWUP' || statusKey === 'CRMNEEDEDTOFOLLOWUP' || statusKey === 'CRMFOLLOWUP') return ['Follow up'];
       if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
       if (statusKey === 'REVISION' || statusKey === 'REVISIONS') return ['Revision'];
@@ -1154,7 +1160,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (cur.length === 0 || cur.every((s: string) => staleForWaiting.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['Sent but Waiting'] };
         }
-      } else if (taskStatusNorm === 'CRM' || taskStatusNorm === 'CRMNEEDEDTOSEND' || taskStatusNorm === 'CRMTOSEND') {
+      } else if (taskStatusNorm === 'CRM' || taskStatusNorm === 'TOSEND' || taskStatusNorm === 'CRMNEEDEDTOSEND' || taskStatusNorm === 'CRMTOSEND') {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForCrm = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
@@ -1163,7 +1169,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (cur.length === 0 || cur.every((s: string) => staleForCrm.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['To send'] };
         }
-      } else if (taskStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || taskStatusNorm === 'CRMFOLLOWUP') {
+      } else if (taskStatusNorm === 'TOFOLLOWUP' || taskStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || taskStatusNorm === 'CRMFOLLOWUP') {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForFollowUp = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
@@ -1492,6 +1498,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const isExcluded =
         s === 'CRM' ||
         s.includes('CRM') ||
+        s === 'TOSEND' ||
+        s === 'TOFOLLOWUP' ||
         s === 'INREVIEW' ||
         s === 'TOREVIEW' ||
         s === 'REVIEW' ||
@@ -2166,7 +2174,8 @@ const parsePmReviewsArray = (raw: any): any[] => {
 
 const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
   const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (statusKey === 'CRM') return ['To send'];
+  if (statusKey === 'CRM' || statusKey === 'TOSEND') return ['To send'];
+  if (statusKey === 'TOFOLLOWUP') return ['Follow up'];
   if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
   if (statusKey === 'ONHOLD') return ['On-hold'];
   if (
@@ -2190,6 +2199,40 @@ const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
 /**
  * Update multi-select status chips for a task or subtask (`subtask:<id>`)
  */
+function parseFollowUpScheduleDaysBackend(label?: string | null): number | null {
+  const compact = String(label || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (compact === 'FOLLOWUP1DAY') return 1;
+  if (compact === 'FOLLOWUP3RDDAY') return 3;
+  if (compact === 'FOLLOWUP5THDAY') return 5;
+  if (compact === 'FOLLOWUP1WEEK') return 7;
+  return null;
+}
+
+function syncFollowUpScheduleInPmReviews(
+  pmReviews: any[],
+  statuses: string[],
+  subtaskId: string | null
+): any[] {
+  const matchedLabel = (statuses || []).find((s) => parseFollowUpScheduleDaysBackend(s) !== null) || null;
+  const targetDays = matchedLabel ? parseFollowUpScheduleDaysBackend(matchedLabel) : null;
+  const filtered = (Array.isArray(pmReviews) ? pmReviews : []).filter(
+    (r: any) => !(r && r.type === 'CRM_FOLLOW_UP_SCHEDULE' && (subtaskId ? r.subtaskId === subtaskId : !r.subtaskId))
+  );
+  if (matchedLabel && targetDays) {
+    const nowIso = new Date().toISOString();
+    filtered.push({
+      type: 'CRM_FOLLOW_UP_SCHEDULE',
+      subtaskId: subtaskId || null,
+      selectedLabel: matchedLabel,
+      targetDays,
+      selectedAt: nowIso,
+      selectedDateKey: getManilaDateStr(),
+      updatedAt: nowIso,
+    });
+  }
+  return filtered;
+}
+
 export const updateTaskStatuses = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -2467,6 +2510,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       } else {
         pmReviews.push(nextEntry);
       }
+      pmReviews = syncFollowUpScheduleInPmReviews(pmReviews, statuses, subtask.id);
 
       const updatedParent = await updateTaskMapRecord(subtask.taskId, { pmReviews });
       await invalidateCache('task:*', 'tasks:all', `task:${subtask.taskId}`, `task:${subtask.id}`, `task:activities:${subtask.taskId}`, 'task_map:*');
@@ -2859,6 +2903,8 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     } else if (isLeavingWaitingSubStatus && Array.isArray(pmReviews)) {
       pmReviews = pmReviews.filter((r: any) => !(r && r.type === 'CRM_WAITING_META'));
     }
+
+    pmReviews = syncFollowUpScheduleInPmReviews(pmReviews, statuses, null);
 
     const updated = await updateTaskMapRecord(id, {
       statuses,

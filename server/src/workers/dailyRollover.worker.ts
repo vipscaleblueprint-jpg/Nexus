@@ -86,6 +86,8 @@ export async function runDailyRollover(options?: { dateOverride?: string | Date;
     'CRM Needed to Follow Up': 15,
     'CRM NEEDED TO FOLLOW UP': 15,
     'CRM':          16,
+    'TO SEND':      17,
+    'TO FOLLOW UP': 18,
   };
 
   const getStatusOrder = (status: string) => STATUS_ORDER[(status || '').toUpperCase()] ?? 99;

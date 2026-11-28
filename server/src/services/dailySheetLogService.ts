@@ -383,6 +383,22 @@ export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
     }
   }
 
+  // Also index overnight live entries (started before midnight Manila within the 18h window)
+  // so night-shift MAs who are still clocked in don't disappear at 12:00 AM
+  if (includeOvernightShiftWindow) {
+    for (const log of latestByMaMap.values()) {
+      if (!log.isLive || log.dateKey === dateKey) continue;
+      if (log.maKey && !liveByMaKey.has(log.maKey)) {
+        liveByMaKey.set(log.maKey, log);
+      }
+      if (log.subtaskId && !bySubtaskId.has(log.subtaskId)) {
+        bySubtaskId.set(log.subtaskId, log);
+      } else if (!log.subtaskId && log.taskId && !byTaskId.has(log.taskId)) {
+        byTaskId.set(log.taskId, log);
+      }
+    }
+  }
+
   return {
     dateKey,
     logs,

@@ -671,9 +671,13 @@ export const TaskMapContainer: React.FC = () => {
             }
           }
         });
-        // Ensure any open live row in dailySheetLogs is also reflected in enrichedSessions
-        if (Array.isArray(res.dailySheetLogs)) {
-          res.dailySheetLogs.forEach((l: any) => {
+        // Ensure any open live row in dailySheetLogs or latestSheetRows (overnight shift window) is reflected in enrichedSessions
+        const liveLogCandidates = [
+          ...(Array.isArray(res.dailySheetLogs) ? res.dailySheetLogs : []),
+          ...(Array.isArray(res.latestSheetRows) ? res.latestSheetRows : []),
+        ];
+        if (liveLogCandidates.length > 0) {
+          liveLogCandidates.forEach((l: any) => {
             if (!l?.maName || !l.isLive || !l.timeIn || l.timeOut || l.isMissingTime) return;
             const key = l.maName.toLowerCase().trim();
             const existing = enrichedSessions[key];
@@ -690,6 +694,7 @@ export const TaskMapContainer: React.FC = () => {
             if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
               enrichedSessions[key] = {
                 maName: l.maName,
+                userId: l.userId || null,
                 taskId: l.subtaskId ? `subtask:${l.subtaskId}` : (l.taskId || null),
                 subtaskId: l.subtaskId || null,
                 timeIn: l.timeIn,

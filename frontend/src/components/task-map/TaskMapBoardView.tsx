@@ -2087,13 +2087,18 @@ export const TaskMapBoardView: React.FC<Props> = ({
     tasks.forEach(attachTaskToUserColumns);
     availablePool.forEach(attachTaskToUserColumns);
 
-    const findActiveSessionForUser = (userName?: string | null) => {
-      if (!userName || !maActiveSessions) return null;
+    const findActiveSessionForUser = (userName?: string | null, userId?: string | null) => {
+      if ((!userName && !userId) || !maActiveSessions) return null;
+      const entries = Object.entries(maActiveSessions);
+      if (userId) {
+        const byId = entries.find(([, s]) => (s as any)?.userId && (s as any).userId === userId);
+        if (byId) return byId[1];
+      }
+      if (!userName) return null;
       const cleanUser = userName.trim().toLowerCase();
       const direct = maActiveSessions[cleanUser];
       if (direct) return direct;
 
-      const entries = Object.entries(maActiveSessions);
       const exactEntry = entries.find(([key, s]) => {
         const k = key.trim().toLowerCase();
         const m = ((s as any)?.maName || '').trim().toLowerCase();
@@ -2118,7 +2123,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
     // 2.5 Ensure user columns reflect their latest MA schedule sheet input
     Object.entries(userColumnsMap).forEach(([userId, col]) => {
-      const activeSession = findActiveSessionForUser(col.user.name) as any;
+      const activeSession = findActiveSessionForUser(col.user.name, userId) as any;
       const sessionStatusNorm = (activeSession?.status || activeSession?.taskStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
       const isSessionClosed =
         ['CLOSED', 'DONE', 'COMPLETE', 'COMPLETED', 'RESOLVED', 'CANCELLED'].includes(sessionStatusNorm) ||
@@ -2309,7 +2314,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         if (trackFilter !== 'ALL') {
           const userName = col.user?.name;
           const allItems = [...col.tasks, ...tasks, ...availablePool];
-          const activeSession = findActiveSessionForUser(userName) as any;
+          const activeSession = findActiveSessionForUser(userName, id) as any;
           if (trackFilter === 'LIVE') {
             const hasLiveTask = allItems.some((t) => isTaskLiveWorking(t, userName, boardTime));
             const hasLiveSession = Boolean(
@@ -2700,6 +2705,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
           ? ` (+${remainingAvailableSubtasks.length} available subtask${remainingAvailableSubtasks.length > 1 ? 's' : ''})`
           : '';
       const preserveHandover = Boolean(
+        isFromAvailable ||
         isTaskHandedOver(currentTask) ||
         (sourceOwnerId && sourceOwnerId !== targetUserId)
       );
@@ -2943,9 +2949,14 @@ export const TaskMapBoardView: React.FC<Props> = ({
     const isInsideMaColumn = Boolean(_user) || !poolIds.has(task.id);
     const list: TaskMapOption[] = [
       { id: 'opt-status-avail', label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff', order: 0 },
-      isInsideMaColumn
-        ? { id: 'opt-status-handover-out', label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 }
-        : { id: 'opt-status-handover-in', label: 'Hand-over In', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 },
+      ...(isInsideMaColumn
+        ? [
+            { id: 'opt-status-handover-in', label: 'Hand-over In', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 },
+            { id: 'opt-status-handover-out', label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1.5 },
+          ]
+        : [
+            { id: 'opt-status-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 },
+          ]),
       { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12', order: 2 },
       { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75', order: 3 },
       { id: 'opt-status-toreview', label: 'To Review', color: resolveSubStatusColor('To Review', TASK_MAP_STATUS_COLORS.TO_REVIEW, task.list?.id, task.list?.statuses), textColor: '#ffffff', order: 4 },
@@ -2971,9 +2982,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       'DONE REVIEW',
       'DONEREVIEW',
       'DONE',
-      'HANDOVER',
-      'HAND-OVER',
-      ...(isInsideMaColumn ? ['HANDOVERIN', 'HAND-OVER IN'] : ['HANDOVEROUT', 'HAND-OVER OUT']),
+      ...(isInsideMaColumn
+        ? ['HANDOVER', 'HAND-OVER']
+        : ['HANDOVERIN', 'HAND-OVER IN', 'HANDOVEROUT', 'HAND-OVER OUT']),
     ]);
 
     // Ensure any currently selected statuses on this task are also present so user can toggle them off,
@@ -3004,14 +3015,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
     taskDeliverablesDescription: string;
     taskUpdateAndDeliverables: string;
     timeOut: string;
+    targetStatus?: string;
   }) => {
     if (!deliverablesModalTarget) return;
-    const { task, targetStatus, user: modalUser, realTaskId } = deliverablesModalTarget;
+    const { task, user: modalUser, realTaskId } = deliverablesModalTarget;
+    const targetStatus = data.targetStatus || deliverablesModalTarget.targetStatus;
     const compactTarget = targetStatus.toLowerCase().replace(/[\s_-]+/g, '');
-    const isHandover =
-      compactTarget === 'handover' ||
-      compactTarget === 'handoverout' ||
-      compactTarget === 'handoverin';
+    const isHandoverOut = compactTarget === 'handoverout';
+    const isHandoverToPool = compactTarget === 'handover';
+    const isHandoverIn = compactTarget === 'handoverin';
+    const isHandover = isHandoverOut || isHandoverToPool || isHandoverIn;
     const isToReview = compactTarget === 'toreview' || compactTarget === 'inreview';
     const isPaused = compactTarget === 'paused';
     const isAvailableTask = compactTarget === 'availabletask';
@@ -3151,7 +3164,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
             ? 'ON-HOLD'
             : isRevision
               ? 'REVISION'
-              : isPaused
+              : isPaused || isHandoverOut
                 ? (['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes((task.status || '').trim().toUpperCase())
                     ? task.status
                     : 'PENDING')
@@ -3162,10 +3175,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
         ...(optimisticMainStatus ? { targetMainStatus: optimisticMainStatus } : {}),
         taskDeliverablesDescription: data.taskDeliverablesDescription,
         taskUpdateAndDeliverables: data.taskUpdateAndDeliverables,
-        ...(isHandover || isAvailableTask ? { handedOver: true } : isPaused ? { handedOver: false } : {}),
+        ...(isHandoverToPool || isAvailableTask ? { handedOver: true } : isPaused || isHandoverOut || isHandoverIn ? { handedOver: false } : {}),
         clearAssignee: Boolean(
           isAvailableTask ||
-            (isPmUser && (isHandover || isToReview || isAskClient || isWaiting || isOnHold))
+            (isPmUser && (isHandoverToPool || isToReview || isAskClient || isWaiting || isOnHold))
         ),
       });
       setDeliverablesModalTarget(null);
@@ -3219,7 +3232,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
         const isCrossUserQueueMove = Boolean(
           queueDestinationUserId && ownerId && queueDestinationUserId !== ownerId
         );
-        const nextPausedStatuses = isCrossUserQueueMove ? ['Hand-over'] : ['Paused'];
+        const nextPausedStatuses = isCrossUserQueueMove ? ['Hand-over In'] : ['Paused'];
         onStatusChange(effectiveTaskId, nextPausedStatuses);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, nextPausedStatuses, statusPayloadExtra).catch(console.error);
         const pausedOverride: TaskMapItem = {
@@ -3270,9 +3283,55 @@ export const TaskMapBoardView: React.FC<Props> = ({
             ? `Task paused & stored in Queue — timed out at ${nowTimeOut}`
             : 'Task paused & stored in Queue'
         );
-      } else if (isHandover) {
-        const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+      } else if (isHandoverOut) {
+        onStatusChange(effectiveTaskId, ['Hand-over Out']);
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over Out'], statusPayloadExtra).catch(console.error);
+        const handoverOutOverride: TaskMapItem = {
+          ...task,
+          status: ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes((task.status || '').trim().toUpperCase())
+            ? task.status
+            : 'PENDING',
+          progress: task.progress
+            ? {
+                ...task.progress,
+                timeOut: task.progress.timeOut || (hasActiveTimeIn ? nowTimeOut : null),
+              }
+            : task.progress,
+          taskMap: {
+            ...(task.taskMap || {
+              taskId: effectiveTaskId,
+              statuses: ['Hand-over Out'],
+              shift: 'DAY',
+              stepOrder: 0,
+              dontRollover: false,
+            }),
+            statuses: ['Hand-over Out'],
+            handedOver: false,
+          },
+        };
+        if (ownerId) {
+          if (onAssignTask) {
+            await onAssignTask(effectiveTaskId, ownerId, 'QUEUE', undefined, undefined, handoverOutOverride, false);
+          } else {
+            await taskMapApi.assignTask(effectiveTaskId, ownerId, 'QUEUE');
+            onDataRefresh();
+          }
+        } else {
+          onDataRefresh();
+        }
+        toast.info(
+          hasActiveTimeIn
+            ? `Task marked Hand-over Out & moved to Queue — clocked out at ${nowTimeOut}`
+            : 'Task marked Hand-over Out & moved to Queue'
+        );
+      } else if (isHandoverIn) {
+        onStatusChange(effectiveTaskId, ['Hand-over In']);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over In'], statusPayloadExtra).catch(console.error);
+        toast.info('Task marked Hand-over In');
+      } else if (isHandoverToPool) {
+        const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+        onStatusChange(effectiveTaskId, ['Hand-over']);
+        await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], statusPayloadExtra).catch(console.error);
         if (isPmUser && onTaskUpdate) {
           await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
         } else {
@@ -3281,8 +3340,8 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
         toast.info(
           hasActiveTimeIn
-            ? `Task handed over — clocked out at ${nowTimeOut}`
-            : 'Task handed over & signed out'
+            ? `Task handed over to Available Tasks — clocked out at ${nowTimeOut}`
+            : 'Task handed over to Available Tasks'
         );
       } else if (isToReview) {
         if (ownerId) {
@@ -3423,7 +3482,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
       (!task.isAssumptionBlock && isTaskActiveInProgress(task, ownerNameForLive))
     );
 
-    const isHandoverOutTarget = compactNorm === 'handover' || compactNorm === 'handoverout';
+    const isInsideMaColumnForToggle = Boolean(user) || !poolIds.has(task.id);
+    const isHandoverOutTarget =
+      compactNorm === 'handoverout' || (compactNorm === 'handover' && isInsideMaColumnForToggle);
     const shouldRequireTimeoutModal =
       (isSelecting &&
         (isHandoverOutTarget ||
@@ -3436,15 +3497,19 @@ export const TaskMapBoardView: React.FC<Props> = ({
       const targetModalStatus = isSelecting ? label : 'Paused';
       const targetCompact = targetModalStatus.toLowerCase().replace(/[\s_-]+/g, '');
       const normalizedModalStatus =
-        targetCompact === 'handover' || targetCompact === 'handoverout'
+        targetCompact === 'handoverout'
           ? 'Hand-over Out'
           : targetCompact === 'handoverin'
             ? 'Hand-over In'
-            : targetCompact === 'toreview' || targetCompact === 'inreview'
-              ? 'To Review'
-              : targetCompact === 'paused'
-                ? 'Paused'
-                : targetModalStatus;
+            : targetCompact === 'handover'
+              ? isInsideMaColumnForToggle
+                ? 'Hand-over Out'
+                : 'Hand-over'
+              : targetCompact === 'toreview' || targetCompact === 'inreview'
+                ? 'To Review'
+                : targetCompact === 'paused'
+                  ? 'Paused'
+                  : targetModalStatus;
 
       if (targetCompact === 'handover' || targetCompact === 'handoverout' || targetCompact === 'toreview') {
         const lastClockOut = recentlyClockedOutRef.current.get(task.id);
@@ -3540,7 +3605,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
       onStatusChange(task.id, cleanNext);
 
-      // 1. Hand-over Out / Hand-over In: stays at main status, transfers to Available Tasks so PMs can reassign to other MAs
+      // 1. Hand-over (Available Tasks) / Hand-over In (MA Queue) / Hand-over Out (MA Queue)
       if (compactNorm === 'handover' || compactNorm === 'handoverout' || compactNorm === 'handoverin') {
         if (isSelecting) {
           if (compactNorm === 'handoverin') {
@@ -3548,18 +3613,27 @@ export const TaskMapBoardView: React.FC<Props> = ({
             toast.info('Task marked Hand-over In');
             return;
           }
-          onStatusChange(task.id, ['Hand-over In']);
-          const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
-          if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
-            task.progress.timeOut = formatManilaTime(new Date());
+          if (compactNorm === 'handoverout') {
+            onStatusChange(task.id, ['Hand-over Out']);
+            toast.info('Task marked Hand-over Out');
+            return;
           }
-          if (onTaskUpdate) {
-            await onTaskUpdate(task.id, { ...(isPmUser ? { assigneeId: null } : {}), status: preservedStatus });
+          onStatusChange(task.id, ['Hand-over']);
+          if (!poolIds.has(task.id)) {
+            const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
+            if (task.progress && task.progress.timeIn && !task.progress.timeOut) {
+              task.progress.timeOut = formatManilaTime(new Date());
+            }
+            if (onTaskUpdate) {
+              await onTaskUpdate(task.id, { ...(isPmUser ? { assigneeId: null } : {}), status: preservedStatus });
+            } else {
+              await tasksApi.updateTask(task.id, { ...(isPmUser ? { assigneeId: null } : {}), status: preservedStatus } as any).catch(console.error);
+              onDataRefresh();
+            }
+            toast.info('Task handed over — transferred to Available Tasks');
           } else {
-            await tasksApi.updateTask(task.id, { ...(isPmUser ? { assigneeId: null } : {}), status: preservedStatus } as any).catch(console.error);
-            onDataRefresh();
+            toast.info('Task marked Hand-over');
           }
-          toast.info('Task handed over — transferred to Available Tasks for PM reassignment');
         }
         return;
       }
@@ -4159,7 +4233,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                     if (normNew === 'toreview' || normNew === 'inreview' || normNew === 'handover') {
                                       setDeliverablesModalTarget({
                                         task,
-                                        targetStatus: normNew === 'handover' ? 'Hand-over Out' : 'To Review',
+                                        targetStatus: normNew === 'handover' ? 'Hand-over' : 'To Review',
                                         realTaskId: task.id,
                                       });
                                       return;
@@ -5539,6 +5613,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
           folderName={deliverablesModalTarget.task.list?.folder?.name || ''}
           isAdminTask={isTaskUnderAdmin(deliverablesModalTarget.task)}
           targetStatus={deliverablesModalTarget.targetStatus}
+          statusOptions={[
+            ...(isPmUser ? [{ label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK }] : []),
+            { label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW },
+            { label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
+            { label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
+            { label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED },
+            { label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT },
+            { label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING },
+            { label: 'On-hold', color: TASK_MAP_STATUS_COLORS.ON_HOLD },
+            { label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION },
+          ]}
+          onTargetStatusChange={(nextStatus) =>
+            setDeliverablesModalTarget((prev) => (prev ? { ...prev, targetStatus: nextStatus } : null))
+          }
           initialDeliverables={deliverablesModalTarget.task.progress?.taskDeliverablesDescription || deliverablesModalTarget.task.title}
           initialUpdate={deliverablesModalTarget.task.progress?.taskUpdateAndDeliverables || ''}
           userName={deliverablesModalTarget.user?.name || deliverablesModalTarget.task.assignee?.name}

@@ -626,34 +626,55 @@ export function isProgressActiveForShift(
   if (rowTs === null) return false;
 
   const nowMs = now.getTime();
-  const preGraceMs = (options?.preShiftGraceMinutes ?? 60) * 60 * 1000;
-  const postGraceMs = (options?.postShiftGraceMinutes ?? 60) * 60 * 1000;
+  const preGraceMs = (options?.preShiftGraceMinutes ?? 120) * 60 * 1000;
+  const postGraceMs = (options?.postShiftGraceMinutes ?? 120) * 60 * 1000;
 
-  // Actively clocked-in live row (no timeOut) within max shift duration always counts as active
+  // Resolve the most recent wall-clock submission timestamp as fallback when a sheet row's Date column wasn't updated after midnight
+  const submittedMs = (() => {
+    for (const ts of [prog.submittedAt, prog.updatedAt, prog.endedAt, prog.startedAt]) {
+      if (ts) {
+        const ms = new Date(ts).getTime();
+        if (!isNaN(ms)) return ms;
+      }
+    }
+    return null;
+  })();
+
+  // 1. Actively clocked-in live row (no timeOut) within max shift duration always counts as active
   const isLiveNow = Boolean(
     prog.timeIn &&
     String(prog.timeIn).trim() &&
     !(prog.timeOut && String(prog.timeOut).trim()) &&
     !prog.isMissingTime &&
     prog.isLive !== false &&
-    nowMs - rowTs <= 14 * 60 * 60 * 1000 &&
-    rowTs <= nowMs + 15 * 60 * 1000
+    (
+      (nowMs - rowTs <= 14 * 60 * 60 * 1000 && rowTs <= nowMs + 15 * 60 * 1000) ||
+      (submittedMs !== null && nowMs - submittedMs <= 14 * 60 * 60 * 1000 && submittedMs <= nowMs + 15 * 60 * 1000)
+    )
   );
   if (isLiveNow) return true;
 
+  // 2. Any spreadsheet row logged today (Manila calendar date) counts as ACTIVE,
+  // even if the MA started early, worked overtime, or logged outside their configured shift hours
+  const rowDateKey = resolveSheetRowDateKey(prog);
+  if (todayKey && rowDateKey === todayKey) return true;
+  if (todayKey && submittedMs !== null && getManilaDateKey(new Date(submittedMs)) === todayKey) return true;
+
+  // 3. Overnight / previous-day rows: allow if within the user's configured shift window or active shift window
   const shifts = Array.isArray(options?.shifts) ? options.shifts : [];
   const userShifts = getUserConfiguredShifts(options?.user, shifts);
 
   if (userShifts.length > 0) {
-    return userShifts.some((s) => {
+    const inUserShift = userShifts.some((s) => {
       const bounds = getShiftWindowBounds(s, now);
       const isOnShiftNow = nowMs >= bounds.startMs - preGraceMs && nowMs <= bounds.endMs + postGraceMs;
       if (!isOnShiftNow) return false;
       return rowTs >= bounds.startMs - preGraceMs && rowTs <= bounds.endMs + postGraceMs;
     });
+    if (inUserShift) return true;
   }
 
-  // Fallback when user has no explicit shift assignment: check against currently active shift windows
+  // Fallback when user has no explicit shift assignment or worked cross-shift overnight: check active shift windows
   const activeShiftTokens = (options?.activeShift || '')
     .toUpperCase()
     .split(',')
@@ -668,14 +689,18 @@ export function isProgressActiveForShift(
   });
 
   if (activeShifts.length > 0) {
-    return activeShifts.some((s) => {
+    const inActiveShift = activeShifts.some((s) => {
       const bounds = getShiftWindowBounds(s, now);
       return rowTs >= bounds.startMs - preGraceMs && rowTs <= bounds.endMs + postGraceMs;
     });
+    if (inActiveShift) return true;
   }
 
-  // Final fallback when no shift configs exist or during off-shift gap: rolling 12-hour window
-  return rowTs >= nowMs - 12 * 60 * 60 * 1000 && rowTs <= nowMs + 60 * 60 * 1000;
+  // Final fallback for recent overnight activity: rolling 12-hour window
+  return (
+    (rowTs >= nowMs - 12 * 60 * 60 * 1000 && rowTs <= nowMs + 60 * 60 * 1000) ||
+    (submittedMs !== null && submittedMs >= nowMs - 12 * 60 * 60 * 1000 && submittedMs <= nowMs + 60 * 60 * 1000)
+  );
 }
 
 /**
@@ -1093,12 +1118,12 @@ export function applyOptimisticTaskMapAssignment(
   const existingStatuses = Array.isArray(task.taskMap?.statuses) ? [...task.taskMap.statuses] : [];
 
   if (!targetUser) {
-    // Unassign / return to Available Tasks pool (preserve status & mark Available Task or Hand-over In to match backend)
+    // Unassign / return to Available Tasks pool (preserve status & mark Available Task or Hand-over to match backend)
     const hadHandover =
       Boolean(preserveHandover) ||
       Boolean(task.taskMap?.handedOver) ||
       existingStatuses.some((st) => isHandoverSubStatusKey(st.trim().toUpperCase().replace(/[\s_-]+/g, '')));
-    const poolStatuses = hadHandover ? ['Hand-over In'] : ['Available Task'];
+    const poolStatuses = hadHandover ? ['Hand-over'] : ['Available Task'];
     return {
       ...task,
       assigneeId: null,
@@ -1144,14 +1169,23 @@ export function applyOptimisticTaskMapAssignment(
   const hasPausedStatus = existingStatuses.some(
     (st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
   );
+  const hasHandoverOutStatus = existingStatuses.some(
+    (st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+  );
   const hadHandover =
     Boolean(task.taskMap?.handedOver) ||
     existingStatuses.some((st) => isHandoverSubStatusKey(st.trim().toUpperCase().replace(/[\s_-]+/g, '')));
   const previousOwnerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || null;
   const isCrossUserTransfer = Boolean(previousOwnerId && previousOwnerId !== targetUser.id);
+  const keepHandoverOutInQueue =
+    mode === 'QUEUE' &&
+    !isCrossUserTransfer &&
+    !preserveHandover &&
+    hasHandoverOutStatus;
   const shouldSetHandover =
     mode === 'QUEUE' &&
     !hasPausedStatus &&
+    !keepHandoverOutInQueue &&
     (hadHandover || isCrossUserTransfer || Boolean(preserveHandover));
 
   let cleanedStatuses = existingStatuses.filter((st) => {
@@ -1161,8 +1195,10 @@ export function applyOptimisticTaskMapAssignment(
     return true;
   });
 
-  if (shouldSetHandover) {
-    cleanedStatuses = ['Hand-over'];
+  if (keepHandoverOutInQueue) {
+    cleanedStatuses = ['Hand-over Out'];
+  } else if (shouldSetHandover) {
+    cleanedStatuses = ['Hand-over In'];
   } else if (mode === 'IN_PROGRESS' && !cleanedStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
     cleanedStatuses.push('In progress');
   } else if (mode === 'QUEUE' && cleanedStatuses.length === 0) {
@@ -3440,13 +3476,13 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     key: 'HANDOVEROUT',
     label: 'Hand-over Out',
     title: 'Hand-over Out & Clock Out',
-    summary: 'Clocks out active work with deliverables/notes and hands the task over out of this MA column to Available Tasks.',
-    destination: 'Task Map -> Available Tasks (Hand-over In)',
-    mainStatusChange: null,
+    summary: 'Clocks out active work with deliverables/notes and moves the task to Queue tagged as Hand-over Out.',
+    destination: 'Task Map -> MA Queue (Hand-over Out)',
+    mainStatusChange: 'PENDING (preserves recurring cadence)',
     sideEffects: [
       'Requires Task Deliverables Description & Task Update before clock-out.',
       'Stamps Time Out in DailySheetLog & Google Daily Schedule.',
-      'Moves task out to Available Tasks as Hand-over In for PM reassignment.',
+      'Moves task to Queue tagged as Hand-over Out.',
     ],
     requiresDeliverablesClockOut: true,
     requiresConfirmModal: true,
@@ -3456,12 +3492,12 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     key: 'HANDOVERIN',
     label: 'Hand-over In',
     title: 'Mark as Hand-over In',
-    summary: 'Marks this task in the Available Tasks pool as a Hand-over In task ready for MA assignment.',
-    destination: 'Task Map -> Available Tasks (Hand-over In)',
+    summary: 'Marks this task in the MA Queue as Hand-over In (received from Available Tasks or another MA).',
+    destination: 'Task Map -> MA Queue (Hand-over In)',
     mainStatusChange: null,
     sideEffects: [
-      'Keeps the task in Available Tasks tagged as Hand-over In.',
-      'Preserves Hand-over tag when dragged into an MA’s Queue.',
+      'Keeps the task in the MA Queue tagged as Hand-over In.',
+      'Automatically applied when dragged from Available Tasks or another MA.',
     ],
     requiresDeliverablesClockOut: false,
     requiresConfirmModal: true,

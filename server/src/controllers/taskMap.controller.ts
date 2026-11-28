@@ -1871,8 +1871,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Also ensure any live DailySheetLog entry for today is represented in maActiveSessions
-    for (const log of (dailySheetIndex?.logs || [])) {
+    // Also ensure any live DailySheetLog entry (today + overnight shift window) is represented in maActiveSessions
+    const liveSheetCandidates = [
+      ...(dailySheetIndex?.logs || []),
+      ...((dailySheetIndex as any)?.latestByMa || []),
+    ];
+    for (const log of liveSheetCandidates) {
       if (!log?.maName || !log.isLive || !log.timeIn || log.timeOut || log.isMissingTime) continue;
       const maKey = log.maKey || log.maName.toLowerCase().trim();
       const existing = maActiveSessions[maKey];
@@ -1889,6 +1893,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
         maActiveSessions[maKey] = {
           maName: log.maName,
+          userId: log.userId || null,
           taskId: log.taskId || null,
           subtaskId: log.subtaskId || null,
           timeIn: log.timeIn,
@@ -2269,7 +2274,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
     const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
     const isRevisionTransferOut = normSubStatuses.some((norm) => norm === 'REVISION' || norm === 'REVISIONS');
-    const isExplicitHandover = normSubStatuses.some((norm) => norm === 'HANDOVER' || norm === 'HANDOVEROUT' || norm === 'HANDOVERIN');
+    const isExplicitHandover = normSubStatuses.some((norm) => norm === 'HANDOVER');
     const isHandoverSubStatus = isExplicitHandover || isAvailableTaskStatus;
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
       ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'CRMNEEDEDTOSEND', 'CRMTOSEND', 'CRMNEEDEDTOFOLLOWUP', 'CRMFOLLOWUP', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'FOLLOWUP'].includes(norm)
@@ -3215,6 +3220,9 @@ async function executeTaskMapAssignment(
         const hasPausedSub = subStatuses.some(
           (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
         );
+        const hasHandoverOutSub = subStatuses.some(
+          (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+        );
         const hadSubHandover =
           subHandedOver ||
           subStatuses.some((s) => {
@@ -3223,9 +3231,15 @@ async function executeTaskMapAssignment(
           });
         const isSubTransferBetweenUsers =
           action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
+        const keepSubHandoverOutInQueue =
+          mode === 'QUEUE' &&
+          !isSubTransferBetweenUsers &&
+          !Boolean((req.body as any)?.preserveHandover) &&
+          hasHandoverOutSub;
         const shouldSetSubHandover =
           mode === 'QUEUE' &&
           !hasPausedSub &&
+          !keepSubHandoverOutInQueue &&
           (hadSubHandover || isSubTransferBetweenUsers || Boolean((req.body as any)?.preserveHandover));
 
         subStatuses = subStatuses.filter((s) => {
@@ -3233,8 +3247,10 @@ async function executeTaskMapAssignment(
           if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
           return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER' && up !== 'HANDOVEROUT' && up !== 'HANDOVERIN';
         });
-        if (shouldSetSubHandover) {
-          subStatuses = ['Hand-over'];
+        if (keepSubHandoverOutInQueue) {
+          subStatuses = ['Hand-over Out'];
+        } else if (shouldSetSubHandover) {
+          subStatuses = ['Hand-over In'];
         } else if (mode === 'IN_PROGRESS' && !subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
           subStatuses.push('In progress');
         } else if (mode === 'QUEUE' && subStatuses.length === 0) {
@@ -3833,6 +3849,9 @@ async function executeTaskMapAssignment(
       const hasPausedMain = newStatuses.some(
         (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
       );
+      const hasHandoverOutMain = newStatuses.some(
+        (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+      );
       const hadMainHandover =
         Boolean(record.handedOver) ||
         newStatuses.some((s) => {
@@ -3841,9 +3860,15 @@ async function executeTaskMapAssignment(
         });
       const isMainTransferBetweenUsers =
         action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
+      const keepMainHandoverOutInQueue =
+        mode === 'QUEUE' &&
+        !isMainTransferBetweenUsers &&
+        !Boolean((req.body as any)?.preserveHandover) &&
+        hasHandoverOutMain;
       const shouldSetMainHandover =
         mode === 'QUEUE' &&
         !hasPausedMain &&
+        !keepMainHandoverOutInQueue &&
         (hadMainHandover || isMainTransferBetweenUsers || Boolean((req.body as any)?.preserveHandover));
 
       newStatuses = newStatuses.filter((s) => {
@@ -3851,8 +3876,10 @@ async function executeTaskMapAssignment(
         if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
         return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER' && up !== 'HANDOVEROUT' && up !== 'HANDOVERIN';
       });
-      if (shouldSetMainHandover) {
-        newStatuses = ['Hand-over'];
+      if (keepMainHandoverOutInQueue) {
+        newStatuses = ['Hand-over Out'];
+      } else if (shouldSetMainHandover) {
+        newStatuses = ['Hand-over In'];
       } else if (mode === 'IN_PROGRESS' && !newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
         newStatuses.push('In progress');
       } else if (mode === 'QUEUE' && newStatuses.length === 0) {
@@ -4031,7 +4058,7 @@ async function executeTaskMapAssignment(
         return n === 'HANDOVER' || n === 'HANDOVEROUT' || n === 'HANDOVERIN';
       });
       handedOver = hadHandoverTag;
-      newStatuses = hadHandoverTag ? ['Hand-over In'] : ['Available Task'];
+      newStatuses = hadHandoverTag ? ['Hand-over'] : ['Available Task'];
 
       // Clear PM assignment when returning to pool (preserve subtask assignments!)
       reviewsList = reviewsList.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));

@@ -1,10 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { X, Clock, FileCheck, Send, Sparkles, AlertCircle } from 'lucide-react';
-import { formatManilaTime } from '@/api/taskMap';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { X, Clock, FileCheck, Send, Sparkles, AlertCircle, ChevronDown, Check } from 'lucide-react';
+import { formatManilaTime, TASK_MAP_STATUS_COLORS } from '@/api/taskMap';
 import { NexusFullScreenLoader } from '@/components/ui/NexusLogo';
 import { evaluateDeliverableDescription } from '@/lib/deliverablesQuality';
+
+export interface DeliverableStatusOption {
+  label: string;
+  color?: string;
+}
 
 export interface TaskDeliverablesModalProps {
   isOpen: boolean;
@@ -13,6 +18,7 @@ export interface TaskDeliverablesModalProps {
     taskDeliverablesDescription: string;
     taskUpdateAndDeliverables: string;
     timeOut: string;
+    targetStatus?: string;
   }) => Promise<void> | void;
   taskTitle: string;
   clientName?: string;
@@ -20,11 +26,24 @@ export interface TaskDeliverablesModalProps {
   folderName?: string;
   isAdminTask?: boolean;
   targetStatus: 'To Review' | 'Hand-over' | string;
+  statusOptions?: DeliverableStatusOption[];
+  onTargetStatusChange?: (nextStatus: string) => void;
   initialDeliverables?: string;
   initialUpdate?: string;
   userName?: string;
   timeIn?: string;
 }
+
+const DEFAULT_DELIVERABLE_STATUS_OPTIONS: DeliverableStatusOption[] = [
+  { label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW },
+  { label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
+  { label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
+  { label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED },
+  { label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT },
+  { label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING },
+  { label: 'On-hold', color: TASK_MAP_STATUS_COLORS.ON_HOLD },
+  { label: 'Revision', color: TASK_MAP_STATUS_COLORS.REVISION },
+];
 
 const DEFAULT_UPDATE_TEMPLATE = [
   '📍 Action Done:',
@@ -50,12 +69,17 @@ export function TaskDeliverablesModal({
   folderName,
   isAdminTask,
   targetStatus,
+  statusOptions,
+  onTargetStatusChange,
   initialDeliverables = '',
   initialUpdate = '',
   timeIn = '',
 }: TaskDeliverablesModalProps) {
-  const syncKey = isOpen ? `${taskTitle}::${initialDeliverables}::${initialUpdate}` : '';
+  const syncKey = isOpen ? `${taskTitle}::${initialDeliverables}::${initialUpdate}::${targetStatus}` : '';
   const [prevSyncKey, setPrevSyncKey] = useState(syncKey);
+  const [selectedStatus, setSelectedStatus] = useState(targetStatus);
+  const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
   const [deliverablesDescription, setDeliverablesDescription] = useState(initialDeliverables || taskTitle || '');
   const [updateAndDeliverables, setUpdateAndDeliverables] = useState(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
   const [currentTimeOut, setCurrentTimeOut] = useState(() => formatManilaTime(new Date()));
@@ -65,11 +89,40 @@ export function TaskDeliverablesModal({
   if (syncKey !== prevSyncKey) {
     setPrevSyncKey(syncKey);
     if (isOpen) {
+      setSelectedStatus(targetStatus);
+      setIsStatusMenuOpen(false);
       setDeliverablesDescription(initialDeliverables || taskTitle || '');
       setUpdateAndDeliverables(initialUpdate || DEFAULT_UPDATE_TEMPLATE);
       setCurrentTimeOut(formatManilaTime(new Date()));
     }
   }
+
+  useEffect(() => {
+    if (!isStatusMenuOpen) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(e.target as Node)) {
+        setIsStatusMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsStatusMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isStatusMenuOpen]);
+
+  const resolvedStatusOptions = useMemo(() => {
+    const base = statusOptions && statusOptions.length > 0 ? [...statusOptions] : [...DEFAULT_DELIVERABLE_STATUS_OPTIONS];
+    const current = (selectedStatus || targetStatus || '').trim();
+    if (current && !base.some((o) => o.label.toLowerCase() === current.toLowerCase())) {
+      base.unshift({ label: current, color: '#71717a' });
+    }
+    return base;
+  }, [statusOptions, selectedStatus, targetStatus]);
 
   // Update clock-out time display every 10 seconds while modal is open
   useEffect(() => {
@@ -95,10 +148,12 @@ export function TaskDeliverablesModal({
 
   if (!isOpen) return null;
 
-  const compactTarget = targetStatus.toLowerCase().replace(/[\s_-]+/g, '');
+  const effectiveTargetStatus = selectedStatus || targetStatus;
+  const compactTarget = effectiveTargetStatus.toLowerCase().replace(/[\s_-]+/g, '');
+  const isHandoverOut = compactTarget === 'handoverout';
   const isHandover =
     compactTarget === 'handover' ||
-    compactTarget === 'handoverout' ||
+    isHandoverOut ||
     compactTarget === 'handoverin';
   const isPaused = compactTarget === 'paused';
   const isToReview = compactTarget === 'toreview' || compactTarget === 'inreview';
@@ -110,6 +165,9 @@ export function TaskDeliverablesModal({
       : isToReview
         ? 'bg-indigo-500/15 border-indigo-500/35 text-indigo-300'
         : 'bg-zinc-700/30 border-zinc-600/50 text-zinc-200';
+  const activeOptionColor =
+    resolvedStatusOptions.find((o) => o.label.toLowerCase() === effectiveTargetStatus.toLowerCase())?.color ||
+    (isHandover ? TASK_MAP_STATUS_COLORS.HAND_OVER : isPaused ? TASK_MAP_STATUS_COLORS.PAUSED : isToReview ? TASK_MAP_STATUS_COLORS.TO_REVIEW : '#71717a');
   const submitButtonClass = isHandover
     ? 'bg-sky-600 hover:bg-sky-500 active:bg-sky-700'
     : isPaused
@@ -117,11 +175,20 @@ export function TaskDeliverablesModal({
       : 'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700';
   const submitLabel = isPaused
     ? (timeIn ? 'Pause & Time Out' : 'Pause & Store in Queue')
-    : isHandover
-      ? (timeIn ? 'Hand-over & Clock Out' : 'Submit & Hand-over')
-      : isToReview
-        ? 'Submit & Clock Out'
-        : 'Submit & Time Out';
+    : isHandoverOut
+      ? (timeIn ? 'Hand-over Out & Clock Out' : 'Submit Hand-over Out')
+      : isHandover
+        ? (timeIn ? 'Hand-over & Clock Out' : 'Submit & Hand-over')
+        : isToReview
+          ? 'Submit & Clock Out'
+          : (timeIn ? `${effectiveTargetStatus} & Time Out` : `Submit ${effectiveTargetStatus}`);
+
+  const handleSelectStatus = (nextLabel: string) => {
+    setSelectedStatus(nextLabel);
+    setIsStatusMenuOpen(false);
+    onTargetStatusChange?.(nextLabel);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting || !quality.isSubmittable) return;
@@ -133,6 +200,7 @@ export function TaskDeliverablesModal({
         taskDeliverablesDescription: deliverablesDescription.trim() || taskTitle,
         taskUpdateAndDeliverables: updateAndDeliverables.trim(),
         timeOut: exactTimeOut,
+        targetStatus: effectiveTargetStatus,
       });
       onClose();
     } catch (err) {
@@ -145,13 +213,13 @@ export function TaskDeliverablesModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
       <div
-        className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150"
+        className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-visible flex flex-col animate-in zoom-in-95 duration-150"
         role="dialog"
         aria-modal="true"
         aria-labelledby="deliverables-modal-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950/50">
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-zinc-800 bg-zinc-950/50 rounded-t-2xl">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className={`p-2 rounded-lg border shrink-0 ${statusBadgeColor}`}>
               <FileCheck className="size-4 shrink-0" />
@@ -160,11 +228,62 @@ export function TaskDeliverablesModal({
               <h3 id="deliverables-modal-title" className="text-sm font-semibold text-zinc-100 truncate" title={clientName ? `${clientName} — ${taskTitle}` : taskTitle}>
                 {clientName ? `${clientName} — ${taskTitle}` : taskTitle}
               </h3>
-              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <p className="text-[11px] font-mono text-zinc-400 flex items-center gap-1.5">
                   <Clock className="size-3 text-amber-400 shrink-0" />
                   <span>{timeIn ? `${timeIn} - ${currentTimeOut}` : currentTimeOut}</span>
                 </p>
+                <span className="text-zinc-700 select-none">•</span>
+                {/* Status Switcher Dropdown */}
+                <div ref={statusDropdownRef} className="relative">
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => setIsStatusMenuOpen((prev) => !prev)}
+                    title="Change target status if misclicked"
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50 hover:brightness-110 ${statusBadgeColor}`}
+                  >
+                    <span
+                      className="size-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: activeOptionColor }}
+                    />
+                    <span className="truncate max-w-[130px]">{effectiveTargetStatus}</span>
+                    <ChevronDown className={`size-3 shrink-0 opacity-75 transition-transform duration-150 ${isStatusMenuOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {isStatusMenuOpen && (
+                    <div className="absolute left-0 top-full mt-1.5 z-50 w-48 rounded-xl bg-zinc-950 border border-zinc-800 shadow-2xl p-1 animate-in fade-in zoom-in-95 duration-100">
+                      <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Target Status
+                      </div>
+                      <div className="max-h-56 overflow-y-auto custom-scrollbar space-y-0.5">
+                        {resolvedStatusOptions.map((opt) => {
+                          const isSelected = opt.label.toLowerCase() === effectiveTargetStatus.toLowerCase();
+                          return (
+                            <button
+                              key={opt.label}
+                              type="button"
+                              onClick={() => handleSelectStatus(opt.label)}
+                              className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-zinc-800/90 text-zinc-100 font-medium'
+                                  : 'text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className="size-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: opt.color || '#71717a' }}
+                                />
+                                <span className="truncate">{opt.label}</span>
+                              </span>
+                              {isSelected && <Check className="size-3.5 text-sky-400 shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

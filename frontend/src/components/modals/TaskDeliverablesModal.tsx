@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Clock, FileCheck, Send, Sparkles, AlertCircle, ChevronDown, Check } from 'lucide-react';
+import { X, Clock, FileCheck, Send, AlertCircle, ChevronDown, Check } from 'lucide-react';
 import { formatManilaTime, TASK_MAP_STATUS_COLORS } from '@/api/taskMap';
 import { NexusFullScreenLoader } from '@/components/ui/NexusLogo';
 import { evaluateDeliverableDescription } from '@/lib/deliverablesQuality';
@@ -264,22 +264,11 @@ export function TaskDeliverablesModal({
             />
 
             {activeError && (
-              <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 flex items-start justify-between gap-2">
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 flex items-start gap-2">
                 <p className="text-[11px] text-amber-300 flex items-start gap-1.5 leading-snug">
                   <AlertCircle className="size-3.5 shrink-0 mt-0.5 text-amber-400" />
                   <span>{activeError}</span>
                 </p>
-                {quality.blockReason && (
-                  <button
-                    type="button"
-                    onClick={() => setDeliverablesDescription(quality.templateSnippet)}
-                    className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-400 hover:text-sky-300 transition-colors shrink-0 cursor-pointer"
-                    title="Use example format"
-                  >
-                    <Sparkles className="size-3" />
-                    <span>Example</span>
-                  </button>
-                )}
               </div>
             )}
           </div>

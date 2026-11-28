@@ -61,8 +61,9 @@ const GRAPHICS_MEDIA_KEYWORDS = [
   'static ad',
 ];
 
-function normalizeText(value?: string | null): string {
-  return (value || '').trim().replace(/\s+/g, ' ');
+function normalizeText(value?: string | number | null): string {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().replace(/\s+/g, ' ');
 }
 
 function stripPunctuation(value: string): string {
@@ -87,12 +88,11 @@ export function isTaskUnderAdminScope(params: {
 }
 
 /**
- * Evaluates ONLY `Task Deliverables Description:` (Column K) to verify whether it
- * describes a tangible, measurable, client-detailed output rather than vague activity.
- * Tasks under Admin only require a non-empty description (no strict format gate).
+ * Evaluates `Task Deliverables Description:` (Column K).
+ * Plain numbers (numerical values) and any non-empty text are allowed.
  */
 export function evaluateDeliverableDescription(params: {
-  deliverablesDescription: string;
+  deliverablesDescription: string | number | null | undefined;
   taskTitle?: string;
   clientName?: string;
   listName?: string;
@@ -111,6 +111,8 @@ export function evaluateDeliverableDescription(params: {
     ? 'Update thumbnails, titles, and graphics across Module 2 lessons'
     : 'Create two caption template versions for the target reel';
 
+  const hasValue = desc.length > 0;
+
   if (
     isTaskUnderAdminScope({
       isAdminTask: params.isAdminTask,
@@ -119,13 +121,12 @@ export function evaluateDeliverableDescription(params: {
       clientName: params.clientName,
     })
   ) {
-    const hasText = Boolean(desc);
     return {
-      score: hasText ? 100 : 0,
-      level: hasText ? 'strong' : 'weak',
+      score: hasValue ? 100 : 0,
+      level: hasValue ? 'strong' : 'weak',
       isGraphicsOrMediaTask,
-      isSubmittable: hasText,
-      blockReason: hasText ? null : 'Task Deliverables Description is required.',
+      isSubmittable: hasValue,
+      blockReason: hasValue ? null : 'Task Deliverables Description is required.',
       checks: [],
       suggestions: [],
       templateSnippet,
@@ -134,20 +135,24 @@ export function evaluateDeliverableDescription(params: {
 
   const descNorm = stripPunctuation(desc);
   const wordCount = desc ? desc.split(/\s+/).filter(Boolean).length : 0;
+  const isNumericInput = /^-?\d+(?:[.,/]\d+)?%?$/.test(desc);
 
   const isExplicitVague =
     !desc ||
-    VAGUE_NON_DELIVERABLE_REGEX.test(desc) ||
-    VAGUE_NON_DELIVERABLE_REGEX.test(descNorm);
+    (!isNumericInput &&
+      (VAGUE_NON_DELIVERABLE_REGEX.test(desc) || VAGUE_NON_DELIVERABLE_REGEX.test(descNorm)));
 
-  const hasTangibleOutput = TANGIBLE_OUTPUT_REGEX.test(desc) && !GENERIC_ACTIVITY_ONLY_REGEX.test(desc);
-  const hasMeasurableScope = MEASURABLE_SCOPE_REGEX.test(desc) && NAMED_TARGET_REGEX.test(desc);
+  const hasTangibleOutput =
+    isNumericInput || (TANGIBLE_OUTPUT_REGEX.test(desc) && !GENERIC_ACTIVITY_ONLY_REGEX.test(desc));
+  const hasMeasurableScope =
+    isNumericInput || (MEASURABLE_SCOPE_REGEX.test(desc) && NAMED_TARGET_REGEX.test(desc));
   const hasClientSpecificDetail =
-    Boolean(desc) &&
-    !isExplicitVague &&
-    !GENERIC_ACTIVITY_ONLY_REGEX.test(desc) &&
-    wordCount >= 4 &&
-    desc.length >= 20;
+    isNumericInput ||
+    (Boolean(desc) &&
+      !isExplicitVague &&
+      !GENERIC_ACTIVITY_ONLY_REGEX.test(desc) &&
+      wordCount >= 4 &&
+      desc.length >= 20);
 
   const checks: DeliverableQualityCheck[] = [
     {
@@ -173,25 +178,29 @@ export function evaluateDeliverableDescription(params: {
   ];
 
   const passedCount = checks.filter((c) => c.passed).length;
-  const score = Math.round((passedCount / checks.length) * 100);
+  const score = hasValue ? Math.round((passedCount / checks.length) * 100) : 0;
   const level: 'strong' | 'fair' | 'weak' =
     score === 100 ? 'strong' : score >= 50 ? 'fair' : 'weak';
 
+  // Admin tasks (not admin users) bypass strict tangible/measurable checks;
+  // Client tasks enforce tangible/measurable/client-ready detail unless a plain numerical value is entered.
   let blockReason: string | null = null;
-  if (!desc) {
+  if (!hasValue) {
     blockReason = 'Task Deliverables Description is required.';
-  } else if (isExplicitVague || GENERIC_ACTIVITY_ONLY_REGEX.test(desc)) {
-    blockReason =
-      'Task Deliverables Description needs a specific tangible output and target (e.g. "Update thumbnails, titles, and graphics across Module 2 lessons").';
-  } else if (!hasTangibleOutput) {
-    blockReason =
-      'Specify what tangible asset or deliverable was created/updated (e.g. thumbnails, graphics, video clips, captions, voice-over, script, posts).';
-  } else if (!hasMeasurableScope) {
-    blockReason =
-      'Add a measurable count or named target (e.g. "two versions", "3 contents", "Reel 1", "Phase 2", "Module 3 Lesson 1").';
-  } else if (!hasClientSpecificDetail) {
-    blockReason =
-      'Make Task Deliverables Description slightly more detailed (action + tangible deliverable + target).';
+  } else if (!isNumericInput) {
+    if (isExplicitVague || GENERIC_ACTIVITY_ONLY_REGEX.test(desc)) {
+      blockReason =
+        'Task Deliverables Description needs a specific tangible output and target (e.g. "Update thumbnails, titles, and graphics across Module 2 lessons").';
+    } else if (!hasTangibleOutput) {
+      blockReason =
+        'Specify what tangible asset or deliverable was created/updated (e.g. thumbnails, graphics, video clips, captions, voice-over, script, posts).';
+    } else if (!hasMeasurableScope) {
+      blockReason =
+        'Add a measurable count or named target (e.g. "two versions", "3 contents", "Reel 1", "Phase 2", "Module 3 Lesson 1").';
+    } else if (!hasClientSpecificDetail) {
+      blockReason =
+        'Make Task Deliverables Description slightly more detailed (action + tangible deliverable + target).';
+    }
   }
 
   const suggestions = checks.filter((c) => !c.passed).map((c) => c.hint);

@@ -6095,6 +6095,11 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       }
     }
 
+    const normalizedTargetDeliverables =
+      targetRow?.taskDeliverablesDescription !== undefined && targetRow?.taskDeliverablesDescription !== null
+        ? String(targetRow.taskDeliverablesDescription).trim()
+        : '';
+
     if (cleanTaskId && targetRow) {
       const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
       let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
@@ -6104,13 +6109,13 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
         if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
           if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
             r.timeOut = effectiveTimeOut || '';
-            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (normalizedTargetDeliverables) r.taskDeliverables = normalizedTargetDeliverables;
             if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
             if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
             matched = true;
           } else if (!r.timeOut) {
             r.timeOut = effectiveTimeOut || '';
-            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (normalizedTargetDeliverables) r.taskDeliverables = normalizedTargetDeliverables;
             if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
             if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
             matched = true;
@@ -6126,7 +6131,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           timeOut: nowTimeOut,
           client: targetRow.client || 'General',
           task: targetRow.task || 'Task',
-          taskDeliverables: targetRow.taskDeliverablesDescription || null,
+          taskDeliverables: normalizedTargetDeliverables || null,
           taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
           updatedAt: new Date().toISOString(),
         });
@@ -6150,7 +6155,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
         isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
         timeTracker: targetRow.timeTracker || null,
         status: targetRow.taskStatus || (mode === 'STOP' ? 'Completed' : 'In Progress'),
-        taskDeliverables: targetRow.taskDeliverablesDescription || null,
+        taskDeliverables: normalizedTargetDeliverables || null,
         taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
         taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
         source: source || (cleanTaskId ? 'NEXUS_BOARD' : 'NEXUS_DAILY_TRACKER'),

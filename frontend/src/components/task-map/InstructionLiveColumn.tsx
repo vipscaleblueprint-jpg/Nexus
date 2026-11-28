@@ -401,6 +401,7 @@ export const InstructionLiveColumn: React.FC<InstructionLiveColumnProps> = ({
             className="pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe"
             style={{
               borderColor: '#D04A7C',
+              backgroundColor: 'rgba(208, 74, 124, 0.08)',
               boxShadow: '0 0 0 2px rgba(208, 74, 124, 0.5), 0 0 20px rgba(208, 74, 124, 0.35)',
             }}
           />

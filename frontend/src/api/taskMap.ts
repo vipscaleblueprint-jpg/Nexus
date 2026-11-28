@@ -2157,6 +2157,7 @@ export const taskMapApi = {
       const start = params.startedAt ? new Date(params.startedAt) : new Date();
       const end = params.stoppedAt ? new Date(params.stoppedAt) : params.mode === 'STOP' ? new Date() : null;
 
+      const normalizedDeliverables = normalizeTaskDeliverablesInput(params.taskDeliverablesDescription);
       rows = splitMidnightScheduleRows({
         start,
         end,
@@ -2165,7 +2166,7 @@ export const taskMapApi = {
         taskLink: params.taskLink,
         status: params.status,
         timeTracker: params.timeTracker || (params.isUpwork ? 'Upwork' : 'No Need to Track'),
-        taskDeliverablesDescription: params.taskDeliverablesDescription || params.taskTitle,
+        taskDeliverablesDescription: normalizedDeliverables || params.taskTitle,
         taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
       });
     }
@@ -2354,7 +2355,7 @@ export interface SpreadsheetScheduleRow {
   timeTracker: string; // Col H (8): "Upwork" | "No Need to Track" | "Clockify"
   task: string; // Col I (9): Task Title
   dc?: boolean | string; // Col J (10): false
-  taskDeliverablesDescription?: string; // Col K (11): High-level deliverable scope/title
+  taskDeliverablesDescription?: string | number; // Col K (11): High-level deliverable scope/title (plain number or text)
   taskUpdateAndDeliverables?: string; // Col L (12): Detailed update & outcome
   taskLink?: string; // Col M (13): Nexus or ClickUp link
   taskStatus?: string; // Col N (14): "In Progress" | "In Review" | "Handover" | "Closed" (managed by Sheet automation)
@@ -2363,6 +2364,14 @@ export interface SpreadsheetScheduleRow {
   doubleCheckedBy?: string; // Col Q (17)
   automation?: string; // Col R (18)
   notes?: string; // Col S (19)
+}
+
+/**
+ * Normalizes a Task Deliverables Description input, accepting plain numbers (including 0) or text.
+ */
+export function normalizeTaskDeliverablesInput(value?: string | number | null): string {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
 }
 
 export interface SyncScheduleToSpreadsheetParams {
@@ -2375,7 +2384,7 @@ export interface SyncScheduleToSpreadsheetParams {
   mode: 'START' | 'STOP' | 'UPDATE';
   startedAt?: Date | string | null;
   stoppedAt?: Date | string | null;
-  taskDeliverablesDescription?: string | null;
+  taskDeliverablesDescription?: string | number | null;
   taskUpdateAndDeliverables?: string | null;
   timeTracker?: string | null;
   isUpwork?: boolean;
@@ -2509,11 +2518,13 @@ export function splitMidnightScheduleRows(
     taskLink?: string;
     status: string;
     timeTracker?: string;
-    taskDeliverablesDescription?: string;
+    taskDeliverablesDescription?: string | number | null;
     taskUpdateAndDeliverables?: string;
   }
 ): SpreadsheetScheduleRow[] {
   const { start, end } = session;
+  const normalizedDeliverables =
+    normalizeTaskDeliverablesInput(session.taskDeliverablesDescription) || session.task;
   if (!end) {
     // Ongoing task (still in progress): single row for start date with blank Time Out
     return [
@@ -2527,7 +2538,7 @@ export function splitMidnightScheduleRows(
         timeTracker: session.timeTracker || 'No Need to Track',
         task: session.task,
         dc: 'FALSE',
-        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskDeliverablesDescription: normalizedDeliverables,
         taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
       },
     ];
@@ -2553,7 +2564,7 @@ export function splitMidnightScheduleRows(
         timeTracker: session.timeTracker || 'No Need to Track',
         task: session.task,
         dc: 'FALSE',
-        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskDeliverablesDescription: normalizedDeliverables,
         taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
       },
     ];
@@ -2577,7 +2588,7 @@ export function splitMidnightScheduleRows(
     timeTracker: session.timeTracker || 'No Need to Track',
     task: session.task,
     dc: 'FALSE',
-    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskDeliverablesDescription: normalizedDeliverables,
     taskUpdateAndDeliverables: `${session.taskUpdateAndDeliverables || ''} (Part 1 - Until Midnight)`.trim(),
   });
 
@@ -2595,7 +2606,7 @@ export function splitMidnightScheduleRows(
     timeTracker: session.timeTracker || 'No Need to Track',
     task: session.task,
     dc: 'FALSE',
-    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskDeliverablesDescription: normalizedDeliverables,
     taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
   });
 
@@ -3312,6 +3323,7 @@ export {
  * as grey to match user preference and spreadsheet workflow.
  */
 export const TASK_MAP_STATUS_COLORS = {
+  IN_PROGRESS: '#D04A7C',    // -> IN PROGRESS (Pink)
   AVAILABLE_TASK: '#2563eb', // Workflow pool (no main status change)
   HAND_OVER: '#3f3f46',      // Retains IN PROGRESS (Grey)
   PAUSED: '#eab308',         // Retains IN PROGRESS
@@ -3378,6 +3390,7 @@ export function getTaskMapSubStatusStyle(
 
   // 3. Known canonical fallback map
   const canonicalColors: Record<string, { color: string; textColor: string }> = {
+    INPROGRESS: { color: TASK_MAP_STATUS_COLORS.IN_PROGRESS, textColor: '#ffffff' },
     AVAILABLETASK: { color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff' },
     HANDOVER: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
     HANDOVEROUT: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
@@ -4065,7 +4078,15 @@ export function normalizeTaskMapSubStatuses(
   }
 
   if (clean.length > 0) {
-    return clean.slice(0, 1);
+    const first = clean[0];
+    const firstNorm = normalizeSubStatusKey(first);
+    if (options?.isAssigned === false && isHandoverSubStatusKey(firstNorm)) {
+      return ['Hand-over'];
+    }
+    if (options?.isAssigned === true && firstNorm === 'HANDOVER') {
+      return ['Hand-over In'];
+    }
+    return [first];
   }
 
   return getDefaultTaskMapSubStatuses(taskStatus, options);

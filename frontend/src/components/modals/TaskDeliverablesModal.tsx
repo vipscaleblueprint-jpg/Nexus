@@ -228,70 +228,17 @@ export function TaskDeliverablesModal({
               <h3 id="deliverables-modal-title" className="text-sm font-semibold text-zinc-100 truncate" title={clientName ? `${clientName} — ${taskTitle}` : taskTitle}>
                 {clientName ? `${clientName} — ${taskTitle}` : taskTitle}
               </h3>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <p className="text-[11px] font-mono text-zinc-400 flex items-center gap-1.5">
-                  <Clock className="size-3 text-amber-400 shrink-0" />
-                  <span>{timeIn ? `${timeIn} - ${currentTimeOut}` : currentTimeOut}</span>
-                </p>
-                <span className="text-zinc-700 select-none">•</span>
-                {/* Status Switcher Dropdown */}
-                <div ref={statusDropdownRef} className="relative">
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => setIsStatusMenuOpen((prev) => !prev)}
-                    title="Change target status if misclicked"
-                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50 hover:brightness-110 ${statusBadgeColor}`}
-                  >
-                    <span
-                      className="size-1.5 rounded-full shrink-0"
-                      style={{ backgroundColor: activeOptionColor }}
-                    />
-                    <span className="truncate max-w-[130px]">{effectiveTargetStatus}</span>
-                    <ChevronDown className={`size-3 shrink-0 opacity-75 transition-transform duration-150 ${isStatusMenuOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  {isStatusMenuOpen && (
-                    <div className="absolute left-0 top-full mt-1.5 z-50 w-48 rounded-xl bg-zinc-950 border border-zinc-800 shadow-2xl p-1 animate-in fade-in zoom-in-95 duration-100">
-                      <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                        Target Status
-                      </div>
-                      <div className="max-h-56 overflow-y-auto custom-scrollbar space-y-0.5">
-                        {resolvedStatusOptions.map((opt) => {
-                          const isSelected = opt.label.toLowerCase() === effectiveTargetStatus.toLowerCase();
-                          return (
-                            <button
-                              key={opt.label}
-                              type="button"
-                              onClick={() => handleSelectStatus(opt.label)}
-                              className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                                isSelected
-                                  ? 'bg-zinc-800/90 text-zinc-100 font-medium'
-                                  : 'text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100'
-                              }`}
-                            >
-                              <span className="flex items-center gap-2 min-w-0">
-                                <span
-                                  className="size-2 rounded-full shrink-0"
-                                  style={{ backgroundColor: opt.color || '#71717a' }}
-                                />
-                                <span className="truncate">{opt.label}</span>
-                              </span>
-                              {isSelected && <Check className="size-3.5 text-sky-400 shrink-0" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <p className="text-[11px] font-mono text-zinc-400 flex items-center gap-1.5 mt-0.5">
+                <Clock className="size-3 text-amber-400 shrink-0" />
+                <span>{timeIn ? `${timeIn} - ${currentTimeOut}` : currentTimeOut}</span>
+              </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50 shrink-0"
+            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
             title="Cancel and close"
           >
             <X className="size-4" />
@@ -312,7 +259,7 @@ export function TaskDeliverablesModal({
               required
               value={deliverablesDescription}
               onChange={(e) => setDeliverablesDescription(e.target.value)}
-              placeholder="e.g. Update thumbnails, titles, and graphics across Module 2 lessons"
+              placeholder="e.g. 5, 3 thumbnails, or Update Module 2 lessons"
               className="w-full px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
             />
 
@@ -354,25 +301,91 @@ export function TaskDeliverablesModal({
             />
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || !deliverablesDescription.trim() || !quality.isSubmittable}
-              title={quality.blockReason || undefined}
-              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${submitButtonClass}`}
-            >
-              <Send className="size-3.5" />
-              <span>{submitLabel}</span>
-            </button>
+          {/* Actions & Target Status Switcher */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3.5 border-t border-zinc-800">
+            {/* Empathetic status switcher placed right beside the submit action */}
+            <div ref={statusDropdownRef} className="relative flex items-center gap-2 min-w-0">
+              <span className="text-[11px] font-medium text-zinc-400 shrink-0">Move to</span>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                aria-haspopup="listbox"
+                aria-expanded={isStatusMenuOpen}
+                onClick={() => setIsStatusMenuOpen((prev) => !prev)}
+                title="Change target status before clocking out"
+                className={`inline-flex items-center gap-2 h-8 px-2.5 rounded-lg border text-xs font-medium transition-all cursor-pointer disabled:opacity-50 hover:brightness-110 focus:outline-none focus:ring-1 focus:ring-zinc-500 ${statusBadgeColor}`}
+              >
+                <span
+                  className="size-2 rounded-full shrink-0"
+                  style={{ backgroundColor: activeOptionColor }}
+                />
+                <span className="truncate max-w-[140px]">{effectiveTargetStatus}</span>
+                <ChevronDown
+                  className={`size-3.5 shrink-0 opacity-75 transition-transform duration-150 ${
+                    isStatusMenuOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+              {isStatusMenuOpen && (
+                <div
+                  role="listbox"
+                  aria-label="Target status"
+                  className="absolute left-0 bottom-full mb-2 z-50 w-52 rounded-xl bg-zinc-950 border border-zinc-800 shadow-2xl p-1.5 animate-in fade-in zoom-in-95 duration-100"
+                >
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Switch target status
+                  </div>
+                  <div className="max-h-56 overflow-y-auto custom-scrollbar space-y-0.5">
+                    {resolvedStatusOptions.map((opt) => {
+                      const isSelected = opt.label.toLowerCase() === effectiveTargetStatus.toLowerCase();
+                      return (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelected}
+                          onClick={() => handleSelectStatus(opt.label)}
+                          className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-zinc-800/90 text-zinc-100 font-medium'
+                              : 'text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="size-2 rounded-full shrink-0"
+                              style={{ backgroundColor: opt.color || '#71717a' }}
+                            />
+                            <span className="truncate">{opt.label}</span>
+                          </span>
+                          {isSelected && <Check className="size-3.5 text-sky-400 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 ml-auto shrink-0">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSubmitting}
+                className="h-8 px-3.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting || !deliverablesDescription.trim() || !quality.isSubmittable}
+                title={quality.blockReason || undefined}
+                className={`flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${submitButtonClass}`}
+              >
+                <Send className="size-3.5" />
+                <span>{submitLabel}</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

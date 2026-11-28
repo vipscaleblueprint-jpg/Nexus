@@ -8,11 +8,17 @@ import { TaskMapItem } from '@/api/taskMap';
 export const getSubStatusColor = (status: string) => {
   const up = status.toUpperCase().trim();
   const hexMap: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+    'IN PROGRESS': { bg: 'bg-pink-100 dark:bg-pink-950/70', text: 'text-pink-800 dark:text-pink-200', border: 'border-pink-200 dark:border-pink-700/80', dot: '#D04A7C' },
+    'INPROGRESS': { bg: 'bg-pink-100 dark:bg-pink-950/70', text: 'text-pink-800 dark:text-pink-200', border: 'border-pink-200 dark:border-pink-700/80', dot: '#D04A7C' },
     'AVAILABLE TASK': { bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-800 dark:text-blue-200', border: 'border-blue-200 dark:border-blue-700/80', dot: '#2563eb' },
     'AVAILABLETASK': { bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-800 dark:text-blue-200', border: 'border-blue-200 dark:border-blue-700/80', dot: '#2563eb' },
     'HAND OVER': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
     'HAND-OVER': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
     'HANDOVER': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
+    'HAND-OVER IN': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
+    'HANDOVERIN': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
+    'HAND-OVER OUT': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
+    'HANDOVEROUT': { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' },
     PAUSED: { bg: 'bg-yellow-100 dark:bg-yellow-950/70', text: 'text-yellow-800 dark:text-yellow-200', border: 'border-yellow-200 dark:border-yellow-700/80', dot: '#eab308' },
     'ASK CLIENT': { bg: 'bg-cyan-100 dark:bg-cyan-950/70', text: 'text-cyan-800 dark:text-cyan-200', border: 'border-cyan-200 dark:border-cyan-700/80', dot: '#06b6d4' },
     'TO REVIEW': { bg: 'bg-orange-100 dark:bg-orange-950/70', text: 'text-orange-800 dark:text-orange-200', border: 'border-orange-200 dark:border-orange-700/80', dot: '#D97B3A' },
@@ -39,17 +45,33 @@ export const getSubStatusColor = (status: string) => {
   return hexMap[up] || { bg: 'bg-zinc-200/80 dark:bg-zinc-800', text: 'text-zinc-800 dark:text-zinc-200', border: 'border-zinc-300 dark:border-zinc-700', dot: '#71717a' };
 };
 
-export const matchesSubStatusFilter = (task: TaskMapItem, filter: string) => {
+const normalizePoolSubStatusLabel = (status: string, isAvailablePool: boolean) => {
+  const clean = (status || '').trim();
+  const compact = clean.toUpperCase().replace(/[\s_-]+/g, '');
+  if (isAvailablePool && (compact === 'HANDOVER' || compact === 'HANDOVERIN' || compact === 'HANDOVEROUT')) {
+    return 'Hand-over';
+  }
+  if (!isAvailablePool && compact === 'HANDOVER') {
+    return 'Hand-over In';
+  }
+  return clean;
+};
+
+export const matchesSubStatusFilter = (task: TaskMapItem, filter: string, columnId?: string) => {
   if (!filter || filter === 'ALL') return true;
+  const isAvailablePool = columnId === 'available-pool';
   const target = filter.trim().toLowerCase();
-  const statuses = (task.taskMap?.statuses || []).map((s: string) => (s || '').trim().toLowerCase());
+  const statuses = (task.taskMap?.statuses || []).map((s: string) =>
+    normalizePoolSubStatusLabel(s || '', isAvailablePool).toLowerCase()
+  );
   if (target === 'none') {
     return statuses.length === 0;
   }
   return statuses.includes(target) || (task.status || '').trim().toLowerCase() === target;
 };
 
-export const getColumnSubStatusCounts = (items: TaskMapItem[]) => {
+export const getColumnSubStatusCounts = (items: TaskMapItem[], columnId?: string) => {
+  const isAvailablePool = columnId === 'available-pool';
   const counts: Record<string, number> = { ALL: items.length };
   for (const t of items) {
     const statuses = t.taskMap?.statuses || [];
@@ -57,7 +79,7 @@ export const getColumnSubStatusCounts = (items: TaskMapItem[]) => {
       counts['None'] = (counts['None'] || 0) + 1;
     } else {
       for (const st of statuses) {
-        const clean = st.trim();
+        const clean = normalizePoolSubStatusLabel(st, isAvailablePool);
         counts[clean] = (counts[clean] || 0) + 1;
       }
     }
@@ -75,7 +97,7 @@ export const ColumnSubStatusDropdown: React.FC<{
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const counts = getColumnSubStatusCounts(tasks);
+  const counts = getColumnSubStatusCounts(tasks, columnId);
   const currentKey = activeFilter || 'ALL';
 
   const calcPos = (rect: DOMRect) => {

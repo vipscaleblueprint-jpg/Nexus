@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Clock,
   Search,
   Save,
   RefreshCw,
-  Check,
   X,
   Pencil,
   ShieldCheck,
@@ -14,37 +12,17 @@ import {
   CalendarClock,
   Sparkles,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '@/api/client';
 import { shiftTimesApi, ShiftTimeEntry } from '@/api/shiftTimes';
 import { toast } from '@/lib/toast';
-
-const QUICK_SCHEDULES = [
-  'M-F 8AM to 5PM',
-  'M-F 9AM to 4PM',
-  'M-F 11AM to 8PM',
-  'M-F 5PM to 2AM',
-  'T-S 8AM to 5PM',
-  'T-S 11AM to 8PM',
-  'T-S 5PM to 2AM',
-  'T-F 8AM to 5PM',
-];
-
-function classifyShift(schedule: string): 'DAY' | 'MID' | 'NIGHT' | 'UNASSIGNED' {
-  const s = schedule.toUpperCase();
-  if (!s.trim()) return 'UNASSIGNED';
-  if (s.includes('5PM') || s.includes('6PM') || s.includes('7PM') || s.includes('2AM')) return 'NIGHT';
-  if (s.includes('11AM') || s.includes('12PM') || s.includes('1PM') || s.includes('8PM')) return 'MID';
-  return 'DAY';
-}
-
-function shiftBadgeStyle(schedule: string): string {
-  const kind = classifyShift(schedule);
-  if (kind === 'NIGHT') return 'bg-blue-500/15 text-blue-300 border-blue-500/30';
-  if (kind === 'MID') return 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30';
-  if (kind === 'DAY') return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
-  return 'bg-zinc-800/80 text-zinc-500 border-zinc-700/60';
-}
+import {
+  getScheduleShiftKinds,
+  splitScheduleSegments,
+  shiftBadgeStyle,
+} from '@/lib/shiftSchedule';
+import { ShiftScheduleEditor } from './ShiftScheduleEditor';
 
 interface ShiftTimesTabProps {
   onRefreshUsers?: () => void;
@@ -58,8 +36,8 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
   const [search, setSearch] = useState('');
   const [shiftFilter, setShiftFilter] = useState<'ALL' | 'DAY' | 'MID' | 'NIGHT' | 'UNASSIGNED'>('ALL');
 
-  // Inline editing state
-  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  // Modal editing state
+  const [editingEntry, setEditingEntry] = useState<ShiftTimeEntry | null>(null);
   const [draftSchedule, setDraftSchedule] = useState('');
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
 
@@ -115,14 +93,24 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
 
   const startEdit = (entry: ShiftTimeEntry) => {
     if (!canEdit) return;
-    setEditingUserId(entry.userId);
+    setEditingEntry(entry);
     setDraftSchedule(entry.schedule || '');
   };
 
-  const cancelEdit = () => {
-    setEditingUserId(null);
+  const cancelEdit = useCallback(() => {
+    if (savingUserId) return;
+    setEditingEntry(null);
     setDraftSchedule('');
-  };
+  }, [savingUserId]);
+
+  useEffect(() => {
+    if (!editingEntry) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelEdit();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [editingEntry, cancelEdit]);
 
   const handleSave = async (userId: string) => {
     try {
@@ -141,7 +129,7 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
             : item
         )
       );
-      setEditingUserId(null);
+      setEditingEntry(null);
       toast.success('Shift time updated & synced to VIPScale Tools');
       onRefreshUsers?.();
     } catch (err: any) {
@@ -168,7 +156,9 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
   const counts = useMemo(() => {
     const c = { ALL: entries.length, DAY: 0, MID: 0, NIGHT: 0, UNASSIGNED: 0 };
     for (const e of entries) {
-      c[classifyShift(e.schedule)]++;
+      for (const kind of getScheduleShiftKinds(e.schedule)) {
+        c[kind]++;
+      }
     }
     return c;
   }, [entries]);
@@ -176,7 +166,7 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
-      if (shiftFilter !== 'ALL' && classifyShift(e.schedule) !== shiftFilter) return false;
+      if (shiftFilter !== 'ALL' && !getScheduleShiftKinds(e.schedule).includes(shiftFilter)) return false;
       if (!q) return true;
       return (
         e.name.toLowerCase().includes(q) ||
@@ -209,8 +199,10 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
             </span>
           </div>
           <p className="text-xs text-zinc-400">
-            Edits made here or in VIPScale Tools sync automatically in the canonical format (e.g.{' '}
-            <code className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-800">M-F 8AM to 5PM</code>).
+            Edits made here or in VIPScale Tools sync automatically in canonical format (e.g.{' '}
+            <code className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-800">M-F 8AM to 5PM</code>
+            {' '}or split shifts like{' '}
+            <code className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-200 border border-zinc-800">M-Th 8AM to 5PM, Fri 1PM to 9PM</code>).
           </p>
         </div>
 
@@ -286,8 +278,7 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
             </thead>
             <tbody className="divide-y divide-zinc-800/60 text-xs">
               {filtered.map((entry) => {
-                const isEditing = editingUserId === entry.userId;
-                const isSaving = savingUserId === entry.userId;
+                const segments = splitScheduleSegments(entry.schedule);
                 const initials = entry.name
                   .split(' ')
                   .map((w) => w[0])
@@ -334,24 +325,26 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
 
                     {/* Schedule */}
                     <td className="py-3.5 px-4">
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          value={draftSchedule}
-                          onChange={(e) => setDraftSchedule(e.target.value)}
-                          placeholder="e.g. M-F 9AM to 4PM"
-                          list="nexus-shift-presets"
-                          autoFocus
-                          className="w-full max-w-xs px-3 py-1.5 rounded-lg bg-zinc-950 border border-indigo-500/60 text-xs text-white placeholder:text-zinc-600 focus:outline-none"
-                        />
+                      {segments.length > 0 ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {segments.map((seg, i) => (
+                            <span
+                              key={`${seg}-${i}`}
+                              className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-semibold ${shiftBadgeStyle(
+                                seg
+                              )}`}
+                            >
+                              <span>{seg}</span>
+                            </span>
+                          ))}
+                        </div>
                       ) : (
                         <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold ${shiftBadgeStyle(
-                            entry.schedule
+                          className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-semibold ${shiftBadgeStyle(
+                            ''
                           )}`}
                         >
-                          <Clock className="w-3 h-3 opacity-80" />
-                          <span>{entry.schedule || 'Not set'}</span>
+                          <span>Not set</span>
                         </span>
                       )}
                     </td>
@@ -359,41 +352,14 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
                     {/* Actions */}
                     {canEdit && (
                       <td className="py-3.5 px-4 text-right">
-                        {isEditing ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={isSaving}
-                              onClick={() => handleSave(entry.userId)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-semibold cursor-pointer transition-colors"
-                            >
-                              {isSaving ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Save className="w-3 h-3" />
-                              )}
-                              <span>Save</span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isSaving}
-                              onClick={cancelEdit}
-                              className="inline-flex items-center p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 cursor-pointer transition-colors"
-                              title="Cancel"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => startEdit(entry)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 text-[11px] font-medium cursor-pointer transition-colors"
-                          >
-                            <Pencil className="w-3 h-3" />
-                            <span>Edit</span>
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => startEdit(entry)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 text-[11px] font-medium cursor-pointer transition-colors"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
                       </td>
                     )}
                   </tr>
@@ -412,11 +378,97 @@ export function ShiftTimesTab({ onRefreshUsers }: ShiftTimesTabProps) {
         </div>
       </div>
 
-      <datalist id="nexus-shift-presets">
-        {QUICK_SCHEDULES.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
+      {/* Edit Shift Schedule Modal */}
+      <AnimatePresence>
+        {editingEntry && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={cancelEdit}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-xl bg-card border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="px-5 py-4 border-b border-zinc-800/80 flex items-center justify-between gap-3 bg-zinc-900/50">
+                <div className="flex items-center gap-3 min-w-0">
+                  {editingEntry.avatarUrl ? (
+                    <img
+                      src={editingEntry.avatarUrl}
+                      alt={editingEntry.name}
+                      className="w-9 h-9 rounded-full object-cover shrink-0 border border-zinc-800"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                      {editingEntry.name
+                        .split(' ')
+                        .map((w) => w[0])
+                        .join('')
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold text-white truncate">
+                      Edit Shift — {editingEntry.name}
+                    </h3>
+                    <p className="text-[11px] text-zinc-500 truncate">{editingEntry.email}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={Boolean(savingUserId)}
+                  onClick={cancelEdit}
+                  className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-5">
+                <ShiftScheduleEditor
+                  value={draftSchedule}
+                  onChange={setDraftSchedule}
+                />
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-5 py-3.5 border-t border-zinc-800/80 bg-zinc-900/40 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(savingUserId)}
+                  onClick={cancelEdit}
+                  className="px-3.5 py-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(savingUserId)}
+                  onClick={() => handleSave(editingEntry.userId)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold transition-colors cursor-pointer shadow-sm"
+                >
+                  {savingUserId === editingEntry.userId ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  <span>Save Schedule</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

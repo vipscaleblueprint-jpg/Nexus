@@ -2945,18 +2945,20 @@ export const TaskMapBoardView: React.FC<Props> = ({
   // Removed: 'Not started' (pending means not started) and 'In progress' (automated).
   // Stays at in-progress main status: Hand-over (transfers to Available tasks), Paused, Ask Client (transfers to CRM Map pool).
   // Changes main status: To Review -> IN REVIEW (Auditor Map), Waiting -> WAITING (CRM Map), On-hold -> ON-HOLD (Available tasks bottom, excluded from count).
-  const getUnifiedTaskMapOptions = (task: TaskMapItem, _user?: any): TaskMapOption[] => {
+  const getUnifiedTaskMapOptions = (task: TaskMapItem, _user?: any, isLiveCard = false): TaskMapOption[] => {
     const isInsideMaColumn = Boolean(_user) || !poolIds.has(task.id);
+    const hasHandoverOutTag = (task.taskMap?.statuses || []).some(
+      (s) => (s || '').trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+    );
+    const handoverOption: TaskMapOption = !isInsideMaColumn
+      ? { id: 'opt-status-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 }
+      : isLiveCard || hasHandoverOutTag
+        ? { id: 'opt-status-handover-out', label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 }
+        : { id: 'opt-status-handover-in', label: 'Hand-over In', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 };
+
     const list: TaskMapOption[] = [
       { id: 'opt-status-avail', label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff', order: 0 },
-      ...(isInsideMaColumn
-        ? [
-            { id: 'opt-status-handover-in', label: 'Hand-over In', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 },
-            { id: 'opt-status-handover-out', label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1.5 },
-          ]
-        : [
-            { id: 'opt-status-handover', label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff', order: 1 },
-          ]),
+      handoverOption,
       { id: 'opt-status-paused', label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED, textColor: '#713f12', order: 2 },
       { id: 'opt-status-askclient', label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT, textColor: '#155e75', order: 3 },
       { id: 'opt-status-toreview', label: 'To Review', color: resolveSubStatusColor('To Review', TASK_MAP_STATUS_COLORS.TO_REVIEW, task.list?.id, task.list?.statuses), textColor: '#ffffff', order: 4 },
@@ -2982,9 +2984,12 @@ export const TaskMapBoardView: React.FC<Props> = ({
       'DONE REVIEW',
       'DONEREVIEW',
       'DONE',
-      ...(isInsideMaColumn
-        ? ['HANDOVER', 'HAND-OVER']
-        : ['HANDOVERIN', 'HAND-OVER IN', 'HANDOVEROUT', 'HAND-OVER OUT']),
+      'HANDOVER',
+      'HAND-OVER',
+      'HANDOVERIN',
+      'HAND-OVER IN',
+      'HANDOVEROUT',
+      'HAND-OVER OUT',
     ]);
 
     // Ensure any currently selected statuses on this task are also present so user can toggle them off,
@@ -4934,15 +4939,16 @@ export const TaskMapBoardView: React.FC<Props> = ({
                               aria-hidden="true"
                               className={
                                 isMissingTimeInProgress
-                                  ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-red-500/80 ring-2 ring-red-500/35 shadow-[0_0_18px_rgba(239,68,68,0.3)] animate-border-glow-breathe'
+                                  ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-red-500/80 bg-red-500/[0.08] ring-2 ring-red-500/35 shadow-[0_0_18px_rgba(239,68,68,0.3)] animate-border-glow-breathe'
                                   : isUpworkLiveWorking
-                                    ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
+                                    ? 'pointer-events-none absolute -inset-[1px] rounded-xl border border-indigo-500/80 bg-indigo-500/[0.07] ring-2 ring-indigo-500/30 shadow-[0_0_18px_rgba(99,102,241,0.25)] dark:border-white/80 dark:bg-white/[0.04] dark:ring-2 dark:ring-white/30 dark:shadow-[0_0_18px_rgba(255,255,255,0.24)] animate-border-glow-breathe'
                                     : 'pointer-events-none absolute -inset-[1px] rounded-xl border animate-border-glow-breathe'
                               }
                               style={
                                 isCustomLiveWorkingBorder
                                   ? {
                                       borderColor: taskStatusHex,
+                                      backgroundColor: hexToRgba(taskStatusHex, 0.08),
                                       boxShadow: `0 0 0 2px ${hexToRgba(taskStatusHex, 0.5)}, 0 0 20px ${hexToRgba(taskStatusHex, 0.35)}`,
                                     }
                                   : undefined
@@ -5172,7 +5178,7 @@ export const TaskMapBoardView: React.FC<Props> = ({
                                         { isAssigned: true }
                                       )
                                 }
-                                options={getUnifiedTaskMapOptions(task, user)}
+                                options={getUnifiedTaskMapOptions(task, user, isLiveWorking)}
                                 onToggleStatus={(label, nextStatuses) =>
                                   handleTaskMapSubStatusToggle(task, label, nextStatuses, user)
                                 }
@@ -5616,8 +5622,9 @@ export const TaskMapBoardView: React.FC<Props> = ({
           statusOptions={[
             ...(isPmUser ? [{ label: 'Available Task', color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK }] : []),
             { label: 'To Review', color: TASK_MAP_STATUS_COLORS.TO_REVIEW },
-            { label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
-            { label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
+            deliverablesModalTarget.targetStatus.toLowerCase().replace(/[\s_-]+/g, '') === 'handover'
+              ? { label: 'Hand-over', color: TASK_MAP_STATUS_COLORS.HAND_OVER }
+              : { label: 'Hand-over Out', color: TASK_MAP_STATUS_COLORS.HAND_OVER },
             { label: 'Paused', color: TASK_MAP_STATUS_COLORS.PAUSED },
             { label: 'Ask Client', color: TASK_MAP_STATUS_COLORS.ASK_CLIENT },
             { label: 'Waiting', color: TASK_MAP_STATUS_COLORS.WAITING },

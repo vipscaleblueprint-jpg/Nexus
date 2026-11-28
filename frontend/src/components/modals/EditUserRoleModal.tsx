@@ -7,6 +7,7 @@ import { Shield, X, User as UserIcon, Check, Loader2, Star, ChevronDown, Search 
 import { usersApi } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { User, SystemRole, EmploymentType, WorkspaceRole } from '@/lib/types';
+import { ShiftScheduleEditor } from '@/components/settings/ShiftScheduleEditor';
 
 interface EditUserRoleModalProps {
   isOpen: boolean;
@@ -469,15 +470,15 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
           {/* Shift Schedule */}
           <div>
             <label className="block text-[11px] font-medium text-zinc-300 mb-1.5">
-              Shift Schedule <span className="text-zinc-500 font-normal">(e.g. M-F 8AM to 5PM, T-S 5PM to 2AM)</span>
+              Shift Schedule
             </label>
-            <input
-              type="text"
-              value={shiftSchedule}
-              onChange={(e) => setShiftSchedule(e.target.value)}
-              placeholder="M-F 9AM to 4PM"
-              className="w-full h-[38px] px-3 rounded-xl bg-background border border-zinc-800 focus:border-indigo-500/60 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none transition-colors"
-            />
+            <div className="p-3 rounded-xl bg-background border border-zinc-800">
+              <ShiftScheduleEditor
+                value={shiftSchedule}
+                onChange={setShiftSchedule}
+                compact
+              />
+            </div>
           </div>
 
           {/* Footer Actions */}

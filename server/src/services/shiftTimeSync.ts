@@ -27,26 +27,45 @@ export function canEditShiftTimes(user?: { systemRole?: string | null; email?: s
   return isShiftTimeSpecialEditor(user.email);
 }
 
+function normalizeDaysToken(rawDays: string): string {
+  return rawDays
+    .split(/([-/])/)
+    .map((part) => {
+      if (part === '-' || part === '/') return part;
+      if (part.length <= 1) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    })
+    .join('');
+}
+
 /**
  * Normalizes a shift schedule string while preserving the exact canonical format
- * from Column X of the sheet, e.g. "M-F 9AM to 4PM", "T-S 5PM to 2AM", "T-F 8AM to 5PM".
+ * from Column X of the sheet, e.g. "M-F 9AM to 4PM", "T-S 5PM to 2AM",
+ * as well as multi-rule schedules like "M-Th 8AM to 5PM, Fri 1PM to 9PM".
  */
 export function normalizeScheduleFormat(raw: string): string {
   const cleaned = raw.trim().replace(/\s+/g, ' ');
   if (!cleaned) return '';
 
-  // Match canonical "<DAYS> <START> to <END>" (case-insensitive) and normalize casing
-  const match = cleaned.match(
-    /^([A-Za-z]+(?:-[A-Za-z]+)?)\s+(\d{1,2}(?::\d{2})?\s*[AaPp][Mm])\s+(?:to|-|–)\s+(\d{1,2}(?::\d{2})?\s*[AaPp][Mm])$/i
-  );
-  if (match) {
-    const days = match[1].toUpperCase();
+  const segments = cleaned
+    .split(/\s*[,;]\s*/)
+    .map((seg) => seg.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) return '';
+
+  const normalized = segments.map((seg) => {
+    const match = seg.match(
+      /^([A-Za-z]+(?:[-/][A-Za-z]+)*)\s+(\d{1,2}(?::\d{2})?\s*[AaPp][Mm])\s+(?:to|-|–)\s+(\d{1,2}(?::\d{2})?\s*[AaPp][Mm])$/i
+    );
+    if (!match) return seg;
+    const days = normalizeDaysToken(match[1]);
     const start = match[2].replace(/\s+/g, '').toUpperCase();
     const end = match[3].replace(/\s+/g, '').toUpperCase();
     return `${days} ${start} to ${end}`;
-  }
+  });
 
-  return cleaned;
+  return normalized.join(', ');
 }
 
 function toolsBaseUrl(): string {

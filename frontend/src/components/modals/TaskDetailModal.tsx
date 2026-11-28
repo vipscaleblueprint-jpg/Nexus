@@ -16,7 +16,7 @@ import { uploadApi } from '@/api/upload';
 import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
-import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess, isProjectManagerOrAdmin } from '@/lib/permissions';
+import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess, isProjectManagerOrAdmin, canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 import { EstimatedHoursField } from './EstimatedHoursField';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
@@ -3070,9 +3070,14 @@ export function TaskDetailModalContent({
   if (!isOpen || !task) return null;
 
   const permission = canUserMoveTask(task, listStatuses, currentUser, workspaceRoles);
+  const canEditStatus = canUserEditTaskStatus(currentUser as any);
 
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!task) return;
+    if (!canEditStatus) {
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
 
     let currentTask = taskRef.current || task;
     let transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
@@ -4271,11 +4276,24 @@ export function TaskDetailModalContent({
                           style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
                           className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-[#fff]' : defaultClasses} shadow-sm group/status`}
                         >
-                          <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                          <Popover.Root open={canEditStatus ? isStatusOpen : false} onOpenChange={(open) => {
+                            if (open && !canEditStatus) {
+                              toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                              return;
+                            }
+                            setIsStatusOpen(open);
+                          }}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!canEditStatus) {
+                                    e.preventDefault();
+                                    toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                                  }
+                                }}
+                                title={!canEditStatus ? STATUS_EDIT_DENIED_MESSAGE : undefined}
+                                className={`flex items-center h-full px-2.5 rounded-l-md ${canEditStatus ? 'cursor-pointer hover:brightness-110' : 'cursor-not-allowed opacity-85'}`}
                               >
                                 {statusName}
                               </div>
@@ -7429,8 +7447,14 @@ export function SubtaskDetailView({
   const subtaskActivityPanelRef = useRef<HTMLDivElement>(null);
   const [isCheckLocked, setIsCheckLocked] = useState(false);
 
+  const canEditStatus = canUserEditTaskStatus(currentUser as any);
+
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!subtask || isSubmittingStatus) return;
+    if (!canEditStatus) {
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
 
     let currentSubtask = subtaskRef.current || subtask;
     let transitionCheck = canTransitionTaskStatus(currentSubtask, newStatus);
@@ -9257,11 +9281,24 @@ export function SubtaskDetailView({
                           style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
                           className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-[#fff]' : defaultClasses} shadow-sm group/status`}
                         >
-                          <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                          <Popover.Root open={canEditStatus ? isStatusOpen : false} onOpenChange={(open) => {
+                            if (open && !canEditStatus) {
+                              toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                              return;
+                            }
+                            setIsStatusOpen(open);
+                          }}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!canEditStatus) {
+                                    e.preventDefault();
+                                    toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                                  }
+                                }}
+                                title={!canEditStatus ? STATUS_EDIT_DENIED_MESSAGE : undefined}
+                                className={`flex items-center h-full px-2.5 rounded-l-md ${canEditStatus ? 'cursor-pointer hover:brightness-110' : 'cursor-not-allowed opacity-85'}`}
                               >
                                 {statusName}
                               </div>

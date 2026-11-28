@@ -25,7 +25,7 @@ import { openGalaxySubtaskForTask } from '@/lib/galaxyTask';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
-import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserEditTask, canTransitionTaskStatus, canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 
 
@@ -209,6 +209,11 @@ const CardContent = memo(({
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
+    if (!canUserEditTaskStatus(currentUser)) {
+      closeDropdown();
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
 
     const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
     const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);

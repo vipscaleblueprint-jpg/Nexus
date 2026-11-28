@@ -291,7 +291,21 @@ export async function clearDailySheetLogRow(params: {
       sheetRow: Number(params.sheetRow),
     },
   });
-  return res.count;
+  if (res.count > 0) return res.count;
+
+  // Fallback: if the session was started from Nexus (sheetRow: null) and the user
+  // cleared the synced row in Google Sheets before DailySheetLog.sheetRow was populated,
+  // clean up the active unrowed live entry for this MA today.
+  const unrowedRes = await prisma.dailySheetLog.deleteMany({
+    where: {
+      dateKey,
+      maKey,
+      sheetRow: null,
+      isLive: true,
+      timeOut: null,
+    },
+  });
+  return unrowedRes.count;
 }
 
 /**

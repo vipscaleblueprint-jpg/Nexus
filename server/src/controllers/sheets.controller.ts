@@ -1801,9 +1801,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
           if (incomingRowNum > 0) {
             try {
+              const clearedTaskIds = new Set<string>();
               const staleRecords = await prisma.taskMapRecord.findMany({
                 where: { pmReviews: { not: null as any } },
-                select: { id: true, taskId: true, pmReviews: true },
+                select: { id: true, taskId: true, pmReviews: true, statuses: true },
               });
               for (const staleRec of staleRecords) {
                 let revs = staleRec.pmReviews;
@@ -1815,7 +1816,12 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 const filteredRevs = revs.filter((r: any) => {
                   if (r.type === 'SHEET_PROGRESS') {
                     const matchesMa = r.maName && r.maName.toLowerCase().trim() === maKey;
-                    const matchesRow = Number(r.sheetRow) === incomingRowNum;
+                    const rowNum = Number(r.sheetRow);
+                    const matchesRow =
+                      rowNum === incomingRowNum ||
+                      ((!r.sheetRow || rowNum <= 0) &&
+                        !r.timeOut &&
+                        (!currentActiveObj?.taskId || staleRec.taskId === currentActiveObj.taskId));
                     if (matchesMa && matchesRow) {
                       mod = true;
                       if (r.isUpwork) {
@@ -1830,16 +1836,53 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   return true;
                 });
                 if (mod) {
+                  clearedTaskIds.add(staleRec.taskId);
+                  const cleanedStatuses = Array.isArray(staleRec.statuses)
+                    ? staleRec.statuses.filter(
+                        (s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+                      )
+                    : staleRec.statuses;
                   await prisma.$executeRawUnsafe(
-                    `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+                    `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "statuses" = $2::text[], "updatedAt" = NOW() WHERE "taskId" = $3`,
                     JSON.stringify(filteredRevs),
+                    cleanedStatuses || [],
                     staleRec.taskId
                   );
+                  await prisma.task.updateMany({
+                    where: { id: staleRec.taskId, status: 'IN PROGRESS' },
+                    data: { status: 'PENDING' },
+                  }).catch(() => { });
                   await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
                   const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
                   io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
-                  io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
+                  io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg, statuses: cleanedStatuses });
                 }
+              }
+
+              // Also revert active task in Redis if its TaskMapRecord had no SHEET_PROGRESS entry yet
+              if (currentActiveObj?.taskId && matchesActiveRow && !clearedTaskIds.has(currentActiveObj.taskId)) {
+                const activeTaskId = String(currentActiveObj.taskId);
+                const rec = await prisma.taskMapRecord.findUnique({
+                  where: { taskId: activeTaskId },
+                  select: { statuses: true },
+                }).catch(() => null);
+                if (rec && Array.isArray(rec.statuses)) {
+                  const cleanedStatuses = rec.statuses.filter(
+                    (s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+                  );
+                  if (cleanedStatuses.length !== rec.statuses.length) {
+                    await prisma.taskMapRecord.update({
+                      where: { taskId: activeTaskId },
+                      data: { statuses: cleanedStatuses },
+                    }).catch(() => { });
+                  }
+                }
+                await prisma.task.updateMany({
+                  where: { id: activeTaskId, status: 'IN PROGRESS' },
+                  data: { status: 'PENDING' },
+                }).catch(() => { });
+                await invalidateCache(`task:${activeTaskId}`, 'task_map:*');
+                io.emit('task_map:updated', { taskId: activeTaskId, progress: null });
               }
             } catch (cleanErr) {
               console.warn('[Sheets] Failed to clean up deleted row progress for MA:', cleanErr);

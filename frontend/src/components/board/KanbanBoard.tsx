@@ -27,7 +27,7 @@ import { isGalaxyTask } from '@/lib/galaxyTask';
 import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil, ArrowDownUp } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
-import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus, canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
@@ -1055,6 +1055,10 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
     const task = latestTasksRef.current.find((t) => t.id === active.id) || localTasks.find((t) => t.id === active.id) || tasks.find((t) => t.id === active.id);
     if (task) {
+      if (!canUserEditTaskStatus(currentUser)) {
+        toast.error(STATUS_EDIT_DENIED_MESSAGE);
+        return;
+      }
       dragStartTaskRef.current = task;
       // Check task-level edit restriction (teamAssignAccessRole)
       const editCheck = canUserEditTask(task, currentUser);
@@ -1385,6 +1389,12 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     if (finalStatus !== originalTask.status) {
+      if (!canUserEditTaskStatus(currentUser)) {
+        toast.error(STATUS_EDIT_DENIED_MESSAGE);
+        setLocalTasks([...latestTasksRef.current]);
+        dragStartTaskRef.current = null;
+        return;
+      }
       let transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
       if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0 && originalTask?.id) {
         try {

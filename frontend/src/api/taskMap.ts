@@ -1,5 +1,6 @@
 import { apiClient } from './client';
 import { tasksApi } from './tasks';
+export { canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 
 export interface TaskMapOption {
   id: string;

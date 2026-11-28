@@ -10,6 +10,8 @@ import { getPriorityConfig } from '@/lib/priority';
 import { TaskMapItem, isTaskMapItemOnHold, compareAvailablePoolTasks, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
+import { canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
+import { toast } from '@/lib/toast';
 import { useLiveClock } from '@/lib/liveClock';
 import { HoverHint } from './HoverHint';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
@@ -603,6 +605,8 @@ export const CardStatusDropdown: React.FC<{
   excludeStatuses?: string[];
   readOnly?: boolean;
 }> = ({ taskId, currentStatus, listId, listStatuses, onSelect, excludeStatuses = [], readOnly = false }) => {
+  const currentUser = useAppStore((s) => s.currentUser);
+  const canEditStatus = canUserEditTaskStatus(currentUser);
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -666,6 +670,10 @@ export const CardStatusDropdown: React.FC<{
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (readOnly) return;
+    if (!canEditStatus) {
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
     if (isOpen) {
       setIsOpen(false);
       setCoords(null);
@@ -728,6 +736,10 @@ export const CardStatusDropdown: React.FC<{
         onClick={() => {
           setIsOpen(false);
           setCoords(null);
+          if (!canEditStatus) {
+            toast.error(STATUS_EDIT_DENIED_MESSAGE);
+            return;
+          }
           onSelect(s);
         }}
         className={`w-full shrink-0 flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${

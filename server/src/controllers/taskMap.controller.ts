@@ -6215,7 +6215,8 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     if (targetRow) {
       let skipDuplicateWebhook = false;
       if (mode === 'STOP') {
-        const dedupeKey = `${String(targetRow.date || getManilaDateStr()).split('T')[0]}::${actorDisplayName.trim().toLowerCase()}::${cleanTaskId || 'none'}${subtaskId ? `:${subtaskId}` : ''}`;
+        const dedupeTarget = subtaskId ? `subtask:${subtaskId}` : (cleanTaskId || 'none');
+        const dedupeKey = `${getManilaDateStr()}::${actorDisplayName.trim().toLowerCase()}::${dedupeTarget}`;
         if (isRedisReady()) {
           const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
           if (!acquired) skipDuplicateWebhook = true;
@@ -6231,7 +6232,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       }
 
       if (!skipDuplicateWebhook) {
-        void triggerN8nStartTaskWebhook({
+        const webhookPayload = {
           userId: user?.id,
           userName: actorDisplayName,
           userEmail: actorUser?.email,
@@ -6247,11 +6248,16 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           timeIn: resolvedTimeIn || targetRow.timeIn,
           timeOut: effectiveTimeOut,
           timeTracker: targetRow.timeTracker || null,
-          taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
-          description: targetRow.taskDeliverablesDescription || targetRow.task,
+          taskDeliverablesDescription: normalizedTargetDeliverables,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables ? String(targetRow.taskUpdateAndDeliverables).trim() : '',
+          description: normalizedTargetDeliverables || targetRow.task,
           mode: mode || 'UPDATE',
-        });
+        };
+        if (mode === 'STOP') {
+          await triggerN8nStartTaskWebhook(webhookPayload);
+        } else {
+          void triggerN8nStartTaskWebhook(webhookPayload);
+        }
 
         // Also post the submitted deliverables/update directly to the Nexus task's Activity/Comments
         // because Google Sheets API writes from n8n do not fire Apps Script onEdit triggers.

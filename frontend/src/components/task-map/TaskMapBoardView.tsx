@@ -3121,7 +3121,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
             skipN8nSync: true,
           }).catch(console.error);
           if (isPaused && modalUser?.id && onAssignTask) {
-            onStatusChange(linkedId, ['Paused']);
             await onAssignTask(linkedId, modalUser.id, 'QUEUE', undefined, undefined, {
               ...task,
               id: linkedId,
@@ -3238,7 +3237,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
           queueDestinationUserId && ownerId && queueDestinationUserId !== ownerId
         );
         const nextPausedStatuses = isCrossUserQueueMove ? ['Hand-over In'] : ['Paused'];
-        onStatusChange(effectiveTaskId, nextPausedStatuses);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, nextPausedStatuses, statusPayloadExtra).catch(console.error);
         const pausedOverride: TaskMapItem = {
           ...task,
@@ -3289,7 +3287,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
             : 'Task paused & stored in Queue'
         );
       } else if (isHandoverOut) {
-        onStatusChange(effectiveTaskId, ['Hand-over Out']);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over Out'], statusPayloadExtra).catch(console.error);
         const handoverOutOverride: TaskMapItem = {
           ...task,
@@ -3330,12 +3327,10 @@ export const TaskMapBoardView: React.FC<Props> = ({
             : 'Task marked Hand-over Out & moved to Queue'
         );
       } else if (isHandoverIn) {
-        onStatusChange(effectiveTaskId, ['Hand-over In']);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over In'], statusPayloadExtra).catch(console.error);
         toast.info('Task marked Hand-over In');
       } else if (isHandoverToPool) {
         const preservedStatus = toCanonicalTaskStatus(task.status || 'IN PROGRESS') || 'IN PROGRESS';
-        onStatusChange(effectiveTaskId, ['Hand-over']);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Hand-over'], statusPayloadExtra).catch(console.error);
         if (isPmUser && onTaskUpdate) {
           await onTaskUpdate(effectiveTaskId, { assigneeId: null, status: preservedStatus });
@@ -3381,7 +3376,6 @@ export const TaskMapBoardView: React.FC<Props> = ({
 
         toast.info(`Task status changed to IN REVIEW — clocked out at ${nowTimeOut}`);
       } else if (isAvailableTask) {
-        onStatusChange(effectiveTaskId, ['Available Task']);
         await taskMapApi.updateTaskStatuses(effectiveTaskId, ['Available Task'], statusPayloadExtra).catch(console.error);
         const isCadence = ['DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING'].includes(
           (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '')

@@ -12,7 +12,6 @@ import {
   Building2,
   Sparkles,
   Trash2,
-  AlertTriangle,
 } from 'lucide-react';
 import { DayPicker, DateRange } from 'react-day-picker';
 import 'react-day-picker/style.css';
@@ -20,8 +19,12 @@ import {
   taskMapApi,
   LaunchMeta,
   getManilaDateKey,
-  collectClientDashboardLists,
+  getTaskEffectiveLaunchDate,
+  toCanonicalTaskStatus,
+  LaunchMapLightItem,
 } from '@/api/taskMap';
+import { tasksApi } from '@/api/tasks';
+import { STATUS_COLORS } from '@/lib/taskTokens';
 import type { EnrichedLaunchEntry } from './LaunchMapDayDrawer';
 import { useAppStore } from '@/lib/store';
 import { toast } from '@/lib/toast';
@@ -31,6 +34,8 @@ import { toast } from '@/lib/toast';
 export interface LaunchDayModalProps {
   /** Pre-selected date key (YYYY-MM-DD), e.g. the day that was clicked */
   initialDate: string;
+  /** Pre-selected task item (e.g. when editing an existing launch or passing a task) */
+  initialTask?: LaunchMapLightItem | null;
   /** Existing launches on this day (if any) */
   existingEntries?: EnrichedLaunchEntry[];
   /** Handler to delete/unschedule a launch */
@@ -66,16 +71,6 @@ const COMMON_TIMEZONES = [
   { label: 'Auckland (+13:00)', value: 'Pacific/Auckland' },
 ];
 
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
-const LABEL_TO_JS_WD: Record<string, number> = {
-  Sun: 0,
-  Mon: 1,
-  Tue: 2,
-  Wed: 3,
-  Thu: 4,
-  Fri: 5,
-  Sat: 6,
-};
 
 function formatTime12h(time24: string): string {
   if (!time24) return '09:00 PM';
@@ -115,7 +110,6 @@ function formatDisplay(ymd?: string | null): string {
   }
 }
 
-
 const RDP_STYLE = `
   .ldm-rdp .rdp-root {
     --rdp-accent-color: #8b5cf6;
@@ -147,6 +141,7 @@ const RDP_STYLE = `
 
 export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   initialDate,
+  initialTask = null,
   existingEntries = [],
   onDeleteLaunch,
   onClose,
@@ -155,45 +150,75 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   const spaces = useAppStore((s) => s.spaces);
   const allLists = useAppStore((s) => s.allLists);
   const loadSpaces = useAppStore((s) => s.loadSpaces);
+  const currentUser = useAppStore((s) => s.currentUser);
 
   useEffect(() => {
     if (!spaces || spaces.length === 0) loadSpaces();
   }, [spaces, loadSpaces]);
 
-  // Build client list from database
+  // Build client list from database (including all spaces, folders, and lists like VIP SCALE, XFINITE, etc.)
   const clients = useMemo(() => {
-    const result: Array<{ id: string; name: string; timezone?: string }> = [];
-    const seen = new Set<string>();
-    for (const c of collectClientDashboardLists(spaces, allLists)) {
-      if (!seen.has(c.id)) {
-        seen.add(c.id);
-        const listData = allLists?.find((l) => l.id === c.id);
-        result.push({
-          id: c.id,
-          name: c.name,
-          timezone:
-            (listData as { timezone?: string; rolloverTimezone?: string })?.timezone ||
-            (listData as { rolloverTimezone?: string })?.rolloverTimezone,
+    const map = new Map<
+      string,
+      { id: string; name: string; folderName?: string; spaceName?: string; timezone?: string }
+    >();
+
+    const recordList = (l: any, spaceName?: string, folderName?: string) => {
+      if (!l || !l.id || !l.name) return;
+      if (!map.has(l.id)) {
+        map.set(l.id, {
+          id: l.id,
+          name: l.name,
+          spaceName: spaceName || undefined,
+          folderName: folderName || undefined,
+          timezone: l.timezone || l.rolloverTimezone || undefined,
         });
       }
+    };
+
+    // 1. Walk spaces hierarchy
+    for (const s of spaces || []) {
+      const spaceName = s.id === 'root-space' ? undefined : s.name;
+      for (const l of s.lists || []) {
+        recordList(l, spaceName);
+      }
+      const walkFolders = (folders: any[], parentFolder?: string) => {
+        for (const f of folders || []) {
+          const currentFolder = parentFolder ? `${parentFolder} / ${f.name}` : f.name;
+          for (const l of f.lists || []) {
+            recordList(l, spaceName, currentFolder);
+          }
+          if (f.subfolders) walkFolders(f.subfolders, currentFolder);
+        }
+      };
+      if (s.folders) walkFolders(s.folders);
     }
-    return result.sort((a, b) => a.name.localeCompare(b.name));
+
+    // 2. Also check allLists for any flat lists
+    for (const item of allLists || []) {
+      if (item?.list?.id) {
+        recordList(item.list, item.spaceName, item.folderName);
+      } else if (item?.id) {
+        recordList(item);
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [spaces, allLists]);
 
-  const initialDateObj = parseDateKey(initialDate);
-  const initialJsWd = initialDateObj ? initialDateObj.getDay() : new Date().getDay();
+  const [selectedTask] = useState<LaunchMapLightItem | null>(initialTask);
 
-  const [title, setTitle] = useState('');
+  // Schedule fields
+  const [title, setTitle] = useState(initialTask?.title || '');
   const [selectedClientId, setSelectedClientId] = useState('');
   const [clientSearch, setClientSearch] = useState('');
   const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
   const clientDropRef = useRef<HTMLDivElement>(null);
 
-  // Selected weekdays (mon-sun buttons)
-  const [selectedWeekdays, setSelectedWeekdays] = useState<Set<number>>(new Set([initialJsWd]));
-
   // Date range
-  const [startDate, setStartDate] = useState<string>(initialDate);
+  const [startDate, setStartDate] = useState<string>(
+    initialTask ? getTaskEffectiveLaunchDate(initialTask) || initialDate : initialDate
+  );
   const [hasEndDate, setHasEndDate] = useState(false);
   const [endDate, setEndDate] = useState<string>('');
 
@@ -213,18 +238,43 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // When initialTask is passed, preset matching client
+  useEffect(() => {
+    if (!initialTask || selectedClientId) return;
+    const clientName = initialTask.list?.name || initialTask.list?.folder?.name || '';
+    const match = clients.find(
+      (c) =>
+        (initialTask.listId && c.id === initialTask.listId) ||
+        (initialTask.list?.id && c.id === initialTask.list.id) ||
+        c.name.toLowerCase() === clientName.toLowerCase()
+    );
+    if (match) {
+      setSelectedClientId(match.id);
+      setClientSearch(match.name);
+      if (match.timezone) setTimezone(match.timezone);
+    } else if (initialTask.list?.name) {
+      setSelectedClientId(initialTask.list.id);
+      setClientSearch(initialTask.list.name);
+    }
+  }, [initialTask, clients, selectedClientId]);
+
   // Keep clientSearch synced if selectedClientId is set
   useEffect(() => {
     if (selectedClientId && !clientSearch) {
       const match = clients.find((c) => c.id === selectedClientId);
       if (match) setClientSearch(match.name);
     }
-  }, [selectedClientId, clients]);
+  }, [selectedClientId, clients, clientSearch]);
 
   const filteredClients = useMemo(() => {
     if (!clientSearch.trim()) return clients;
     const q = clientSearch.toLowerCase().trim();
-    return clients.filter((c) => c.name.toLowerCase().includes(q));
+    return clients.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.folderName && c.folderName.toLowerCase().includes(q)) ||
+        (c.spaceName && c.spaceName.toLowerCase().includes(q))
+    );
   }, [clients, clientSearch]);
 
   // Auto-set client timezone if available
@@ -266,11 +316,17 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
   // Escape to close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !datePickerOpen && !endDatePickerOpen) onClose();
+      if (e.key === 'Escape') {
+        if (clientDropdownOpen) {
+          setClientDropdownOpen(false);
+        } else if (!datePickerOpen && !endDatePickerOpen) {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, datePickerOpen, endDatePickerOpen]);
+  }, [onClose, clientDropdownOpen, datePickerOpen, endDatePickerOpen]);
 
   const selectedClient = clients.find((c) => c.id === selectedClientId);
   const startDateObj = parseDateKey(startDate);
@@ -281,17 +337,6 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
     return { from: startDateObj, to: endDateObj || undefined };
   }, [hasEndDate, startDateObj, endDateObj]);
 
-  const toggleWeekday = useCallback((jsWd: number) => {
-    setSelectedWeekdays((prev) => {
-      const next = new Set(prev);
-      if (next.has(jsWd)) {
-        if (next.size > 1) next.delete(jsWd);
-      } else {
-        next.add(jsWd);
-      }
-      return next;
-    });
-  }, []);
 
   const handleDeleteExisting = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -324,22 +369,33 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
 
     setSaving(true);
     try {
-      const q = title.trim();
-      const res = await taskMapApi.getLaunchCandidates({ q, limit: 10 });
-      const clientName = selectedClient?.name || '';
+      let taskId = selectedTask?.id;
 
-      const match =
-        (res.candidates || []).find((t) => (t.list?.name || '').toLowerCase() === clientName.toLowerCase()) ||
-        res.candidates?.[0];
+      if (!taskId) {
+        // Fallback: search candidate by title if no task was explicitly chosen
+        const q = title.trim();
+        const res = await taskMapApi.getLaunchCandidates({ q, limit: 10 });
+        const clientName = selectedClient?.name || '';
 
-      if (!match) {
-        toast.error(`No task found matching "${q}" for client "${clientName}". Please ensure task exists in Nexus.`);
-        setSaving(false);
-        return;
+        const match =
+          (res.candidates || []).find((t) => (t.list?.name || '').toLowerCase() === clientName.toLowerCase()) ||
+          res.candidates?.[0];
+
+        if (match) {
+          taskId = match.id;
+        } else {
+          const createRes = await tasksApi.createTask({
+            title: q,
+            listId: selectedClientId,
+            creatorId: currentUser?.id,
+            dueDate: startDate ? `${startDate}T23:59:59.000Z` : undefined,
+          });
+          taskId = createRes.task.id;
+        }
       }
 
       const endMetaStr = hasEndDate && endDate ? ` | End: ${endDate} ${formatTime12h(endTime)}` : '';
-      const saveRes = await taskMapApi.updateLaunchMeta(match.id, {
+      const saveRes = await taskMapApi.updateLaunchMeta(taskId, {
         launchDate: startDate,
         targetPeriod: null,
         isLaunchDate: true,
@@ -350,7 +406,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
       });
 
       if (saveRes.success) {
-        onSaved(match.id, {
+        onSaved(taskId, {
           launchMeta: saveRes.launchMeta,
           effectiveLaunchDate: saveRes.effectiveLaunchDate,
           targetPeriod: saveRes.targetPeriod ?? null,
@@ -372,18 +428,23 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
       onClick={onClose}
     >
       <style>{RDP_STYLE}</style>
+
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[430px] bg-[#121216] border border-[#27272e] rounded-2xl shadow-2xl p-4 flex flex-col gap-2.5 text-zinc-100"
+        className="w-full max-w-[480px] max-h-[90vh] overflow-y-auto custom-scrollbar bg-[#121216] border border-[#27272e] rounded-2xl shadow-2xl p-4 flex flex-col gap-3 text-zinc-100"
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-0.5 border-b border-[#22222a]">
-          <div className="flex items-center gap-2">
-            <Rocket className="size-4 text-purple-400" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
-              SET LAUNCH SCHEDULE
-            </h3>
+        <div className="flex items-center justify-between pb-2 border-b border-[#22222a]">
+          <div className="flex items-center gap-2.5">
+            <div className="size-8 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center shrink-0">
+              <Rocket className="size-4 text-purple-400" />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-100">
+                Schedule Deliverable on Launch Map
+              </h3>
+            </div>
           </div>
           <button
             type="button"
@@ -394,7 +455,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
           </button>
         </div>
 
-        {/* Existing launches on this day (with DELETE LAUNCH button) */}
+        {/* Existing launches on this day (if any) */}
         {existingEntries.length > 0 && (
           <div className="p-2.5 rounded-xl bg-[#18181f] border border-[#272733] flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
@@ -410,7 +471,7 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
                 >
                   <div className="min-w-0 flex-1 flex flex-col">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-semibold truncate max-w-[90px]">
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-semibold truncate max-w-[110px]">
                         {entry.clientName}
                       </span>
                       <span className="text-xs font-semibold text-zinc-200 truncate">
@@ -440,366 +501,354 @@ export const LaunchDayModal: React.FC<LaunchDayModalProps> = ({
           </div>
         )}
 
-        {/* Launch Title Input */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[10.5px] font-semibold text-zinc-400">Launch Title</label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Black Friday Campaign Launch"
-            autoFocus
-            className="bg-[#18181f] border border-[#2a2a35] rounded-xl px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
-          />
-        </div>
-
-        {/* Client Dropdown with typing / searching */}
-        <div className="flex flex-col gap-1" ref={clientDropRef}>
-          <label className="text-[10.5px] font-semibold text-zinc-400">Client</label>
-          <div className="relative">
-            <div
-              className={`w-full h-8 flex items-center gap-2 px-3 rounded-xl border text-xs transition-colors ${
-                clientDropdownOpen
-                  ? 'border-purple-500 ring-1 ring-purple-500/40 bg-[#18181f]'
-                  : 'border-[#2a2a35] bg-[#18181f] hover:border-purple-500/50'
-              }`}
-            >
-              <Building2 className="size-3.5 text-purple-400 shrink-0" />
-              <input
-                type="text"
-                value={clientSearch}
-                onFocus={() => setClientDropdownOpen(true)}
-                onChange={(e) => {
-                  setClientSearch(e.target.value);
-                  setClientDropdownOpen(true);
-                  if (!e.target.value) {
-                    setSelectedClientId('');
-                  }
-                }}
-                placeholder="Select client from database…"
-                className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-400 focus:outline-none"
-              />
-              {clientSearch ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setClientSearch('');
-                    setSelectedClientId('');
-                  }}
-                  className="p-0.5 rounded text-zinc-500 hover:text-zinc-300 cursor-pointer"
-                  title="Clear"
-                >
-                  <X className="size-3" />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setClientDropdownOpen((v) => !v)}
-                className="p-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer"
-              >
-                <ChevronDown
-                  className={`size-3 transition-transform ${
-                    clientDropdownOpen ? 'rotate-180' : ''
+        {/* Linked Task Banner (if task selected) */}
+        {selectedTask && (
+          <div className="p-2 rounded-xl bg-[#18181f] border border-[#272733] flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[9.5px] font-bold uppercase tracking-wider text-purple-300 px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 truncate max-w-[140px]">
+                  {selectedTask.list?.folder?.name || selectedTask.list?.name || 'Deliverable'}
+                </span>
+                <span
+                  className={`text-[9.5px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                    STATUS_COLORS[toCanonicalTaskStatus(selectedTask.status)] || 'bg-zinc-800 text-zinc-300'
                   }`}
-                />
-              </button>
-            </div>
-
-            {clientDropdownOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#18181f] border border-[#2e2e3d] rounded-xl shadow-2xl max-h-44 overflow-y-auto custom-scrollbar p-1">
-                {clients.length === 0 ? (
-                  <div className="flex items-center justify-center py-5 text-xs text-zinc-500">
-                    <Loader2 className="size-3.5 animate-spin mr-1.5" /> Loading clients…
-                  </div>
-                ) : filteredClients.length === 0 ? (
-                  <div className="py-4 text-center text-xs text-zinc-500">
-                    No clients found matching &ldquo;{clientSearch}&rdquo;
-                  </div>
-                ) : (
-                  filteredClients.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedClientId(c.id);
-                        setClientSearch(c.name);
-                        setClientDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 hover:bg-[#252530] transition-colors cursor-pointer ${
-                        c.id === selectedClientId ? 'bg-purple-950/60 text-purple-300 font-semibold' : 'text-zinc-300'
-                      }`}
-                    >
-                      <Building2 className="size-3 shrink-0 text-zinc-500" />
-                      <span className="truncate">{c.name}</span>
-                    </button>
-                  ))
-                )}
+                >
+                  {toCanonicalTaskStatus(selectedTask.status)}
+                </span>
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* CARD 1: Date & Weekday Selectable Box */}
-        <div className="p-2.5 rounded-xl bg-[#18181f] border border-[#272733] flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
-              <CalendarIcon className="size-3.5 text-purple-400" />
-              <span>Launch Starting Date</span>
+              <p className="text-xs font-semibold text-zinc-100 truncate">{selectedTask.title}</p>
             </div>
           </div>
+        )}
 
-          {/* Date Picker Button */}
-          <div className="relative" ref={datePickerRef}>
-            <button
-              type="button"
-              onClick={() => {
-                const p = parseDateKey(startDate);
-                if (p) setCalendarMonth(p);
-                setDatePickerOpen((v) => !v);
-              }}
-              className="w-full h-8 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                <CalendarIcon className="size-3 text-purple-400" />
-                <span className="text-zinc-200 font-medium">{formatDisplay(startDate)}</span>
-              </span>
-              <ChevronDown className="size-3 text-zinc-500" />
-            </button>
-
-            {datePickerOpen && (
-              <div
-                role="dialog"
-                className="ldm-rdp absolute left-0 top-full mt-1 z-[80] rounded-xl border border-[#2f2f3d] bg-[#16161c] shadow-2xl p-2.5"
-              >
-                {!hasEndDate ? (
-                  <DayPicker
-                    mode="single"
-                    selected={parseDateKey(startDate)}
-                    month={calendarMonth}
-                    onMonthChange={setCalendarMonth}
-                    onSelect={(d) => {
-                      if (d) {
-                        setStartDate(dateToKey(d));
-                        setDatePickerOpen(false);
-                      }
-                    }}
-                  />
-                ) : (
-                  <DayPicker
-                    mode="range"
-                    selected={rangeSelection}
-                    month={calendarMonth}
-                    onMonthChange={setCalendarMonth}
-                    onSelect={(r) => {
-                      if (r?.from) setStartDate(dateToKey(r.from));
-                      if (r?.to) setEndDate(dateToKey(r.to));
-                    }}
-                  />
-                )}
-                <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-[#272733]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const today = getManilaDateKey(new Date()) || dateToKey(new Date());
-                      setStartDate(today);
-                      setDatePickerOpen(false);
-                    }}
-                    className="text-[10px] font-semibold text-purple-400 hover:underline px-1 cursor-pointer"
-                  >
-                    Today
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDatePickerOpen(false)}
-                    className="text-[10px] font-medium text-zinc-400 hover:text-zinc-200 px-1 cursor-pointer"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Selectable boxes from Mon-Sun */}
+          {/* Launch Title Input */}
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-              Repeat Days (Mon-Sun)
-            </span>
-            <div className="flex gap-1">
-              {WEEKDAY_LABELS.map((label) => {
-                const jsWd = LABEL_TO_JS_WD[label];
-                const active = selectedWeekdays.has(jsWd);
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => toggleWeekday(jsWd)}
-                    className={`flex-1 py-1 rounded-md text-[10px] font-bold border transition-colors cursor-pointer ${
-                      active
-                        ? 'bg-purple-600 border-purple-500 text-white shadow-xs'
-                        : 'bg-[#121217] border-[#2c2c39] text-zinc-400 hover:border-purple-500/40 hover:text-zinc-200'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Optional End Date Checkbox (Expands dropdown with End Date & End Time) */}
-          <div className="pt-1 border-t border-[#272733] flex flex-col gap-1.5">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={hasEndDate}
-                onChange={(e) => {
-                  setHasEndDate(e.target.checked);
-                  if (!e.target.checked) setEndDate('');
-                }}
-                className="size-3.5 rounded border-[#3a3a4c] bg-[#121217] accent-purple-600 cursor-pointer"
-              />
-              <span className="text-[11px] font-medium text-zinc-300">Set Date Range (Optional End Date & Time)</span>
-            </label>
-
-            {hasEndDate && (
-              <div className="pl-5 flex flex-col gap-1.5">
-                {/* End Date Picker */}
-                <div className="relative" ref={endDatePickerRef}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const p = parseDateKey(endDate || startDate);
-                      if (p) setCalendarMonth(p);
-                      setEndDatePickerOpen((v) => !v);
-                    }}
-                    className="w-full h-7 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
-                  >
-                    <span className="flex items-center gap-2">
-                      <CalendarIcon className="size-3 text-purple-400" />
-                      <span className={endDate ? 'text-zinc-100 font-medium' : 'text-zinc-500'}>
-                        {endDate ? formatDisplay(endDate) : 'Select end date…'}
-                      </span>
-                    </span>
-                    <ChevronDown className="size-3 text-zinc-500" />
-                  </button>
-
-                  {endDatePickerOpen && (
-                    <div
-                      role="dialog"
-                      className="ldm-rdp absolute left-0 top-full mt-1 z-[80] rounded-xl border border-[#2f2f3d] bg-[#16161c] shadow-2xl p-2.5"
-                    >
-                      <DayPicker
-                        mode="single"
-                        selected={parseDateKey(endDate)}
-                        month={calendarMonth}
-                        onMonthChange={setCalendarMonth}
-                        onSelect={(d) => {
-                          if (d) {
-                            setEndDate(dateToKey(d));
-                            setEndDatePickerOpen(false);
-                          }
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* End Time Row (Free text input) */}
-                <div className="flex flex-col gap-1 p-2 rounded-lg bg-[#121217] border border-[#2a2a38]">
-                  <label className="text-[10px] font-semibold text-zinc-400 flex items-center gap-1.5">
-                    <Clock className="size-3 text-purple-400" />
-                    <span>End Time</span>
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      placeholder="e.g. 11:59 PM"
-                      className="w-full h-7 px-2.5 pr-7 rounded-lg bg-[#18181f] border border-[#333344] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
-                    />
-                    <Clock className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* CARD 2: Launch Starting Time (Free text input) */}
-        <div className="p-2.5 rounded-xl bg-[#18181f] border border-[#272733] flex flex-col gap-1.5">
-          <label className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
-            <Clock className="size-3.5 text-purple-400" />
-            <span>Launch Starting Time</span>
-          </label>
-          <div className="relative">
+            <label className="text-[10.5px] font-semibold text-zinc-400">Launch Title</label>
             <input
               type="text"
-              value={launchTime}
-              onChange={(e) => setLaunchTime(e.target.value)}
-              placeholder="e.g. 09:00 PM"
-              className="w-full h-8 px-3 pr-8 rounded-xl bg-[#121217] border border-[#2e2e3d] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/30 transition-colors"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Black Friday Campaign Launch"
+              autoFocus
+              className="bg-[#18181f] border border-[#2a2a35] rounded-xl px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
             />
-            <Clock className="absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
           </div>
-        </div>
 
-        {/* Timezone */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-semibold text-zinc-400 flex items-center justify-between">
-            <span className="flex items-center gap-1.5">
-              <Globe className="size-3 text-purple-400" />
-              Timezone
-            </span>
-            <span className="text-[9.5px] text-zinc-500 font-mono">
-              {selectedClient?.timezone ? `Client: ${selectedClient.timezone}` : 'Default: +8 (Manila)'}
-            </span>
-          </label>
-          <select
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-            className="bg-[#18181f] border border-[#2a2a35] rounded-xl px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-purple-500 cursor-pointer"
-          >
-            {COMMON_TIMEZONES.map((tz) => (
-              <option key={tz.value} value={tz.value} className="bg-zinc-900 text-zinc-100">
-                {tz.label}
-              </option>
-            ))}
-          </select>
-        </div>
+          {/* Client Dropdown with typing / searching (includes VIP SCALE, XFINITE, etc.) */}
+          <div className="flex flex-col gap-1" ref={clientDropRef}>
+            <label className="text-[10.5px] font-semibold text-zinc-400">Client</label>
+            <div className="relative">
+              <div
+                className={`w-full h-8 flex items-center gap-2 px-3 rounded-xl border text-xs transition-colors ${
+                  clientDropdownOpen
+                    ? 'border-purple-500 ring-1 ring-purple-500/40 bg-[#18181f]'
+                    : 'border-[#2a2a35] bg-[#18181f] hover:border-purple-500/50'
+                }`}
+              >
+                <Building2 className="size-3.5 text-purple-400 shrink-0" />
+                <input
+                  type="text"
+                  value={clientSearch}
+                  onFocus={() => setClientDropdownOpen(true)}
+                  onChange={(e) => {
+                    setClientSearch(e.target.value);
+                    setClientDropdownOpen(true);
+                    if (!e.target.value) {
+                      setSelectedClientId('');
+                    }
+                  }}
+                  placeholder="Select client from database…"
+                  className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-400 focus:outline-none"
+                />
+                {clientSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClientSearch('');
+                      setSelectedClientId('');
+                    }}
+                    className="p-0.5 rounded text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                    title="Clear"
+                  >
+                    <X className="size-3" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setClientDropdownOpen((v) => !v)}
+                  className="p-0.5 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                >
+                  <ChevronDown
+                    className={`size-3 transition-transform ${
+                      clientDropdownOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              </div>
 
-        {/* CARD 3: CREATES IN LAUNCH MAP: preview */}
-        <div className="px-2.5 py-1.5 rounded-lg bg-[#18181f] border border-[#272733] flex items-center gap-2">
-          <Sparkles className="size-3 text-purple-400 shrink-0" />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 shrink-0">
-            CREATES:
-          </span>
-          <p className="text-xs font-semibold text-zinc-200 truncate flex-1">
-            {title
-              ? `${title} · ${startDate}${hasEndDate && endDate ? ` to ${endDate}` : ''}`
-              : `Launch · ${startDate}`}
-          </p>
-        </div>
+              {clientDropdownOpen && (
+                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#18181f] border border-[#2e2e3d] rounded-xl shadow-2xl max-h-44 overflow-y-auto custom-scrollbar p-1">
+                  {clients.length === 0 ? (
+                    <div className="flex items-center justify-center py-5 text-xs text-zinc-500">
+                      <Loader2 className="size-3.5 animate-spin mr-1.5" /> Loading clients…
+                    </div>
+                  ) : filteredClients.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-zinc-500">
+                      No clients found matching &ldquo;{clientSearch}&rdquo;
+                    </div>
+                  ) : (
+                    filteredClients.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedClientId(c.id);
+                          setClientSearch(c.name);
+                          setClientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between gap-2 hover:bg-[#252530] transition-colors cursor-pointer ${
+                          c.id === selectedClientId ? 'bg-purple-950/60 text-purple-300 font-semibold' : 'text-zinc-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Building2 className="size-3 shrink-0 text-zinc-500" />
+                          <span className="truncate">{c.name}</span>
+                        </div>
+                        {c.folderName && (
+                          <span className="text-[9.5px] text-zinc-500 truncate max-w-[110px] shrink-0 font-normal">
+                            {c.folderName}
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
 
-        {/* Bottom Action Buttons */}
-        <div className="flex items-center gap-2 pt-0.5">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2 rounded-xl bg-[#1e1e26] hover:bg-[#252530] text-xs font-medium text-zinc-300 transition-colors cursor-pointer"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex-[2] py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
-          >
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-            <span>Save & Schedule Launch</span>
-          </button>
-        </div>
+          {/* CARD 1: Date & Weekday Selectable Box */}
+          <div className="p-2.5 rounded-xl bg-[#18181f] border border-[#272733] flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
+                <CalendarIcon className="size-3.5 text-purple-400" />
+                <span>Launch Starting Date</span>
+              </div>
+            </div>
+
+            {/* Date Picker Button */}
+            <div className="relative" ref={datePickerRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  const p = parseDateKey(startDate);
+                  if (p) setCalendarMonth(p);
+                  setDatePickerOpen((v) => !v);
+                }}
+                className="w-full h-8 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <CalendarIcon className="size-3 text-purple-400" />
+                  <span className="text-zinc-200 font-medium">{formatDisplay(startDate)}</span>
+                </span>
+                <ChevronDown className="size-3 text-zinc-500" />
+              </button>
+
+              {datePickerOpen && (
+                <div
+                  role="dialog"
+                  className="ldm-rdp absolute left-0 top-full mt-1 z-[80] rounded-xl border border-[#2f2f3d] bg-[#16161c] shadow-2xl p-2.5"
+                >
+                  {!hasEndDate ? (
+                    <DayPicker
+                      mode="single"
+                      selected={parseDateKey(startDate)}
+                      month={calendarMonth}
+                      onMonthChange={setCalendarMonth}
+                      onSelect={(d) => {
+                        if (d) {
+                          setStartDate(dateToKey(d));
+                          setDatePickerOpen(false);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <DayPicker
+                      mode="range"
+                      selected={rangeSelection}
+                      month={calendarMonth}
+                      onMonthChange={setCalendarMonth}
+                      onSelect={(r) => {
+                        if (r?.from) setStartDate(dateToKey(r.from));
+                        if (r?.to) setEndDate(dateToKey(r.to));
+                      }}
+                    />
+                  )}
+                  <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-[#272733]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const today = getManilaDateKey(new Date()) || dateToKey(new Date());
+                        setStartDate(today);
+                        setDatePickerOpen(false);
+                      }}
+                      className="text-[10px] font-semibold text-purple-400 hover:underline px-1 cursor-pointer"
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDatePickerOpen(false)}
+                      className="text-[10px] font-medium text-zinc-400 hover:text-zinc-200 px-1 cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Launch Starting Time (Free text input) */}
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-1.5 text-[10.5px] font-semibold text-zinc-400">
+                <Clock className="size-3 text-purple-400" />
+                <span>Launch Starting Time</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={launchTime}
+                  onChange={(e) => setLaunchTime(e.target.value)}
+                  placeholder="e.g. 09:00 PM"
+                  className="w-full h-8 px-3 pr-8 rounded-lg bg-[#121217] border border-[#2e2e3d] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/30 transition-colors"
+                />
+                <Clock className="absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Optional End Date Checkbox */}
+            <div className="pt-1 border-t border-[#272733] flex flex-col gap-1.5">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={hasEndDate}
+                  onChange={(e) => {
+                    setHasEndDate(e.target.checked);
+                    if (!e.target.checked) setEndDate('');
+                  }}
+                  className="size-3.5 rounded border-[#3a3a4c] bg-[#121217] accent-purple-600 cursor-pointer"
+                />
+                <span className="text-[11px] font-medium text-zinc-300">Set Date Range (Optional End Date & Time)</span>
+              </label>
+
+              {hasEndDate && (
+                <div className="pl-5 flex flex-col gap-1.5">
+                  {/* End Date Picker */}
+                  <div className="relative" ref={endDatePickerRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const p = parseDateKey(endDate || startDate);
+                        if (p) setCalendarMonth(p);
+                        setEndDatePickerOpen((v) => !v);
+                      }}
+                      className="w-full h-7 flex items-center justify-between px-2.5 rounded-lg border border-[#2e2e3d] bg-[#121217] text-xs hover:border-purple-500/50 cursor-pointer transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <CalendarIcon className="size-3 text-purple-400" />
+                        <span className={endDate ? 'text-zinc-100 font-medium' : 'text-zinc-500'}>
+                          {endDate ? formatDisplay(endDate) : 'Select end date…'}
+                        </span>
+                      </span>
+                      <ChevronDown className="size-3 text-zinc-500" />
+                    </button>
+
+                    {endDatePickerOpen && (
+                      <div
+                        role="dialog"
+                        className="ldm-rdp absolute left-0 top-full mt-1 z-[80] rounded-xl border border-[#2f2f3d] bg-[#16161c] shadow-2xl p-2.5"
+                      >
+                        <DayPicker
+                          mode="single"
+                          selected={parseDateKey(endDate)}
+                          month={calendarMonth}
+                          onMonthChange={setCalendarMonth}
+                          onSelect={(d) => {
+                            if (d) {
+                              setEndDate(dateToKey(d));
+                              setEndDatePickerOpen(false);
+                            }
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* End Time Row (Free text input) */}
+                  <div className="flex flex-col gap-1 p-2 rounded-lg bg-[#121217] border border-[#2a2a38]">
+                    <label className="text-[10px] font-semibold text-zinc-400 flex items-center gap-1.5">
+                      <Clock className="size-3 text-purple-400" />
+                      <span>End Time</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                        placeholder="e.g. 11:59 PM"
+                        className="w-full h-7 px-2.5 pr-7 rounded-lg bg-[#18181f] border border-[#333344] text-xs font-medium text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
+                      />
+                      <Clock className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Timezone */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-zinc-400 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Globe className="size-3 text-purple-400" />
+                Timezone
+              </span>
+              <span className="text-[9.5px] text-zinc-500 font-mono">
+                {selectedClient?.timezone ? `Client: ${selectedClient.timezone}` : 'Default: +8 (Manila)'}
+              </span>
+            </label>
+            <select
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className="bg-[#18181f] border border-[#2a2a35] rounded-xl px-2.5 py-1 text-xs text-zinc-200 focus:outline-none focus:border-purple-500 cursor-pointer"
+            >
+              {COMMON_TIMEZONES.map((tz) => (
+                <option key={tz.value} value={tz.value} className="bg-zinc-900 text-zinc-100">
+                  {tz.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Bottom Action Buttons */}
+          <div className="flex items-center gap-2 pt-1 border-t border-[#22222a]">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 rounded-xl bg-[#1e1e26] hover:bg-[#252530] text-xs font-medium text-zinc-300 transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-[2] py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              <span>Add Launch</span>
+            </button>
+          </div>
       </form>
     </div>
   );

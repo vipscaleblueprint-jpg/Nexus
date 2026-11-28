@@ -46,11 +46,6 @@ const LaunchMapDayDrawer = dynamic(
   { ssr: false }
 );
 
-const LaunchScheduleModal = dynamic(
-  () => import('./LaunchScheduleModal').then((m) => m.LaunchScheduleModal),
-  { ssr: false }
-);
-
 const LaunchDayModal = dynamic(
   () => import('./LaunchDayModal').then((m) => m.LaunchDayModal),
   { ssr: false }
@@ -639,14 +634,12 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
   const [pastOpenExpanded, setPastOpenExpanded] = useState<boolean>(true);
 
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
-  const [editorState, setEditorState] = useState<{
+  // Day-click, + Launch, and Edit Launch modal state (all unified into new LaunchDayModal)
+  const [dayModalState, setDayModalState] = useState<{
     open: boolean;
-    task: LaunchMapLightItem | null;
     dateKey: string;
-  }>({ open: false, task: null, dateKey: todayKey });
-
-  // Day-click modal (new + Launch popup)
-  const [dayModalDate, setDayModalDate] = useState<string | null>(null);
+    task?: LaunchMapLightItem | null;
+  } | null>(null);
   const calendarContainerRef = useRef<HTMLDivElement | null>(null);
 
   const handleSetViewMode = useCallback((mode: CalendarViewMode) => {
@@ -744,17 +737,16 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   // Close drawer/modal on Esc
   useEffect(() => {
-    if (!selectedDayKey && !editorState.open && !dayModalDate) return;
+    if (!selectedDayKey && !dayModalState?.open) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (editorState.open) setEditorState((prev) => ({ ...prev, open: false }));
-        else if (dayModalDate) setDayModalDate(null);
+        if (dayModalState?.open) setDayModalState(null);
         else if (selectedDayKey) setSelectedDayKey(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedDayKey, editorState.open, dayModalDate]);
+  }, [selectedDayKey, dayModalState]);
 
   const searchLower = search.trim().toLowerCase();
 
@@ -1106,7 +1098,7 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
 
   const openScheduleModal = useCallback(
     (opts?: { task?: LaunchMapLightItem; dateKey?: string }) => {
-      setEditorState({
+      setDayModalState({
         open: true,
         task: opts?.task || null,
         dateKey: opts?.dateKey || buildDateKey(cursorYear, cursorMonth, cursorDay),
@@ -1823,10 +1815,10 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
                   isToday={cell.isToday}
                   entries={entriesByDate.get(cell.dateKey) || []}
                   heatOpacity={monthHeatmap.getHeatOpacity(cell.dateKey)}
-                  onSelectDay={(dk) => setDayModalDate(dk)}
-                  onQuickSchedule={(dk) => setDayModalDate(dk)}
+                  onSelectDay={(dk) => openScheduleModal({ dateKey: dk })}
+                  onQuickSchedule={(dk) => openScheduleModal({ dateKey: dk })}
                   onOpenDetail={onOpenDetail}
-                  onEditLaunch={(task) => openScheduleModal({ task })}
+                  onEditLaunch={(task) => openScheduleModal({ task, dateKey: getTaskEffectiveLaunchDate(task) || undefined })}
                   onDeleteLaunch={handleUnscheduleTask}
                   onMoveLaunch={handleMoveLaunch}
                 />
@@ -2304,30 +2296,18 @@ export const LaunchMapView: React.FC<LaunchMapViewProps> = ({
         />
       )}
 
-      {/* Day-click Launch Modal */}
-      {dayModalDate && (
+      {/* Day-click, + Launch, and Edit Launch Modal (Unified new LaunchDayModal) */}
+      {dayModalState?.open && (
         <LaunchDayModal
-          initialDate={dayModalDate}
-          existingEntries={entriesByDate.get(dayModalDate) || []}
+          initialDate={dayModalState.dateKey}
+          initialTask={dayModalState.task || null}
+          existingEntries={entriesByDate.get(dayModalState.dateKey) || []}
           onDeleteLaunch={handleUnscheduleTask}
-          onClose={() => setDayModalDate(null)}
+          onClose={() => setDayModalState(null)}
           onSaved={(taskId, data) => {
             onLaunchMetaUpdated?.(taskId, data);
             onDataRefresh?.();
-            setDayModalDate(null);
-          }}
-        />
-      )}
-
-      {/* Lazy-Loaded Schedule Modal */}
-      {editorState.open && (
-        <LaunchScheduleModal
-          initialTask={editorState.task}
-          initialDate={editorState.dateKey}
-          onClose={() => setEditorState((prev) => ({ ...prev, open: false }))}
-          onSaved={(taskId, data) => {
-            onLaunchMetaUpdated?.(taskId, data);
-            onDataRefresh?.();
+            setDayModalState(null);
           }}
         />
       )}

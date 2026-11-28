@@ -124,6 +124,8 @@ export function resolveHandOverAvailablePoolVisibility(task: {
     s.includes('WAITING') ||
     s === 'CRM' ||
     s.includes('CRM') ||
+    s === 'TOSEND' ||
+    s === 'TOFOLLOWUP' ||
     s === 'INREVIEW' ||
     s === 'TOREVIEW' ||
     s === 'REVIEW' ||
@@ -327,7 +329,7 @@ export function evaluateAuditProgressTransition(
     outcome: 'PARTIAL_CHECKED',
     targetBoard: 'AUDIT',
     nextStatus: 'IN REVIEW', // CHECKING is retired; every audit stage stays In Review
-    nextSubStatuses: nextAuditStep ? [nextAuditStep] : ['To Review'],
+    nextSubStatuses: ['To Review'],
     clearAssignee: true,
     handedOver: false,
     nextAuditStep,

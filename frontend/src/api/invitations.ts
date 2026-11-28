@@ -23,6 +23,12 @@ export const invitationsApi = {
   },
 
   async revokeInvitation(id: string): Promise<{ message: string }> {
+    return apiClient<{ message: string }>(`/api/invitations/${id}/revoke`, {
+      method: 'POST',
+    });
+  },
+
+  async deleteInvitation(id: string): Promise<{ message: string }> {
     return apiClient<{ message: string }>(`/api/invitations/${id}`, {
       method: 'DELETE',
     });

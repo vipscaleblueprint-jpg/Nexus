@@ -14,6 +14,7 @@ import { toast } from '@/lib/toast';
 import { getPriorityConfig, PRIORITY_OPTIONS } from '@/lib/priority';
 import { isNexusAuditChecklist, normalizeAuditName, resolveRequiredAudits } from '@/lib/auditChecklist';
 import { useAppStore } from '@/lib/store';
+import { openGalaxySubtaskForTask } from '@/lib/galaxyTask';
 import { ALL_STATUSES, STATUS_COLORS, CustomCircleDot, CustomCircleDotted, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, prefetchSubtaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -2300,26 +2301,17 @@ export function SubtasksSection({ task, onUpdateTask, users, addingSubtask, setA
 
           {/* Add new subtask — final table row */}
           {(addingSubtask || localSubtasks.length > 0) && (
-            <div className="px-4 h-10 flex items-center gap-3 rounded-b-xl border-t border-zinc-800/60 hover:bg-zinc-800/30 focus-within:bg-zinc-800/30 transition-colors">
-              <Plus className="w-4 h-4 text-zinc-600 shrink-0" />
-              <input
-                type="text"
-                value={newSubtaskTitle}
-                disabled={isSubmittingSubtask}
-                onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddSubtask();
-                  }
-                  if (e.key === 'Escape') setAddingSubtask(false);
-                }}
-                onBlur={() => newSubtaskTitle && !isSubmittingSubtask ? handleAddSubtask() : setAddingSubtask(false)}
-                autoFocus={addingSubtask}
-                placeholder={isSubmittingSubtask ? "Adding..." : "Add a new subtask..."}
-                className="bg-transparent border-none outline-none text-sm text-zinc-200 placeholder:text-zinc-600 w-full focus:ring-0 p-0 disabled:opacity-50"
-              />
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAddingSubtask(false);
+                openGalaxySubtaskForTask(task, useAppStore.getState().allLists);
+              }}
+              className="w-full px-4 h-10 flex items-center gap-3 rounded-b-xl border-t border-zinc-800/60 hover:bg-zinc-800/30 text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer text-left group"
+            >
+              <Plus className="w-4 h-4 text-zinc-600 group-hover:text-zinc-300 shrink-0 transition-colors" />
+              <span className="text-sm">Add a new subtask...</span>
+            </button>
           )}
         </div>
 

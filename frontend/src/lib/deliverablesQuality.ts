@@ -22,9 +22,346 @@ const VAGUE_NON_DELIVERABLE_REGEX =
 const GENERIC_ACTIVITY_ONLY_REGEX =
   /\b(?:checked\s+tasks?|to\s+work\s+on\s+in\s+nexus|minor\s+revision(?:s)?|refine\s+edits?)\b/i;
 
-// Concrete tangible client outputs (media, graphics, copy, web/funnel, social, automation, docs)
-const TANGIBLE_OUTPUT_REGEX =
-  /\b(?:video\s+edits?|video\s+clips?|video\s+assembly|video\s+scenes?|video|clips?|thumbnails?|titles?|graphics?|visual\s+assets?|visual\s+layout|text\s+animation|audio\s+timing|branding|voice-?over|footage|captions?|caption\s+template(?:\s+versions?)?|cta\s+script|script|generated\s+audio|audio|image\s+product\s+showcase|image\s+assets?|static\s+ads?|ads?|b-?roll|hooks?|font\s+family(?:\s+to\s+[a-z0-9\s]+)?|scheduled\s+posts?|contents?|posts?|reels?|mockups?|banners?|carousels?|posters?|logos?|infographics?|slides?|deck|landing\s+page|funnel|opt-?in|checkout|thank\s+you\s+page|emails?|copy|workflow|webhook|automation|audit|report|ui|ux|layout|section|header|footer|pages?)\b/i;
+// Concrete tangible client outputs across Production, Design, Dev, Emails/CRM, Funnels/Automation, Social/Ads, and Ops
+const TANGIBLE_OUTPUT_PATTERNS: string[] = [
+  // Production / Video / Audio / Media
+  'production',
+  'video\\s+edits?',
+  'video\\s+clips?',
+  'video\\s+assembly',
+  'video\\s+scenes?',
+  'videos?',
+  'clips?',
+  'reels?',
+  'shorts?',
+  'tiktoks?',
+  'youtube',
+  'podcasts?',
+  'episodes?',
+  'webinars?',
+  'vsls?',
+  'b-?roll',
+  'footage',
+  'screen\\s+recordings?',
+  'recordings?',
+  'loom(?:\\s+videos?)?',
+  'rough\\s+cuts?',
+  'final\\s+cuts?',
+  'cuts?',
+  'trailers?',
+  'teasers?',
+  'intros?',
+  'outros?',
+  'transitions?',
+  'color\\s+grading',
+  'sound\\s+design',
+  'sfx',
+  'voice-?overs?',
+  'audio\\s+timing',
+  'generated\\s+audio',
+  'audio',
+  'transcripts?',
+  'subtitles?',
+  'srt',
+  'caption\\s+template(?:\\s+versions?)?',
+  'captions?',
+  'hooks?',
+  'renders?',
+  'exports?',
+  'text\\s+animation',
+  'motion\\s+graphics?',
+  'animations?',
+  // Design / Graphics / Branding / UI-UX
+  'designs?',
+  'graphics?',
+  'thumbnails?',
+  'cover\\s+photos?',
+  'covers?',
+  'photos?',
+  'image\\s+product\\s+showcase',
+  'image\\s+assets?',
+  'images?',
+  'visual\\s+assets?',
+  'visual\\s+layout',
+  'visuals?',
+  'assets?',
+  'banners?',
+  'carousels?',
+  'posters?',
+  'flyers?',
+  'brochures?',
+  'booklets?',
+  'ebooks?',
+  'lead\\s+magnets?',
+  'workbooks?',
+  'pdfs?',
+  'checklists?',
+  'guides?',
+  'cheat\\s+sheets?',
+  'logos?',
+  'brand\\s+(?:kit|guide|book)',
+  'branding',
+  'style\\s+guides?',
+  'palettes?',
+  'typography',
+  'font\\s+family(?:\\s+to\\s+[a-z0-9\\s]+)?',
+  'fonts?',
+  'icons?',
+  'illustrations?',
+  'infographics?',
+  'mockups?',
+  'wireframes?',
+  'prototypes?',
+  'figma',
+  'canva',
+  'pitch\\s+decks?',
+  'decks?',
+  'slides?',
+  'presentations?',
+  'ui',
+  'ux',
+  'layouts?',
+  'templates?',
+  'ad\\s+creatives?',
+  'creatives?',
+  'static\\s+ads?',
+  'packaging',
+  'business\\s+cards?',
+  'menus?',
+  'avatars?',
+  'headers?',
+  'footers?',
+  'hero',
+  'sections?',
+  // Dev / Engineering / Web / Tech
+  'dev',
+  'development',
+  'code',
+  'features?',
+  'components?',
+  'modules?',
+  'endpoints?',
+  'apis?',
+  'routes?',
+  'webhooks?',
+  'integrations?',
+  'appscript',
+  'scripts?',
+  'functions?',
+  'quer(?:y|ies)',
+  'schemas?',
+  'migrations?',
+  'database',
+  'tables?',
+  'cache',
+  'auth',
+  'login',
+  'sso',
+  'permissions?',
+  'roles?',
+  'bug\\s*fix(?:es)?',
+  'hotfix(?:es)?',
+  'patches?',
+  'refactor(?:ing)?',
+  'optimizations?',
+  'deployments?',
+  'builds?',
+  'releases?',
+  'pull\\s+requests?',
+  'unit\\s+tests?',
+  'e2e',
+  'responsive',
+  'css',
+  'html',
+  'javascript',
+  'typescript',
+  'react',
+  'nextjs',
+  'wordpress',
+  'shopify',
+  'webflow',
+  'wix',
+  'squarespace',
+  'plugins?',
+  'themes?',
+  'dns',
+  'domains?',
+  'ssl',
+  'pixels?',
+  'tracking',
+  'gtm',
+  'tag\\s+manager',
+  'analytics',
+  'ga4',
+  'capi',
+  'stripe',
+  'paypal',
+  'checkout',
+  'cart',
+  'product\\s+pages?',
+  'websites?',
+  'sites?',
+  'webpages?',
+  'pages?',
+  'portals?',
+  'apps?',
+  'dashboards?',
+  'widgets?',
+  'modals?',
+  'dropdowns?',
+  'sidebar',
+  'navbar',
+  'buttons?',
+  'links?',
+  'forms?',
+  'pop-?ups?',
+  // Emails / CRM / Copywriting / Marketing
+  'emails?',
+  'newsletters?',
+  'broadcasts?',
+  'campaigns?',
+  'drips?',
+  'sequences?',
+  'nurtures?',
+  'follow-?ups?',
+  'onboarding',
+  'welcome\\s+series',
+  'abandoned\\s+cart',
+  'sms',
+  'text\\s+messages?',
+  'dms?',
+  'outreach',
+  'subject\\s+lines?',
+  'copywriting',
+  'sales\\s+copy',
+  'ad\\s+copy',
+  'copy',
+  'cta\\s+script',
+  'cta',
+  'blogs?',
+  'articles?',
+  'case\\s+stud(?:y|ies)',
+  'testimonials?',
+  'reviews?',
+  'faqs?',
+  'bios?',
+  'taglines?',
+  'headlines?',
+  'titles?',
+  'descriptions?',
+  'show\\s+notes',
+  'press\\s+releases?',
+  'proposals?',
+  'sops?',
+  'documentation',
+  'documents?',
+  'docs?',
+  'briefs?',
+  'outlines?',
+  'playbooks?',
+  'crm',
+  'pipelines?',
+  'stages?',
+  'contacts?',
+  'leads?',
+  'lists?',
+  'segments?',
+  'tags?',
+  'custom\\s+fields?',
+  'opportunit(?:y|ies)',
+  'deals?',
+  'tickets?',
+  'bookings?',
+  'appointments?',
+  'calendars?',
+  // Funnels / Automation / Courses / Membership
+  'funnels?',
+  'landing\\s+pages?',
+  'sales\\s+pages?',
+  'opt-?ins?',
+  'squeeze\\s+pages?',
+  'thank\\s+you\\s+pages?',
+  'upsells?',
+  'downsells?',
+  'order\\s+bumps?',
+  'order\\s+forms?',
+  'registration\\s+pages?',
+  'ghl',
+  'gohighlevel',
+  'highlevel',
+  'clickfunnels',
+  'kajabi',
+  'kartra',
+  'skool',
+  'teachable',
+  'thinkific',
+  'hubspot',
+  'activecampaign',
+  'klaviyo',
+  'mailchimp',
+  'convertkit',
+  'zapier',
+  'n8n',
+  'automations?',
+  'workflows?',
+  'triggers?',
+  'courses?',
+  'lessons?',
+  'curriculum',
+  'community',
+  'memberships?',
+  'offers?',
+  'products?',
+  'coupons?',
+  'discounts?',
+  'invoices?',
+  'subscriptions?',
+  'plans?',
+  // Social Media / Ads / SEO / Analytics / Ops
+  'scheduled\\s+posts?',
+  'posts?',
+  'content\\s+calendar',
+  'contents?',
+  'feeds?',
+  'grids?',
+  'stor(?:y|ies)',
+  'highlights?',
+  'profiles?',
+  'accounts?',
+  'linktree',
+  'hashtags?',
+  'ad\\s*sets?',
+  'ad\\s+accounts?',
+  'ads?',
+  'retargeting',
+  'audiences?',
+  'lookalikes?',
+  'seo',
+  'keywords?',
+  'meta\\s+(?:tags?|titles?|descriptions?)',
+  'sitemaps?',
+  'backlinks?',
+  'gbp',
+  'google\\s+business',
+  'audits?',
+  'reports?',
+  'reporting',
+  'kpis?',
+  'metrics?',
+  'trackers?',
+  'spreadsheets?',
+  'sheets?',
+  'csv',
+  'imports?',
+  'cleanup',
+  'setup',
+  'configurations?',
+  'configs?',
+  'handoffs?',
+  'deliverables?',
+];
+
+const TANGIBLE_OUTPUT_REGEX = new RegExp(`\\b(?:${TANGIBLE_OUTPUT_PATTERNS.join('|')})\\b`, 'i');
 
 // Measurable quantity, numbered module/reel/phase/lesson/ad, or concrete named client scope
 const MEASURABLE_SCOPE_REGEX =
@@ -61,8 +398,9 @@ const GRAPHICS_MEDIA_KEYWORDS = [
   'static ad',
 ];
 
-function normalizeText(value?: string | null): string {
-  return (value || '').trim().replace(/\s+/g, ' ');
+function normalizeText(value?: string | number | null): string {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().replace(/\s+/g, ' ');
 }
 
 function stripPunctuation(value: string): string {
@@ -70,13 +408,32 @@ function stripPunctuation(value: string): string {
 }
 
 /**
- * Evaluates ONLY `Task Deliverables Description:` (Column K) to verify whether it
- * describes a tangible, measurable, client-detailed output rather than vague activity.
+ * Returns true if the task resides under Admin (internal/admin folder or list),
+ * where strict client deliverable format requirements are bypassed.
+ */
+export function isTaskUnderAdminScope(params: {
+  isAdminTask?: boolean;
+  folderName?: string | null;
+  listName?: string | null;
+  clientName?: string | null;
+}): boolean {
+  if (params.isAdminTask) return true;
+  const candidates = [params.folderName, params.listName, params.clientName]
+    .map((v) => (v || '').trim().toLowerCase())
+    .filter(Boolean);
+  return candidates.some((c) => c === 'admin' || /\badmin\b/i.test(c));
+}
+
+/**
+ * Evaluates `Task Deliverables Description:` (Column K).
+ * Plain numbers (numerical values) and any non-empty text are allowed.
  */
 export function evaluateDeliverableDescription(params: {
-  deliverablesDescription: string;
+  deliverablesDescription: string | number | null | undefined;
   taskTitle?: string;
   clientName?: string;
+  listName?: string;
+  folderName?: string;
   isAdminTask?: boolean;
 }): DeliverableQualityReport {
   const desc = normalizeText(params.deliverablesDescription);
@@ -87,22 +444,52 @@ export function evaluateDeliverableDescription(params: {
     combinedHintText.includes(kw)
   );
 
+  const templateSnippet = isGraphicsOrMediaTask
+    ? 'Update thumbnails, titles, and graphics across Module 2 lessons'
+    : 'Create two caption template versions for the target reel';
+
+  const hasValue = desc.length > 0;
+
+  if (
+    isTaskUnderAdminScope({
+      isAdminTask: params.isAdminTask,
+      folderName: params.folderName,
+      listName: params.listName,
+      clientName: params.clientName,
+    })
+  ) {
+    return {
+      score: hasValue ? 100 : 0,
+      level: hasValue ? 'strong' : 'weak',
+      isGraphicsOrMediaTask,
+      isSubmittable: hasValue,
+      blockReason: hasValue ? null : 'Task Deliverables Description is required.',
+      checks: [],
+      suggestions: [],
+      templateSnippet,
+    };
+  }
+
   const descNorm = stripPunctuation(desc);
   const wordCount = desc ? desc.split(/\s+/).filter(Boolean).length : 0;
+  const isNumericInput = /^-?\d+(?:[.,/]\d+)?%?$/.test(desc);
 
   const isExplicitVague =
     !desc ||
-    VAGUE_NON_DELIVERABLE_REGEX.test(desc) ||
-    VAGUE_NON_DELIVERABLE_REGEX.test(descNorm);
+    (!isNumericInput &&
+      (VAGUE_NON_DELIVERABLE_REGEX.test(desc) || VAGUE_NON_DELIVERABLE_REGEX.test(descNorm)));
 
-  const hasTangibleOutput = TANGIBLE_OUTPUT_REGEX.test(desc) && !GENERIC_ACTIVITY_ONLY_REGEX.test(desc);
-  const hasMeasurableScope = MEASURABLE_SCOPE_REGEX.test(desc) && NAMED_TARGET_REGEX.test(desc);
+  const hasTangibleOutput =
+    isNumericInput || (TANGIBLE_OUTPUT_REGEX.test(desc) && !GENERIC_ACTIVITY_ONLY_REGEX.test(desc));
+  const hasMeasurableScope =
+    isNumericInput || MEASURABLE_SCOPE_REGEX.test(desc) || NAMED_TARGET_REGEX.test(desc);
   const hasClientSpecificDetail =
-    Boolean(desc) &&
-    !isExplicitVague &&
-    !GENERIC_ACTIVITY_ONLY_REGEX.test(desc) &&
-    wordCount >= 4 &&
-    desc.length >= 20;
+    isNumericInput ||
+    (Boolean(desc) &&
+      !isExplicitVague &&
+      !GENERIC_ACTIVITY_ONLY_REGEX.test(desc) &&
+      wordCount >= 4 &&
+      desc.length >= 20);
 
   const checks: DeliverableQualityCheck[] = [
     {
@@ -128,32 +515,32 @@ export function evaluateDeliverableDescription(params: {
   ];
 
   const passedCount = checks.filter((c) => c.passed).length;
-  const score = Math.round((passedCount / checks.length) * 100);
+  const score = hasValue ? Math.round((passedCount / checks.length) * 100) : 0;
   const level: 'strong' | 'fair' | 'weak' =
     score === 100 ? 'strong' : score >= 50 ? 'fair' : 'weak';
 
+  // Admin tasks (not admin users) bypass strict tangible/measurable checks;
+  // Client tasks enforce tangible/measurable/client-ready detail unless a plain numerical value is entered.
   let blockReason: string | null = null;
-  if (!desc) {
+  if (!hasValue) {
     blockReason = 'Task Deliverables Description is required.';
-  } else if (isExplicitVague || GENERIC_ACTIVITY_ONLY_REGEX.test(desc)) {
-    blockReason =
-      'Task Deliverables Description needs a specific tangible output and target (e.g. "Update thumbnails, titles, and graphics across Module 2 lessons").';
-  } else if (!hasTangibleOutput) {
-    blockReason =
-      'Specify what tangible asset or deliverable was created/updated (e.g. thumbnails, graphics, video clips, captions, voice-over, script, posts).';
-  } else if (!hasMeasurableScope) {
-    blockReason =
-      'Add a measurable count or named target (e.g. "two versions", "3 contents", "Reel 1", "Phase 2", "Module 3 Lesson 1").';
-  } else if (!hasClientSpecificDetail) {
-    blockReason =
-      'Make Task Deliverables Description slightly more detailed (action + tangible deliverable + target).';
+  } else if (!isNumericInput) {
+    if (isExplicitVague || GENERIC_ACTIVITY_ONLY_REGEX.test(desc)) {
+      blockReason =
+        'Task Deliverables Description needs a specific tangible output and target (e.g. "Update thumbnails, titles, and graphics across Module 2 lessons").';
+    } else if (!hasTangibleOutput) {
+      blockReason =
+        'Specify what tangible asset or deliverable was created/updated (e.g. thumbnails, graphics, video clips, captions, voice-over, script, posts).';
+    } else if (!hasMeasurableScope) {
+      blockReason =
+        'Add a measurable count or named target (e.g. "two versions", "3 contents", "Reel 1", "Phase 2", "Module 3 Lesson 1").';
+    } else if (!hasClientSpecificDetail) {
+      blockReason =
+        'Make Task Deliverables Description slightly more detailed (action + tangible deliverable + target).';
+    }
   }
 
   const suggestions = checks.filter((c) => !c.passed).map((c) => c.hint);
-
-  const templateSnippet = isGraphicsOrMediaTask
-    ? 'Update thumbnails, titles, and graphics across Module 2 lessons'
-    : 'Create two caption template versions for the target reel';
 
   return {
     score,

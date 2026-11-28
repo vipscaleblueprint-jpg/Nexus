@@ -291,7 +291,21 @@ export async function clearDailySheetLogRow(params: {
       sheetRow: Number(params.sheetRow),
     },
   });
-  return res.count;
+  if (res.count > 0) return res.count;
+
+  // Fallback: if the session was started from Nexus (sheetRow: null) and the user
+  // cleared the synced row in Google Sheets before DailySheetLog.sheetRow was populated,
+  // clean up the active unrowed live entry for this MA today.
+  const unrowedRes = await prisma.dailySheetLog.deleteMany({
+    where: {
+      dateKey,
+      maKey,
+      sheetRow: null,
+      isLive: true,
+      timeOut: null,
+    },
+  });
+  return unrowedRes.count;
 }
 
 /**
@@ -334,11 +348,36 @@ export async function getDailySheetLogsForDate(
  */
 export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
   const dateKey = normalizeSheetDateKey(dateInput);
-  const logs = await getDailySheetLogsForDate(dateKey);
+  const todayKey = normalizeSheetDateKey(null);
+  const includeOvernightShiftWindow = dateKey === todayKey;
+  const overnightCutoff = new Date(Date.now() - 18 * 60 * 60 * 1000);
+
+  const allFetched = includeOvernightShiftWindow
+    ? await prisma.dailySheetLog.findMany({
+        where: {
+          OR: [
+            { dateKey },
+            { submittedAt: { gte: overnightCutoff } },
+          ],
+        },
+        orderBy: [{ isLive: 'desc' }, { submittedAt: 'desc' }, { sheetRow: 'desc' }],
+      })
+    : await getDailySheetLogsForDate(dateKey);
+
+  const logs = includeOvernightShiftWindow
+    ? allFetched.filter((l) => l.dateKey === dateKey)
+    : allFetched;
 
   const byTaskId = new Map<string, (typeof logs)[number]>();
   const bySubtaskId = new Map<string, (typeof logs)[number]>();
   const liveByMaKey = new Map<string, (typeof logs)[number]>();
+  const latestByMaMap = new Map<string, (typeof logs)[number]>();
+
+  for (const log of allFetched) {
+    if (log.maKey && !latestByMaMap.has(log.maKey)) {
+      latestByMaMap.set(log.maKey, log);
+    }
+  }
 
   for (const log of logs) {
     if (log.isLive && !liveByMaKey.has(log.maKey)) {
@@ -358,5 +397,28 @@ export async function getDailySheetLogsIndexForDate(dateInput?: string | null) {
     }
   }
 
-  return { dateKey, logs, byTaskId, bySubtaskId, liveByMaKey };
+  // Also index overnight live entries (started before midnight Manila within the 18h window)
+  // so night-shift MAs who are still clocked in don't disappear at 12:00 AM
+  if (includeOvernightShiftWindow) {
+    for (const log of latestByMaMap.values()) {
+      if (!log.isLive || log.dateKey === dateKey) continue;
+      if (log.maKey && !liveByMaKey.has(log.maKey)) {
+        liveByMaKey.set(log.maKey, log);
+      }
+      if (log.subtaskId && !bySubtaskId.has(log.subtaskId)) {
+        bySubtaskId.set(log.subtaskId, log);
+      } else if (!log.subtaskId && log.taskId && !byTaskId.has(log.taskId)) {
+        byTaskId.set(log.taskId, log);
+      }
+    }
+  }
+
+  return {
+    dateKey,
+    logs,
+    latestByMa: Array.from(latestByMaMap.values()),
+    byTaskId,
+    bySubtaskId,
+    liveByMaKey,
+  };
 }

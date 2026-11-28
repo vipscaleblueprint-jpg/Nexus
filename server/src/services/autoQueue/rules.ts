@@ -44,6 +44,13 @@ export interface BoardItem {
   subtaskId?: string | null;
   parentTaskId?: string | null;
   parentTaskTitle?: string | null;
+  /** Set by the auto-queue loader: the parent task is Waiting, so this subtask is never auto-assigned. */
+  parentWaiting?: boolean;
+  /**
+   * Set by the auto-queue loader: people tagged IsRole = "Collaborator" on this task in the MA daily
+   * tracker (current round). They are tried first when the task is assigned.
+   */
+  trackerCollaboratorIds?: string[];
   subtaskCount?: number | null;
   subtasks?: Array<{ title?: string | null }> | null;
   listId?: string | null;
@@ -177,9 +184,10 @@ export function shiftGroupOf(user: QueueUser, shifts: ShiftWindow[]): ShiftGroup
   return null;
 }
 
-/** Eligible MAs whose starting shift belongs to `group`. */
-export function usersInGroup(users: QueueUser[], shifts: ShiftWindow[], group: ShiftGroup): QueueUser[] {
-  return users.filter((u) => isAutoQueueEligibleUser(u) && shiftGroupOf(u, shifts) === group);
+/** Eligible MAs whose starting shift belongs to `group` (single group or array of groups). */
+export function usersInGroup(users: QueueUser[], shifts: ShiftWindow[], group: ShiftGroup | ShiftGroup[]): QueueUser[] {
+  const groups = Array.isArray(group) ? group : [group];
+  return users.filter((u) => isAutoQueueEligibleUser(u) && groups.includes(shiftGroupOf(u, shifts)!));
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +272,7 @@ export function isParentTask(item: BoardItem): boolean {
 /** Open production work an MA does (not parent tasks, review/CRM/cadence/on-hold/closed/internal admin). */
 export function isMaWorkItem(item: BoardItem): boolean {
   if (isParentTask(item)) return false;
+  if (item.isSubtask && item.parentWaiting) return false;
   if (item.isClosed || item.isAdminTask || item.recurringConfig) return false;
   const s = norm(item.status);
   if (NOT_MA_WORK_EXACT.has(s) || s.includes('WAITING') || s.includes('CRM')) return false;
@@ -272,7 +281,15 @@ export function isMaWorkItem(item: BoardItem): boolean {
 
 function isStarted(item: BoardItem): boolean {
   if (norm(item.status) === 'INPROGRESS') return true;
+  if ((item.taskMap?.statuses || []).some((s) => norm(s) === 'INPROGRESS')) return true;
   return Boolean(item.progress?.timeIn && !item.progress?.timeOut);
+}
+
+/** True if the user currently has at least one task or subtask started (In Progress slot is not blank). */
+export function hasTaskInProgress(user: QueueUser, boardItems: BoardItem[]): boolean {
+  return boardItems.some(
+    (it) => isMaWorkItem(it) && getBoardItemOwnerId(it) === user.id && isStarted(it)
+  );
 }
 
 export function getBoardItemOwnerId(item: BoardItem): string | null {
@@ -333,12 +350,27 @@ export function isStillMovable(
 // Ordering
 // ---------------------------------------------------------------------------
 
-const PRIORITY_RANK: Record<string, number> = { URGENT: 0, HIGH: 1 };
 const time = (d?: string | Date | null) => (d ? new Date(d).getTime() : NaN);
 
+/** Handed over from an earlier shift/day (12 AM rollover or a PM/checkpoint handover). */
+export function isHandedOver(item: BoardItem): boolean {
+  if (item.taskMap?.handedOver) return true;
+  return (item.taskMap?.statuses || []).some((s) => norm(s) === 'HANDOVER');
+}
+
+/** Queue tier: handover urgent, urgent, handover high, high, handover other, other. */
+export function queueTier(item: BoardItem): number {
+  const p = norm(item.priority);
+  const ho = isHandedOver(item);
+  if (p === 'URGENT') return ho ? 0 : 1;
+  if (p === 'HIGH') return ho ? 2 : 3;
+  return ho ? 4 : 5;
+}
+
 /**
- * Available-pool tasks in the order they should be queued: urgent, high, earliest due date,
- * then oldest first (so nothing starves). On-hold, internal admin and closed tasks are skipped.
+ * Available-pool tasks in the order they should be queued: handover urgent, urgent, handover high,
+ * high, then the rest; within a tier earliest due date, then oldest first (so nothing starves).
+ * On-hold, internal admin and closed tasks are skipped.
  */
 export function orderPoolForQueue(pool: BoardItem[]): BoardItem[] {
   return pool
@@ -346,19 +378,23 @@ export function orderPoolForQueue(pool: BoardItem[]): BoardItem[] {
     // Already started (e.g. handed over mid-work): queueing would reset it to Pending, so PMs place these
     .filter((t) => !isStarted(t))
     .slice()
-    .sort((a, b) => {
-      const pa = PRIORITY_RANK[norm(a.priority)] ?? 2;
-      const pb = PRIORITY_RANK[norm(b.priority)] ?? 2;
-      if (pa !== pb) return pa - pb;
-      const da = time(a.dueDate);
-      const db = time(b.dueDate);
-      if (!isNaN(da) || !isNaN(db)) {
-        if (isNaN(da)) return 1;
-        if (isNaN(db)) return -1;
-        if (da !== db) return da - db;
-      }
-      return (time(a.createdAt) || 0) - (time(b.createdAt) || 0);
-    });
+    .sort((a, b) => compareQueuePriority(a, b) || (time(a.createdAt) || 0) - (time(b.createdAt) || 0));
+}
+
+/**
+ * Which of two tasks comes first in a queue: higher tier first; within the same tier (e.g. all
+ * Urgent) the nearer due date first, and tasks with no due date last. 0 = equal priority.
+ */
+export function compareQueuePriority(a: BoardItem, b: BoardItem): number {
+  const pa = queueTier(a);
+  const pb = queueTier(b);
+  if (pa !== pb) return pa - pb;
+  const da = time(a.dueDate);
+  const db = time(b.dueDate);
+  if (isNaN(da) && isNaN(db)) return 0;
+  if (isNaN(da)) return 1;
+  if (isNaN(db)) return -1;
+  return da - db;
 }
 
 export interface Candidate {

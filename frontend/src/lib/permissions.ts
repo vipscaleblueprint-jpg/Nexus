@@ -76,6 +76,8 @@ export function canUserEditTask(
 }
 
 const PROJECT_MANAGER_OR_SENIOR_ROLE = /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)/i;
+const STATUS_EDIT_ALLOWED_ROLE =
+  /project\s*manager|\bpm\b|senior\s*(?:pm|project\s*manager)|\bdev\b|develop|back-?end|front-?end|full-?stack|dev\s*ops|\bproduction\b/i;
 
 /**
  * Only Project Managers, Seniors, and Admins can set a task's Team Role and Assignees.
@@ -87,6 +89,20 @@ export function isProjectManagerOrAdmin(user: User | null | undefined): boolean 
   if (isAaronUser(user)) return true;
   return (user.roles || []).some((r) => PROJECT_MANAGER_OR_SENIOR_ROLE.test((r || '').trim()));
 }
+
+/**
+ * Only Project Managers (including Dev PM, Production PM, Senior PM, Admins),
+ * Dev (Developers / Dev Ops), and Production roles can directly edit task/subtask statuses
+ * in TaskDetailModal (including Priorities for Today), KanbanBoard, and Task Map.
+ */
+export function canUserEditTaskStatus(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (isProjectManagerOrAdmin(user)) return true;
+  return (user.roles || []).some((r) => STATUS_EDIT_ALLOWED_ROLE.test((r || '').trim()));
+}
+
+export const STATUS_EDIT_DENIED_MESSAGE =
+  "You can't change this status. Only Project Managers, Dev, and Production can edit task statuses.";
 
 /**
  * Checks if a user has any Auditor or Audit specialization role or flag.
@@ -134,6 +150,8 @@ export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
 export const COMPLETION_GATE_STATUSES = [
   'closed',
   'crm',
+  'to send',
+  'to follow up',
   'crm needed to send',
   'crm_to_send',
   'crm needed to follow up',

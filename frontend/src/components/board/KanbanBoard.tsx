@@ -27,11 +27,12 @@ import { isGalaxyTask } from '@/lib/galaxyTask';
 import { Plus, ChevronLeft, ChevronRight, X, GripVertical, Trash2, MoreHorizontal, Pencil, ArrowDownUp } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { UncheckedAuditsModal } from '@/components/modals/UncheckedAuditsModal';
-import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserMoveTask, canUserEditTask, canTransitionTaskStatus, canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { tasksApi } from '@/api/tasks';
+import { isHiddenBoardStatus } from '@/lib/taskTokens';
 const EMPTY_ARRAY: any[] = [];
 
 interface Props {
@@ -803,12 +804,23 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
   const tasksByStatus = useMemo(() => {
     const canonicalStatus: Record<string, string> = {};
     localStatuses.forEach((s: any) => {
-      if (s.name) canonicalStatus[s.name.trim().toUpperCase()] = s.name;
+      if (s.name && !isHiddenBoardStatus(s.name)) {
+        canonicalStatus[s.name.trim().toUpperCase()] = s.name;
+      }
     });
     const filteredTasks = isGalaxyFilterActive ? localTasks.filter((t) => isGalaxyTask(t)) : localTasks;
     const map = filteredTasks.reduce((acc: Record<string, Task[]>, task) => {
       const raw = task.status || 'PENDING';
-      const status = canonicalStatus[raw.trim().toUpperCase()] || raw;
+      const compactRaw = raw.trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const normalizedRaw =
+        compactRaw === 'CRM' || compactRaw === 'CRMNEEDEDTOSEND' || compactRaw === 'CRMTOSEND'
+          ? 'TO SEND'
+          : compactRaw === 'CRMNEEDEDTOFOLLOWUP' || compactRaw === 'CRMFOLLOWUP'
+            ? 'TO FOLLOW UP'
+            : isHiddenBoardStatus(raw)
+              ? 'TO SEND'
+              : raw;
+      const status = canonicalStatus[normalizedRaw.trim().toUpperCase()] || normalizedRaw;
       if (!acc[status]) acc[status] = [];
       acc[status].push(task);
       return acc;
@@ -841,7 +853,7 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     // 1. Process customGroups in exact order from DB
     customGroups.forEach((groupName) => {
       const groupStatuses = localStatuses
-        .filter((s: any) => s.groupName === groupName)
+        .filter((s: any) => s.groupName === groupName && !isHiddenBoardStatus(s.name))
         .map((s: any) => s.name);
 
       const styles = GROUP_STYLES[groupName] || {
@@ -868,8 +880,8 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     // 2. Catch-all for any task status or db status that doesn't belong to any group at all
     const activeCustom = Array.from(
       new Set([
-        ...Object.keys(tasksByStatus).filter((s) => !processedStatuses.has(s)),
-        ...localStatuses.filter((s: any) => !processedStatuses.has(s.name)).map((s: any) => s.name),
+        ...Object.keys(tasksByStatus).filter((s) => !processedStatuses.has(s) && !isHiddenBoardStatus(s)),
+        ...localStatuses.filter((s: any) => !processedStatuses.has(s.name) && !isHiddenBoardStatus(s.name)).map((s: any) => s.name),
       ])
     );
 
@@ -1051,6 +1063,10 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
 
     const task = latestTasksRef.current.find((t) => t.id === active.id) || localTasks.find((t) => t.id === active.id) || tasks.find((t) => t.id === active.id);
     if (task) {
+      if (!canUserEditTaskStatus(currentUser)) {
+        toast.error(STATUS_EDIT_DENIED_MESSAGE);
+        return;
+      }
       dragStartTaskRef.current = task;
       // Check task-level edit restriction (teamAssignAccessRole)
       const editCheck = canUserEditTask(task, currentUser);
@@ -1381,6 +1397,12 @@ export function KanbanBoard({ listId, tasks, onTaskMove,
     }
 
     if (finalStatus !== originalTask.status) {
+      if (!canUserEditTaskStatus(currentUser)) {
+        toast.error(STATUS_EDIT_DENIED_MESSAGE);
+        setLocalTasks([...latestTasksRef.current]);
+        dragStartTaskRef.current = null;
+        return;
+      }
       let transitionCheck = canTransitionTaskStatus(originalTask, finalStatus);
       if (!transitionCheck.allowed && transitionCheck.uncheckedAudits && transitionCheck.uncheckedAudits.length > 0 && originalTask?.id) {
         try {

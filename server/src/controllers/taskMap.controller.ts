@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { io } from '../server';
@@ -82,6 +83,7 @@ import {
   getDailySheetLogsIndexForDate,
 } from '../services/dailySheetLogService';
 import { checkMaSheetActivityStatus } from '../services/maInactivityService';
+import { enqueueSpreadsheetSync, SpreadsheetSyncJobPayload } from '../workers/spreadsheetSync.worker';
 
 // Closed status check matching Nexus conventions
 const isClosedStatus = (status?: string | null) => {
@@ -102,7 +104,13 @@ const CRM_TAG_SET = new Set([
   'OUTREACH SENT',
   'CLIENT SENT',
   'TO SEND',
+  'TO FOLLOW UP',
+  'TOFOLLOWUP',
   'FOLLOW UP',
+  'FOLLOW-UP 1 DAY',
+  'FOLLOW-UP 3RD DAY',
+  'FOLLOW-UP 5TH DAY',
+  'FOLLOW-UP 1 WEEK',
   'TOSEND',
   'READY TO SEND',
   'READYTOSEND',
@@ -167,10 +175,17 @@ async function closeOtherOpenBoardSessionsForMa(
   const maKey = (maName || '').trim().toLowerCase();
   if (!maKey) return;
   try {
-    const recordsWithReviews = await prisma.taskMapRecord.findMany({
-      where: { pmReviews: { not: null as any } },
-      select: { taskId: true, statuses: true, pmReviews: true },
-    });
+    const escapedMaKey = maKey.replace(/[\\%_]/g, '\\$&');
+    const recordsWithReviews = await prisma.$queryRawUnsafe<
+      Array<{ taskId: string; statuses: string[]; pmReviews: any }>
+    >(
+      `SELECT "taskId", "statuses", "pmReviews"
+       FROM "TaskMapRecord"
+       WHERE "pmReviews" IS NOT NULL
+         AND "pmReviews"::text ILIKE '%SHEET_PROGRESS%'
+         AND "pmReviews"::text ILIKE $1 ESCAPE '\\'`,
+      `%${escapedMaKey}%`
+    );
     for (const rec of recordsWithReviews) {
       let revs = parsePmReviewsArray(rec.pmReviews);
       let modified = false;
@@ -287,44 +302,11 @@ async function hasLiveSheetSessionForTarget(maName: string, taskId: string, subt
 }
 
 /**
- * Asynchronously triggers the n8n webhook to append the newly started task row
- * into the MA's personal Daily Schedule spreadsheet.
+ * Enqueues the n8n Google Sheets schedule sync into the rate-limited BullMQ worker
+ * (with per-spreadsheet locking, exponential backoff, cached tab resolution, and sheetRow write-back).
+ * Falls back to direct execution automatically if Redis is unavailable.
  */
-async function triggerN8nStartTaskWebhook(params: {
-  userId: string;
-  userName: string;
-  userEmail?: string | null;
-  dailySheetUrl?: string | null;
-  taskId?: string | null;
-  subtaskId?: string | null;
-  sheetRow?: number | null;
-  taskTitle: string;
-  clientName: string;
-  taskLink?: string | null;
-  status?: string;
-  timeIn?: string;
-  timeOut?: string | null;
-  timeTracker?: string | null;
-  taskDeliverablesDescription?: string | null;
-  taskUpdateAndDeliverables?: string | null;
-  description?: string | null;
-  date?: string;
-  sheetName?: string;
-  mode?: 'START' | 'STOP' | 'UPDATE';
-  insertEmptyRowBeforeStart?: boolean;
-}) {
-  const n8nUrl = process.env.N8N_START_TASK_WEBHOOK || 'https://n8n.heysnaply.com/webhook/nexus-auto-input-schedule';
-  // Strip automation-managed sheet columns (Task Link, Task Status, Was Deliverables Submitted?, IsRecorded?)
-  // so Nexus never overwrites Google Sheet formulas / Apps Script automations.
-  const {
-    taskLink: _omitTaskLink,
-    status: _omitStatus,
-    ...safePayload
-  } = params;
-  // Default to "2025" because MA Daily Schedule spreadsheets use the "2025" tab
-  // (sending the calendar year like "2026" causes n8n "Sheet with name 2026 not found").
-  const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
-
+async function triggerN8nStartTaskWebhook(params: SpreadsheetSyncJobPayload) {
   // 1. Direct Apps Script Web App execution (Runs native Apps Script code in the spreadsheet)
   let scriptAppUrl: string | null = null;
   if (params.userId) {
@@ -336,6 +318,7 @@ async function triggerN8nStartTaskWebhook(params: {
   }
 
   if (scriptAppUrl) {
+    const resolvedSheetName = params.sheetName || process.env.N8N_DEFAULT_SHEET_NAME || '2025';
     try {
       const appScriptPayload = {
         action: params.mode === 'STOP' ? 'stop' : (params.mode === 'UPDATE' ? 'sync' : 'start'),
@@ -368,42 +351,7 @@ async function triggerN8nStartTaskWebhook(params: {
     }
   }
 
-  const payload = JSON.stringify({ ...safePayload, sheetName: resolvedSheetName });
-
-  const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await fetch(n8nUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        signal: AbortSignal.timeout(15000),
-      });
-      const bodyText = await res.text().catch(() => '');
-      let parsed: any = null;
-      try {
-        parsed = bodyText ? JSON.parse(bodyText) : null;
-      } catch {
-        parsed = null;
-      }
-      const n8nReportedFailure =
-        (Array.isArray(parsed) && parsed[0]?.ok === false) ||
-        (parsed && !Array.isArray(parsed) && parsed.ok === false);
-
-      if (res.ok && !n8nReportedFailure) {
-        logger.info(`[n8n Sync] Triggered n8n schedule webhook for ${params.userName} (mode: ${params.mode || 'START'}, attempt ${attempt}): HTTP ${res.status}`);
-        return;
-      }
-
-      logger.warn(`[n8n Sync] Attempt ${attempt} returned HTTP ${res.status}${n8nReportedFailure ? ' (n8n ok:false)' : ''} for ${params.userName}`);
-    } catch (err: any) {
-      logger.warn(`[n8n Sync] Attempt ${attempt} failed for ${params.userName}: ${err.message}`);
-    }
-
-    if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, 1200));
-    }
-  }
+  await enqueueSpreadsheetSync(params);
 }
 
 /**
@@ -656,6 +604,40 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const dateQuery = req.query.date as string || '';
     const searchQuery = (req.query.search as string || '').toLowerCase().trim();
     const clientQuery = (req.query.client as string || '').trim();
+    const isCompact = req.query.compact === '1' || req.query.compact === 'true';
+
+    const formatTaskMapPayload = (payload: any) => {
+      if (!payload || typeof payload !== 'object') return payload;
+      const tasksArr: any[] = Array.isArray(payload.tasks) ? payload.tasks : [];
+      const poolIds: string[] = Array.isArray(payload.availablePoolIds)
+        ? payload.availablePoolIds
+        : Array.isArray(payload.availablePool)
+          ? payload.availablePool.map((t: any) => t.id)
+          : [];
+
+      if (isCompact) {
+        // Ensure every availablePool item exists in tasks before omitting duplicate availablePool array
+        if (Array.isArray(payload.availablePool) && payload.availablePool.length > 0) {
+          const taskIdSet = new Set(tasksArr.map((t: any) => t.id));
+          const allPresent = payload.availablePool.every((t: any) => taskIdSet.has(t.id));
+          if (!allPresent) {
+            return { ...payload, availablePoolIds: poolIds };
+          }
+        }
+        const { availablePool: _omitted, ...rest } = payload;
+        return { ...rest, availablePoolIds: poolIds };
+      }
+
+      if (Array.isArray(payload.availablePool)) {
+        return payload;
+      }
+      const byId = new Map<string, any>();
+      for (const t of tasksArr) {
+        byId.set(t.id, t);
+      }
+      const hydratedPool = poolIds.map((id) => byId.get(id)).filter(Boolean);
+      return { ...payload, availablePool: hydratedPool };
+    };
 
     const todayManila = getManilaDateStr();
     const requestedDate = (dateQuery || todayManila).trim().split('T')[0];
@@ -678,14 +660,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     const cacheGen = getCacheGeneration(cacheKey);
     const cachedData = await getCache<any>(cacheKey);
     if (cachedData) {
-      return res.json(cachedData);
+      return res.json(formatTaskMapPayload(cachedData));
     }
 
     const singleFlightKey = `${cacheKey}:${cacheGen}`;
     const existingInFlight = inFlightTaskMapQueries.get(singleFlightKey);
     if (existingInFlight) {
       const coalescedPayload = await existingInFlight;
-      return res.json(coalescedPayload);
+      return res.json(formatTaskMapPayload(coalescedPayload));
     }
 
     const computePromise = (async () => {
@@ -753,7 +735,6 @@ export const getTaskMapData = async (req: Request, res: Response) => {
             );
             if (isClosedStatus(s)) return false;
             return !(
-              s === 'WAITING' || s.includes('WAITING') ||
               s === 'CRM' || s.includes('CRM') ||
               s === 'INREVIEW' || s === 'TOREVIEW' || s === 'REVIEW' ||
               s === 'CHECKING' || s === 'INCHECKING' ||
@@ -763,7 +744,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
               s === 'RECURRING' || s.includes('RECURRING') ||
               Boolean(t.recurringConfig) ||
               mapStatuses.some((st: string) =>
-                ['WAITING', 'CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st)
+                ['CRM', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st)
               )
             );
           });
@@ -820,99 +801,134 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Fetch TaskMap records first so we know which (rare) closed tasks have active CRM workflow tags
-    const records = await prisma.$queryRawUnsafe<TaskMapRecordData[]>(
-      `SELECT * FROM "TaskMapRecord"`
-    );
-    const recordsMap = new Map<string, TaskMapRecordData>();
-    const closedCrmCandidateTaskIds: string[] = [];
-    for (const r of records) {
-      recordsMap.set(r.taskId, r);
-      const hasCrmTag = Array.isArray(r.statuses) && r.statuses.some((st) => CRM_TAG_SET.has((st || '').toUpperCase().trim()));
-      if (hasCrmTag) {
-        closedCrmCandidateTaskIds.push(r.taskId);
-      }
-    }
-
     const kycPinboardExclusion = ['KYC', 'PIN BOARD', 'PINBOARD'].map((s) => ({
       status: { equals: s, mode: 'insensitive' as const },
     }));
     const closedOrExcludedFilters = CLOSED_OR_EXCLUDED_STATUS_VARIANTS.map((s) => ({
       status: { equals: s, mode: 'insensitive' as const },
     }));
-
-    // Fetch open tasks (plus the small set of closed CRM-tagged tasks) from PostgreSQL, omitting historical closed archive bloat
-    const tasks = await prisma.task.findMany({
-      where: {
-        AND: [
-          { NOT: { OR: kycPinboardExclusion } },
-          closedCrmCandidateTaskIds.length > 0
-            ? {
-                OR: [
-                  { NOT: { OR: closedOrExcludedFilters } },
-                  { id: { in: closedCrmCandidateTaskIds } },
-                ],
-              }
-            : { NOT: { OR: closedOrExcludedFilters } },
-        ],
-      },
-      include: {
-        list: {
-          select: {
-            id: true,
-            name: true,
-            folder: { select: { id: true, name: true } },
-            statuses: {
-              select: { name: true, color: true, groupName: true, order: true },
-              orderBy: { order: 'asc' },
-            },
-          },
-        },
-        assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
-        assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
-        creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
-        subtasks: {
-          where: { completed: false },
-          include: {
-            User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-            assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
-            checklists: {
-              where: { name: { equals: 'Audit', mode: 'insensitive' } },
-              include: { items: true },
-            },
-          },
-          orderBy: { createdAt: 'asc' },
-        },
-        checklists: {
-          // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
-          where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' } },
-          include: { items: true },
-        },
-        _count: {
-          select: {
-            subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' } } } },
-          },
+    // Explicit select omits heavy HTML/rich-text `description` blobs on initial board load
+    // (lazy-fetched on click via GET /api/task-map/task-description) and omits per-task `list.statuses`
+    // (loaded once per list below and attached in memory, eliminating repeated joins across every task).
+    const taskBoardSelect = {
+      id: true,
+      title: true,
+      priority: true,
+      listId: true,
+      creatorId: true,
+      createdAt: true,
+      updatedAt: true,
+      assigneeId: true,
+      dueDate: true,
+      startDate: true,
+      status: true,
+      teamId: true,
+      externalId: true,
+      assigneeRoleRestrictions: true,
+      teamAssignAccessRole: true,
+      position: true,
+      rolloverExcluded: true,
+      recurringConfig: true,
+      estimatedHours: true,
+      launchDate: true,
+      list: {
+        select: {
+          id: true,
+          name: true,
+          folder: { select: { id: true, name: true } },
         },
       },
-      orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
-    });
+      assignee: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+      assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true, dailySheetUrl: true } },
+      creator: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      subtasks: {
+        where: { completed: false },
+        select: {
+          id: true,
+          title: true,
+          taskId: true,
+          createdAt: true,
+          completed: true,
+          status: true,
+          dueDate: true,
+          priority: true,
+          assigneeId: true,
+          teamId: true,
+          assigneeRoleRestrictions: true,
+          teamAssignAccessRole: true,
+          externalId: true,
+          estimatedHours: true,
+          User: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          assignees: { select: { id: true, name: true, email: true, avatarUrl: true, roles: true, systemRole: true } },
+          checklists: {
+            where: { name: { equals: 'Audit', mode: 'insensitive' as const } },
+            include: { items: true },
+          },
+        },
+        orderBy: { createdAt: 'asc' as const },
+      },
+      checklists: {
+        // The task's own; subtask Audit checklists (same taskId) come with each subtask above.
+        where: { subtaskId: null, name: { equals: 'Audit', mode: 'insensitive' as const } },
+        include: { items: true },
+      },
+      _count: {
+        select: {
+          subtasks: { where: { NOT: { title: { contains: '--audit', mode: 'insensitive' as const } } } },
+        },
+      },
+    };
 
-    // Options and Shift configs: filter out obsolete static Upwork options & internal client tags
-    const rawOptions = await getStatusOptions();
-    const options = rawOptions.filter((opt) => {
-      const up = opt.label.toUpperCase().trim();
-      return (
-        up !== 'UPWORK ACTIVE' &&
-        !up.startsWith('UPWORK |') &&
-        !up.startsWith('UPWORK|') &&
-        !up.startsWith('UPWORK_CLIENT:') &&
-        !up.startsWith('UPWORK_PROJECT_CLIENT:')
-      );
-    });
-    const shifts = await getShiftConfigs();
-
-    // PM Users for Review queue and tag matching + DB teams & workspace roles
-    const [allUsers, workspaceRoles, workspaceTeams] = await Promise.all([
+    // Fetch all independent board datasets in a single parallel round-trip
+    // (open tasks, per-list statuses, TaskMapRecords, metadata, users, daily sheet index, client lists, Upwork lists, MA sessions, supervise checks)
+    const [
+      records,
+      openDbTasks,
+      listStatuses,
+      rawOptions,
+      shifts,
+      allUsers,
+      workspaceRoles,
+      workspaceTeams,
+      dailySheetIndex,
+      clientDashboardLists,
+      upworkClients,
+      upworkProjectClients,
+      maActiveSessions,
+      activeSuperviseChecks,
+    ] = await Promise.all([
+      prisma.$queryRawUnsafe<TaskMapRecordData[]>(
+        `SELECT r.*
+         FROM "TaskMapRecord" r
+         INNER JOIN "Task" t ON t."id" = r."taskId"
+         WHERE UPPER(TRIM(COALESCE(t."status", ''))) NOT IN ('KYC', 'PIN BOARD', 'PINBOARD')
+           AND (
+             UPPER(TRIM(COALESCE(t."status", ''))) NOT IN ('CLOSED', 'DONE', 'COMPLETED', 'COMPLETE', 'RESOLVED', 'CANCELLED')
+             OR r."updatedAt" >= NOW() - INTERVAL '45 days'
+           )
+         ORDER BY r."updatedAt" DESC`
+      ),
+      prisma.task.findMany({
+        where: {
+          AND: [
+            { NOT: { OR: kycPinboardExclusion } },
+            { NOT: { OR: closedOrExcludedFilters } },
+          ],
+        },
+        select: taskBoardSelect,
+        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+      }),
+      prisma.list.findMany({
+        select: {
+          id: true,
+          statuses: {
+            select: { name: true, color: true, groupName: true, order: true },
+            orderBy: { order: 'asc' },
+          },
+        },
+      }),
+      getStatusOptions(),
+      getShiftConfigs(),
       prisma.user.findMany({
         where: { isActive: true },
         select: {
@@ -944,10 +960,77 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         },
         orderBy: { createdAt: 'asc' },
       }),
+      getDailySheetLogsIndexForDate(requestedDate),
+      fetchClientDashboardLists().catch((err: any) => {
+        logger.warn({ err }, 'Failed to query client dashboard folders');
+        return [] as Array<{ id: string; name: string }>;
+      }),
+      getUpworkClients(),
+      getUpworkProjectClients(),
+      getMaActiveSessionsMap(),
+      (prisma as any).superviseCheck.findMany({
+        where: {
+          dateKey: requestedDate,
+          reappearAt: { gt: new Date() },
+        },
+        orderBy: { checkedAt: 'desc' },
+      }).catch(() => []),
     ]);
 
-    // Determine shift members (normal users + auditors) for the selected shift from AuditShiftConfig
-    const shiftUsers = await resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts);
+    const recordsMap = new Map<string, TaskMapRecordData>();
+    const openTaskIdSet = new Set(openDbTasks.map((t) => t.id));
+    const closedCrmCandidateTaskIds: string[] = [];
+    const MAX_CLOSED_CRM_CANDIDATES = 60;
+    for (const r of records) {
+      recordsMap.set(r.taskId, r);
+      const hasCrmTag = Array.isArray(r.statuses) && r.statuses.some((st) => CRM_TAG_SET.has((st || '').toUpperCase().trim()));
+      if (hasCrmTag && !openTaskIdSet.has(r.taskId) && closedCrmCandidateTaskIds.length < MAX_CLOSED_CRM_CANDIDATES) {
+        closedCrmCandidateTaskIds.push(r.taskId);
+      }
+    }
+
+    // Fetch bounded recent closed CRM-tagged tasks (PK index lookup, max 60) and resolve shift users in parallel
+    const [closedCrmTasks, shiftUsers] = await Promise.all([
+      closedCrmCandidateTaskIds.length > 0
+        ? prisma.task.findMany({
+            where: {
+              AND: [
+                { NOT: { OR: kycPinboardExclusion } },
+                { OR: closedOrExcludedFilters },
+                { id: { in: closedCrmCandidateTaskIds } },
+              ],
+            },
+            select: taskBoardSelect,
+          })
+        : Promise.resolve([] as typeof openDbTasks),
+      resolveShiftUsersForTokens(allUsers, shiftTokens, isAllShifts),
+    ]);
+
+    const statusesByList = new Map(listStatuses.map((l) => [l.id, l.statuses]));
+    const tasks = closedCrmTasks.length > 0 ? [...openDbTasks, ...closedCrmTasks] : openDbTasks;
+    if (closedCrmTasks.length > 0) {
+      // Preserve single-query order: position asc, then newest createdAt first
+      tasks.sort(
+        (a, b) =>
+          (a.position === b.position ? 0 : (a.position ?? Infinity) - (b.position ?? Infinity)) ||
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    }
+    for (const task of tasks as any[]) {
+      if (task.list) task.list.statuses = statusesByList.get(task.list.id) || [];
+    }
+
+    // Options: filter out obsolete static Upwork options & internal client tags
+    const options = rawOptions.filter((opt) => {
+      const up = opt.label.toUpperCase().trim();
+      return (
+        up !== 'UPWORK ACTIVE' &&
+        !up.startsWith('UPWORK |') &&
+        !up.startsWith('UPWORK|') &&
+        !up.startsWith('UPWORK_CLIENT:') &&
+        !up.startsWith('UPWORK_PROJECT_CLIENT:')
+      );
+    });
 
     const isPmUser = (u: any) => {
       if (u.systemRole === 'ADMIN') return true;
@@ -963,8 +1046,8 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
     const deriveDefaultMapStatuses = (rawStatus?: string | null, isAssignedToMember = false): string[] => {
       const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-      if (statusKey === 'CRM' || statusKey === 'CRMNEEDEDTOSEND' || statusKey === 'CRMTOSEND') return ['To send'];
-      if (statusKey === 'CRMNEEDEDTOFOLLOWUP' || statusKey === 'CRMFOLLOWUP') return ['Follow up'];
+      if (statusKey === 'CRM' || statusKey === 'TOSEND' || statusKey === 'CRMNEEDEDTOSEND' || statusKey === 'CRMTOSEND') return ['To send'];
+      if (statusKey === 'TOFOLLOWUP' || statusKey === 'CRMNEEDEDTOFOLLOWUP' || statusKey === 'CRMFOLLOWUP') return ['Follow up'];
       if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
       if (statusKey === 'ONHOLD') return ['On-hold'];
       if (statusKey === 'REVISION' || statusKey === 'REVISIONS') return ['Revision'];
@@ -996,9 +1079,6 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const s = (st.status || (st.completed ? 'CLOSED' : 'PENDING')).toUpperCase().replace(/[\s_-]+/g, '');
       return st.completed || isClosedStatus(s);
     };
-
-    // Fetch today's DailySheetLog index so sorting and live state base from historical sheet submissions for that day
-    const dailySheetIndex = await getDailySheetLogsIndexForDate(requestedDate);
 
     // Build enriched task items + surface open subtasks as independent board items
     const enrichedTasks: any[] = [];
@@ -1127,7 +1207,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (cur.length === 0 || cur.every((s: string) => staleForWaiting.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['Sent but Waiting'] };
         }
-      } else if (taskStatusNorm === 'CRM' || taskStatusNorm === 'CRMNEEDEDTOSEND' || taskStatusNorm === 'CRMTOSEND') {
+      } else if (taskStatusNorm === 'CRM' || taskStatusNorm === 'TOSEND' || taskStatusNorm === 'CRMNEEDEDTOSEND' || taskStatusNorm === 'CRMTOSEND') {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForCrm = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
@@ -1136,7 +1216,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (cur.length === 0 || cur.every((s: string) => staleForCrm.has((s || '').toUpperCase().replace(/[\s_-]+/g, '')))) {
           mapRecord = { ...mapRecord, statuses: ['To send'] };
         }
-      } else if (taskStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || taskStatusNorm === 'CRMFOLLOWUP') {
+      } else if (taskStatusNorm === 'TOFOLLOWUP' || taskStatusNorm === 'CRMNEEDEDTOFOLLOWUP' || taskStatusNorm === 'CRMFOLLOWUP') {
         const cur = Array.isArray(mapRecord.statuses) ? mapRecord.statuses : [];
         const staleForFollowUp = new Set([
           'AVAILABLETASK', 'TOSEND', 'WAITING', 'SENT', 'SENTBUTWAITING',
@@ -1166,8 +1246,19 @@ export const getTaskMapData = async (req: Request, res: Response) => {
 
       const { launchMeta, effectiveLaunchDate, isLaunchDate } = extractLaunchMeta(reviewsList, task.dueDate);
       const parentClosed = isClosedStatus(task.status);
+      // Lightweight subtask refs on parent card (open subtasks are emitted as first-class TaskMapItems below)
+      const lightSubtasks = Array.isArray(task.subtasks)
+        ? task.subtasks.map((st: any) => ({
+            id: st.id,
+            title: st.title,
+            status: st.status,
+            completed: st.completed,
+          }))
+        : [];
       enrichedTasks.push({
         ...task,
+        description: null,
+        subtasks: lightSubtasks,
         subtaskCount: task._count?.subtasks ?? 0,
         taskMap: mapRecord,
         pmTags,
@@ -1304,21 +1395,57 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Enrich WAITING / Sent but Waiting tasks with CRM follow-up timing and tier metadata
+    // Enrich WAITING / Sent but Waiting tasks & multi-assignee AuditLog fallback in parallel
     const waitingItemsForMeta = enrichedTasks.filter(
       (item: any) => !item.isSubtask && !item.isClosed && isWaitingMainStatus(item.status)
     );
-    if (waitingItemsForMeta.length > 0) {
-      const waitingMetaMap = await resolveWaitingSinceMap(
-        waitingItemsForMeta.map((item: any) => ({
-          id: item.id,
-          status: item.status,
-          updatedAt: item.updatedAt,
-          createdAt: item.createdAt,
-          pmReviews: item.taskMap?.pmReviews,
-          recordUpdatedAt: item.taskMap?.updatedAt,
-        }))
+    const multiAssigneeItems = enrichedTasks.filter((item: any) => {
+      if (!item.assigneeId || !Array.isArray(item.assignees) || item.assignees.length <= 1) return false;
+      if (item.taskMap?.handedOver) return false;
+      const isLive = Boolean(item.progress?.maName && !item.progress?.timeOut && item.progress?.timeIn);
+      if (isLive) return false;
+      const revs = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap.pmReviews : [];
+      const hasPm = revs.some(
+        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo && (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
       );
+      return !hasPm;
+    });
+    const entityIds = multiAssigneeItems.length > 0
+      ? Array.from(
+          new Set(
+            multiAssigneeItems.flatMap((i: any) => (i.isSubtask ? [i.parentTaskId, i.subtaskId] : [i.id])).filter(Boolean)
+          )
+        )
+      : [];
+
+    const [waitingMetaMap, assignmentLogs] = await Promise.all([
+      waitingItemsForMeta.length > 0
+        ? resolveWaitingSinceMap(
+            waitingItemsForMeta.map((item: any) => ({
+              id: item.id,
+              status: item.status,
+              updatedAt: item.updatedAt,
+              createdAt: item.createdAt,
+              pmReviews: item.taskMap?.pmReviews,
+              recordUpdatedAt: item.taskMap?.updatedAt,
+            }))
+          )
+        : Promise.resolve(new Map<string, any>()),
+      entityIds.length > 0
+        ? prisma.auditLog.findMany({
+            where: {
+              action: 'ASSIGNMENT',
+              entity: { in: ['TASK', 'SUBTASK'] },
+              entityId: { in: entityIds },
+            },
+            select: { entityId: true, details: true, createdAt: true },
+            orderBy: { createdAt: 'desc' },
+            take: Math.min(entityIds.length * 5, 500),
+          })
+        : Promise.resolve([] as Array<{ entityId: string; details: any; createdAt: Date }>),
+    ]);
+
+    if (waitingItemsForMeta.length > 0) {
       for (const item of waitingItemsForMeta) {
         const meta = waitingMetaMap.get(item.id);
         if (meta) {
@@ -1337,37 +1464,9 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Batched AuditLog fallback for pre-existing multi-assignee tasks/subtasks (so the most recently assigned user owns the card)
-    const multiAssigneeItems = enrichedTasks.filter((item: any) => {
-      if (!item.assigneeId || !Array.isArray(item.assignees) || item.assignees.length <= 1) return false;
-      if (item.taskMap?.handedOver) return false;
-      const isLive = Boolean(item.progress?.maName && !item.progress?.timeOut && item.progress?.timeIn);
-      if (isLive) return false;
-      const revs = Array.isArray(item.taskMap?.pmReviews) ? item.taskMap.pmReviews : [];
-      const hasPm = revs.some(
-        (r: any) => r?.type === 'PM_ASSIGNMENT' && r?.assignedTo && (item.isSubtask ? r?.subtaskId === item.subtaskId : !r?.subtaskId)
-      );
-      return !hasPm;
-    });
-
-    if (multiAssigneeItems.length > 0) {
-      const entityIds = Array.from(
-        new Set(
-          multiAssigneeItems.flatMap((i: any) => (i.isSubtask ? [i.parentTaskId, i.subtaskId] : [i.id])).filter(Boolean)
-        )
-      );
-      const logs = await prisma.auditLog.findMany({
-        where: {
-          action: 'ASSIGNMENT',
-          entity: { in: ['TASK', 'SUBTASK'] },
-          entityId: { in: entityIds },
-        },
-        select: { entityId: true, details: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-      });
-
+    if (multiAssigneeItems.length > 0 && assignmentLogs.length > 0) {
       const logsByEntity = new Map<string, any[]>();
-      for (const l of logs) {
+      for (const l of assignmentLogs) {
         const arr = logsByEntity.get(l.entityId) || [];
         arr.push(l);
         logsByEntity.set(l.entityId, arr);
@@ -1442,12 +1541,12 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         x.trim().toUpperCase().replace(/[\s_-]+/g, '')
       );
 
-      // Exclude review/audit, recurring, daily, weekly, monthly, and CRM/Waiting tasks from Available Tasks pool
+      // Exclude review/audit, recurring, daily, weekly, monthly, and CRM tasks from Available Tasks pool (Waiting is included)
       const isExcluded =
-        s === 'WAITING' ||
-        s.includes('WAITING') ||
         s === 'CRM' ||
         s.includes('CRM') ||
+        s === 'TOSEND' ||
+        s === 'TOFOLLOWUP' ||
         s === 'INREVIEW' ||
         s === 'TOREVIEW' ||
         s === 'REVIEW' ||
@@ -1463,8 +1562,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         s.includes('RECURRING') ||
         !!t.recurringConfig ||
         mapStatuses.some((st: string) =>
-          ['WAITING', 'CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
-          st.includes('WAITING') ||
+          ['CRM', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'DAILY', 'WEEKLY', 'MONTHLY', 'RECURRING', 'INREVIEW', 'TOREVIEW', 'CHECKING', 'INCHECKING'].includes(st) ||
           st.includes('CRM') ||
           st.includes('DAILY') ||
           st.includes('WEEKLY') ||
@@ -1525,7 +1623,14 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       return false;
     };
 
-    const isTaskHigh = (t: any) => (t.priority || '').toUpperCase() === 'HIGH';
+    const getTaskPriorityRank = (t: any) => {
+      if (isTaskUrgent(t)) return 0;
+      const p = (t.priority || '').trim().toUpperCase();
+      if (p === 'HIGH') return 1;
+      if (p === 'NORMAL' || p === 'MEDIUM') return 2;
+      if (p === 'LOW') return 3;
+      return 4;
+    };
 
     const isTaskOnHold = (t: any) => {
       const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
@@ -1534,25 +1639,66 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       return customStatuses.some((cs: string) => cs.toUpperCase().includes('HOLD'));
     };
 
+    const isTaskWaiting = (t: any) => {
+      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      if (s === 'WAITING' || s === 'SENT' || s.includes('WAITING')) return true;
+      const customStatuses = t.taskMap?.statuses || [];
+      return customStatuses.some((cs: string) => {
+        const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+        return up === 'WAITING' || up === 'SENTBUTWAITING' || up.includes('WAITING');
+      });
+    };
+
+    const getAvailableTaskStatusRank = (t: any) => {
+      if (isTaskOnHold(t)) return 4;
+      if (isTaskWaiting(t)) return 3;
+      const s = (t.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const mapStatuses = (t.taskMap?.statuses || []).map((x: string) =>
+        (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+      );
+      if (
+        mapStatuses.some(
+          (st: string) =>
+            st === 'HANDOVER' || st === 'HANDOVERIN' || st === 'HANDOVEROUT' || st.includes('HANDOVER')
+        )
+      ) {
+        return 0;
+      }
+      if (
+        s === 'REVISION' ||
+        s === 'REVISIONS' ||
+        s === 'REVISING' ||
+        s.includes('REVIS') ||
+        mapStatuses.some(
+          (st: string) => st === 'REVISION' || st === 'REVISIONS' || st === 'REVISING' || st.includes('REVIS')
+        )
+      ) {
+        return 1;
+      }
+      if (t.taskMap?.handedOver && !mapStatuses.includes('AVAILABLETASK')) {
+        return 0;
+      }
+      return 2;
+    };
+
     const availablePool = filteredTasks
       .filter((t: any) => {
         if (isClosedTask(t)) return false;
         return isAvailableTaskStatus(t);
       })
       .sort((a: any, b: any) => {
-        // 0. Always push ALL On-hold tasks (even urgent) to the very bottom
-        const holdA = isTaskOnHold(a) ? 1 : 0;
-        const holdB = isTaskOnHold(b) ? 1 : 0;
-        if (holdA !== holdB) return holdA - holdB;
+        // 0. Bottom tiers: active (0) > Waiting (1) > On-hold (2)
+        const tierA = isTaskOnHold(a) ? 2 : isTaskWaiting(a) ? 1 : 0;
+        const tierB = isTaskOnHold(b) ? 2 : isTaskWaiting(b) ? 1 : 0;
+        if (tierA !== tierB) return tierA - tierB;
 
-        // 1. Prioritize urgent tasks at the top among active (non-on-hold) tasks
-        const urgentA = isTaskUrgent(a) ? 1 : 0;
-        const urgentB = isTaskUrgent(b) ? 1 : 0;
-        if (urgentA !== urgentB) return urgentB - urgentA;
+        // 1. Prioritize by urgency: URGENT > HIGH > NORMAL/MEDIUM > LOW
+        const priorityDiff = getTaskPriorityRank(a) - getTaskPriorityRank(b);
+        if (priorityDiff !== 0) return priorityDiff;
 
-        const highA = isTaskHigh(a) ? 1 : 0;
-        const highB = isTaskHigh(b) ? 1 : 0;
-        if (highA !== highB) return highB - highA;
+        // 2. Order within priority: Hand-over > Revision > Available Task / other
+        const statusDiff = getAvailableTaskStatusRank(a) - getAvailableTaskStatusRank(b);
+        if (statusDiff !== 0) return statusDiff;
 
         const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -1664,34 +1810,56 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Fetch all client lists under "Client Dashboard" in PostgreSQL
-    let allClients: Array<{ id: string; name: string }> = [];
-    try {
-      const clientDashboardLists = await fetchClientDashboardLists();
-      const allClientsMap = new Map<string, { id: string; name: string }>();
-      for (const c of clientDashboardLists) {
-        allClientsMap.set(c.id, c);
+    // Assemble client list from pre-fetched Client Dashboard lists + active non-admin tasks
+    const allClientsMap = new Map<string, { id: string; name: string }>();
+    for (const c of clientDashboardLists) {
+      allClientsMap.set(c.id, c);
+    }
+    for (const t of openTasks as any[]) {
+      if (t.isAdminTask) continue;
+      const listId = t.list?.id;
+      const listName = t.list?.name;
+      if (listId && listName && !allClientsMap.has(listId)) {
+        allClientsMap.set(listId, { id: listId, name: listName });
       }
+    }
+    const allClients = Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
-      // Also include any list from non-admin active tasks
-      for (const t of openTasks as any[]) {
-        if (t.isAdminTask) continue;
-        const listId = t.list?.id;
-        const listName = t.list?.name;
-        if (listId && listName && !allClientsMap.has(listId)) {
-          allClientsMap.set(listId, { id: listId, name: listName });
+    const isStaleLiveProgress = (
+      startedAt?: string | Date | null,
+      updatedAt?: string | Date | null,
+      dateStr?: string | null
+    ): boolean => {
+      const refRaw = startedAt || updatedAt;
+      if (refRaw) {
+        const refMs = new Date(refRaw).getTime();
+        if (!isNaN(refMs) && nowMs - refMs > MAX_UPWORK_SESSION_MS) {
+          return true;
         }
       }
-
-      allClients = Array.from(allClientsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err: any) {
-      logger.warn({ err }, 'Failed to query client dashboard folders');
-    }
-
-    const upworkClients = await getUpworkClients();
-    const upworkProjectClients = await getUpworkProjectClients();
-
-    const maActiveSessions: Record<string, any> = await getMaActiveSessionsMap();
+      if (dateStr) {
+        const cleanDate = String(dateStr).trim();
+        let parsedMs = NaN;
+        const ymd = cleanDate.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+        if (ymd) {
+          parsedMs = Date.UTC(
+            parseInt(ymd[1], 10),
+            parseInt(ymd[2], 10) - 1,
+            parseInt(ymd[3], 10),
+            15,
+            59,
+            59
+          ); // 23:59:59 Manila
+        } else {
+          const parsed = new Date(cleanDate.includes(':') ? cleanDate : `${cleanDate} 23:59:59 GMT+0800`);
+          parsedMs = parsed.getTime();
+        }
+        if (!isNaN(parsedMs) && nowMs - parsedMs > MAX_UPWORK_SESSION_MS) {
+          return true;
+        }
+      }
+      return false;
+    };
 
     // Ensure any open live session from task progress is present in maActiveSessions
     // (This guarantees that when an MA is working on an Admin task that is hidden by default,
@@ -1705,8 +1873,24 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       const sheetProg = Array.isArray(reviewsList)
         ? reviewsList.find((r: any) => r.type === 'SHEET_PROGRESS')
         : null;
-      if (sheetProg?.maName && sheetProg.timeIn && !sheetProg.timeOut && !sheetProg.isMissingTime) {
+      if (
+        sheetProg?.maName &&
+        sheetProg.timeIn &&
+        !sheetProg.timeOut &&
+        !sheetProg.isMissingTime &&
+        !isStaleLiveProgress(sheetProg.startedAt, sheetProg.updatedAt, sheetProg.date)
+      ) {
         const maKey = sheetProg.maName.toLowerCase().trim();
+        const pmAssign = Array.isArray(reviewsList)
+          ? reviewsList.find((r: any) => r.type === 'PM_ASSIGNMENT' && !r.subtaskId)
+          : null;
+        const origMa = Array.isArray(reviewsList)
+          ? reviewsList.find((r: any) => r.type === 'ORIGINAL_MA')
+          : null;
+        const matchedOwnerUser = (allUsers || []).find(
+          (u: any) => (u.name || '').trim().toLowerCase() === maKey
+        );
+        const resolvedUserId = matchedOwnerUser?.id || pmAssign?.assignedTo || origMa?.userId || null;
         const existing = maActiveSessions[maKey];
         const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
         const existingRowNum = existing?.rowNumber ? Number(existing.rowNumber) : -1;
@@ -1721,6 +1905,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
         if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
           maActiveSessions[maKey] = {
             maName: sheetProg.maName,
+            userId: resolvedUserId,
             taskId: t.id,
             listId: t.listId || t.list?.id || null,
             listName: t.list?.name || null,
@@ -1743,9 +1928,22 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       }
     }
 
-    // Also ensure any live DailySheetLog entry for today is represented in maActiveSessions
-    for (const log of (dailySheetIndex?.logs || [])) {
-      if (!log?.maName || !log.isLive || !log.timeIn || log.timeOut || log.isMissingTime) continue;
+    // Also ensure any live DailySheetLog entry (today + overnight shift window) is represented in maActiveSessions
+    const liveSheetCandidates = [
+      ...(dailySheetIndex?.logs || []),
+      ...((dailySheetIndex as any)?.latestByMa || []),
+    ];
+    for (const log of liveSheetCandidates) {
+      if (
+        !log?.maName ||
+        !log.isLive ||
+        !log.timeIn ||
+        log.timeOut ||
+        log.isMissingTime ||
+        isStaleLiveProgress(log.startedAt, log.submittedAt, log.dateKey)
+      ) {
+        continue;
+      }
       const maKey = log.maKey || log.maName.toLowerCase().trim();
       const existing = maActiveSessions[maKey];
       const existingHasTimeOut = Boolean(existing?.timeOut && String(existing.timeOut).trim());
@@ -1761,6 +1959,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       if (!isStaleComparedToTimedOut && (!existing || (!existingIsLive && !existingHasTimeOut) || incomingUpdatedMs > existingUpdatedMs)) {
         maActiveSessions[maKey] = {
           maName: log.maName,
+          userId: log.userId || null,
           taskId: log.taskId || null,
           subtaskId: log.subtaskId || null,
           timeIn: log.timeIn,
@@ -1885,13 +2084,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       await captureTaskMapDailySnapshot(requestedDate, snapshotPayload, (req as any).user?.id || 'system');
     }
 
-    const activeSuperviseChecks = await (prisma as any).superviseCheck.findMany({
-      where: {
-        dateKey: requestedDate,
-        reappearAt: { gt: new Date() },
-      },
-      orderBy: { checkedAt: 'desc' },
-    }).catch(() => []);
+    const availablePoolIds = availablePool.map((t: any) => t.id);
 
     const responsePayload = {
       success: true,
@@ -1899,9 +2092,10 @@ export const getTaskMapData = async (req: Request, res: Response) => {
       snapshotDate: isPastDate ? requestedDate : undefined,
       tasks: openTasks,
       launchTasks,
-      availablePool,
+      availablePoolIds,
       allClients,
       dailySheetLogs: dailySheetIndex.logs,
+      latestSheetRows: dailySheetIndex.latestByMa,
       superviseChecks: activeSuperviseChecks,
       options,
       shifts,
@@ -1924,6 +2118,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     };
 
     // Cache in Redis: 30 seconds for today (protects against thundering herd; writes invalidate via task_map:all), 3600 seconds for historical dates
+    // Stores compact `availablePoolIds` instead of duplicating full `availablePool` objects (~40-50% smaller Redis payload).
     await setCache(cacheKey, responsePayload, isPastDate ? 3600 : 30, cacheGen);
 
     return responsePayload;
@@ -1932,7 +2127,7 @@ export const getTaskMapData = async (req: Request, res: Response) => {
     inFlightTaskMapQueries.set(singleFlightKey, computePromise);
     try {
       const responsePayload = await computePromise;
-      return res.json(responsePayload);
+      return res.json(formatTaskMapPayload(responsePayload));
     } finally {
       if (inFlightTaskMapQueries.get(singleFlightKey) === computePromise) {
         inFlightTaskMapQueries.delete(singleFlightKey);
@@ -2088,7 +2283,8 @@ const parsePmReviewsArray = (raw: any): any[] => {
 
 const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
   const statusKey = (rawStatus || '').toUpperCase().replace(/[\s_-]+/g, '');
-  if (statusKey === 'CRM') return ['To send'];
+  if (statusKey === 'CRM' || statusKey === 'TOSEND') return ['To send'];
+  if (statusKey === 'TOFOLLOWUP') return ['Follow up'];
   if (statusKey === 'WAITING' || statusKey === 'SENT') return ['Sent but Waiting'];
   if (statusKey === 'ONHOLD') return ['On-hold'];
   if (
@@ -2112,6 +2308,40 @@ const deriveDefaultTaskMapStatuses = (rawStatus?: string | null): string[] => {
 /**
  * Update multi-select status chips for a task or subtask (`subtask:<id>`)
  */
+function parseFollowUpScheduleDaysBackend(label?: string | null): number | null {
+  const compact = String(label || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (compact === 'FOLLOWUP1DAY') return 1;
+  if (compact === 'FOLLOWUP3RDDAY') return 3;
+  if (compact === 'FOLLOWUP5THDAY') return 5;
+  if (compact === 'FOLLOWUP1WEEK') return 7;
+  return null;
+}
+
+function syncFollowUpScheduleInPmReviews(
+  pmReviews: any[],
+  statuses: string[],
+  subtaskId: string | null
+): any[] {
+  const matchedLabel = (statuses || []).find((s) => parseFollowUpScheduleDaysBackend(s) !== null) || null;
+  const targetDays = matchedLabel ? parseFollowUpScheduleDaysBackend(matchedLabel) : null;
+  const filtered = (Array.isArray(pmReviews) ? pmReviews : []).filter(
+    (r: any) => !(r && r.type === 'CRM_FOLLOW_UP_SCHEDULE' && (subtaskId ? r.subtaskId === subtaskId : !r.subtaskId))
+  );
+  if (matchedLabel && targetDays) {
+    const nowIso = new Date().toISOString();
+    filtered.push({
+      type: 'CRM_FOLLOW_UP_SCHEDULE',
+      subtaskId: subtaskId || null,
+      selectedLabel: matchedLabel,
+      targetDays,
+      selectedAt: nowIso,
+      selectedDateKey: getManilaDateStr(),
+      updatedAt: nowIso,
+    });
+  }
+  return filtered;
+}
+
 export const updateTaskStatuses = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -2145,7 +2375,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     const normSubStatuses = statuses.map((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, ''));
     const isAvailableTaskStatus = normSubStatuses.includes('AVAILABLETASK');
     const isRevisionTransferOut = normSubStatuses.some((norm) => norm === 'REVISION' || norm === 'REVISIONS');
-    const isExplicitHandover = normSubStatuses.some((norm) => norm === 'HANDOVER' || norm === 'HANDOVEROUT' || norm === 'HANDOVERIN');
+    const isExplicitHandover = normSubStatuses.some((norm) => norm === 'HANDOVER');
     const isHandoverSubStatus = isExplicitHandover || isAvailableTaskStatus;
     const isWorkflowTransferOut = normSubStatuses.some((norm) =>
       ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'CRM', 'CRMNEEDEDTOSEND', 'CRMTOSEND', 'CRMNEEDEDTOFOLLOWUP', 'CRMFOLLOWUP', 'ASKCLIENT', 'READYTOSEND', 'TOSEND', 'FOLLOWUP'].includes(norm)
@@ -2283,17 +2513,32 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
         }
 
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === subtask.id));
+        let matchedSubSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+        let matchedSubTimeIn: string | null = null;
+        let matchedSubDate: string | null = null;
+        let matchedSubClient: string | null = null;
         for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id && r.timeIn && !r.timeOut) {
-            r.timeOut = nowManilaTime;
-            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
-            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+          if (r?.type === 'SHEET_PROGRESS' && r?.subtaskId === subtask.id) {
+            if (!matchedSubSheetRow && r.sheetRow) matchedSubSheetRow = Number(r.sheetRow);
+            if (!matchedSubTimeIn && r.timeIn) matchedSubTimeIn = r.timeIn;
+            if (!matchedSubDate && r.date) matchedSubDate = r.date;
+            if (!matchedSubClient && r.client) matchedSubClient = r.client;
+            if (r.timeIn && !r.timeOut) {
+              r.timeOut = nowManilaTime;
+              if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+              if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+            }
           }
           if (r?.type === 'UPWORK_SESSION' && r?.subtaskId === subtask.id && r.active) {
             r.active = false;
             r.stoppedAt = new Date().toISOString();
           }
         }
+        await closeLiveDailySheetLogsForTask({
+          taskId: subtask.taskId,
+          subtaskId: subtask.id,
+          timeOut: nowManilaTime,
+        }).catch(() => {});
         const subUser = subtask.User || (subtask.assignees && subtask.assignees[0]);
         const subNamesToClear = [actorDisplayName, subUser?.name].filter(Boolean) as string[];
         for (const n of subNamesToClear) {
@@ -2327,15 +2572,17 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
               dailySheetUrl: (subUser as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
               taskId: subtask.taskId,
               subtaskId: subtask.id,
-              sheetRow: sheetRow ? Number(sheetRow) : null,
+              sheetRow: sheetRow ? Number(sheetRow) : matchedSubSheetRow,
               taskTitle: `${subtask.title} (${subtask.task?.title || 'Subtask'})`,
-              clientName: (subtask.task as any)?.list?.name || 'General',
+              clientName: matchedSubClient || (subtask.task as any)?.list?.name || 'General',
               taskLink: `https://nexus.vipscaleph.com/lists/${(subtask.task as any)?.listId || ''}?task=${subtask.taskId}&subtask=${subtask.id}`,
               status: isExplicitHandover ? 'Hand-over' : isAvailableTaskStatus ? 'Available Task' : 'In Review',
+              date: matchedSubDate || getManilaDateStr(),
+              timeIn: matchedSubTimeIn || undefined,
               timeOut: nowManilaTime,
-              taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+              taskDeliverablesDescription: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : null,
               taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
-              description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : subtask.title || '',
+              description: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : '',
               mode: 'STOP',
             });
           }
@@ -2372,6 +2619,7 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
       } else {
         pmReviews.push(nextEntry);
       }
+      pmReviews = syncFollowUpScheduleInPmReviews(pmReviews, statuses, subtask.id);
 
       const updatedParent = await updateTaskMapRecord(subtask.taskId, { pmReviews });
       await invalidateCache('task:*', 'tasks:all', `task:${subtask.taskId}`, `task:${subtask.id}`, `task:activities:${subtask.taskId}`, 'task_map:*');
@@ -2622,14 +2870,24 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           }
         }
       }
+      let matchedMainSheetRow: number | null = sheetRow ? Number(sheetRow) : null;
+      let matchedMainTimeIn: string | null = null;
+      let matchedMainDate: string | null = null;
+      let matchedMainClient: string | null = null;
       if (Array.isArray(pmReviews)) {
         pmReviews = pmReviews.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
         // Clock out any open sheet progress and close Upwork session on handover / transfer
         for (const r of pmReviews) {
-          if (r?.type === 'SHEET_PROGRESS' && !r?.subtaskId && r.timeIn && !r.timeOut) {
-            r.timeOut = nowManilaTime;
-            if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
-            if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+          if (r?.type === 'SHEET_PROGRESS' && !r?.subtaskId) {
+            if (!matchedMainSheetRow && r.sheetRow) matchedMainSheetRow = Number(r.sheetRow);
+            if (!matchedMainTimeIn && r.timeIn) matchedMainTimeIn = r.timeIn;
+            if (!matchedMainDate && r.date) matchedMainDate = r.date;
+            if (!matchedMainClient && r.client) matchedMainClient = r.client;
+            if (r.timeIn && !r.timeOut) {
+              r.timeOut = nowManilaTime;
+              if (taskDeliverablesDescription) r.taskDeliverables = String(taskDeliverablesDescription).trim();
+              if (taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = String(taskUpdateAndDeliverables).trim();
+            }
           }
           if (r?.type === 'UPWORK_SESSION' && !r?.subtaskId && r.active) {
             r.active = false;
@@ -2637,6 +2895,11 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
           }
         }
       }
+      await closeLiveDailySheetLogsForTask({
+        taskId: id,
+        subtaskId: null,
+        timeOut: nowManilaTime,
+      }).catch(() => {});
       const namesToClear = [actorDisplayName, currentTask?.assignee?.name].filter(Boolean) as string[];
       for (const n of namesToClear) {
         await deleteMaActiveSession(n).catch(() => {});
@@ -2669,15 +2932,17 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
             userEmail: primaryAssignee?.email || actorUser?.email,
             dailySheetUrl: (primaryAssignee as any)?.dailySheetUrl || (actorUser as any)?.dailySheetUrl,
             taskId: id,
-            sheetRow: sheetRow ? Number(sheetRow) : null,
+            sheetRow: sheetRow ? Number(sheetRow) : matchedMainSheetRow,
             taskTitle: currentTask?.title || 'Task',
-            clientName: (currentTask as any)?.list?.name || 'General',
+            clientName: matchedMainClient || (currentTask as any)?.list?.name || 'General',
             taskLink: `https://nexus.vipscaleph.com/lists/${(currentTask as any)?.listId || ''}?task=${id}`,
             status: isExplicitHandover ? 'Hand-over' : isAvailableTaskStatus ? 'Available Task' : 'In Review',
+            date: matchedMainDate || getManilaDateStr(),
+            timeIn: matchedMainTimeIn || undefined,
             timeOut: nowManilaTime,
-            taskDeliverablesDescription: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : null,
+            taskDeliverablesDescription: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : null,
             taskUpdateAndDeliverables: taskUpdateAndDeliverables ? String(taskUpdateAndDeliverables).trim() : null,
-            description: taskDeliverablesDescription ? String(taskDeliverablesDescription).trim() : currentTask?.title || '',
+            description: taskDeliverablesDescription !== undefined && taskDeliverablesDescription !== null && String(taskDeliverablesDescription).trim() !== '' ? String(taskDeliverablesDescription).trim() : '',
             mode: 'STOP',
           });
         }
@@ -2747,6 +3012,8 @@ export const updateTaskStatuses = async (req: Request, res: Response) => {
     } else if (isLeavingWaitingSubStatus && Array.isArray(pmReviews)) {
       pmReviews = pmReviews.filter((r: any) => !(r && r.type === 'CRM_WAITING_META'));
     }
+
+    pmReviews = syncFollowUpScheduleInPmReviews(pmReviews, statuses, null);
 
     const updated = await updateTaskMapRecord(id, {
       statuses,
@@ -2904,6 +3171,19 @@ async function executeTaskMapAssignment(
     });
     const actorName = actorUser?.name || user.name || user.email || 'Team Member';
 
+    // MAs must start their To Do in hierarchy order (hand-over urgent, urgent, hand-over high, high, ...)
+    if (!isPm && mode === 'IN_PROGRESS') {
+      const { findHigherPriorityQueued } = await import('../services/autoQueue/autoQueueService');
+      const blocker = await findHigherPriorityQueued(user.id, id);
+      if (blocker) {
+        return res.status(409).json({
+          error: `Start "${blocker.title}" (${blocker.tier}) first. Tasks must be worked in priority order.`,
+          code: 'PRIORITY_ORDER',
+          blockingTaskId: blocker.id,
+        });
+      }
+    }
+
     const target = parseTaskMapTargetId(id);
 
     if (target.isSubtask) {
@@ -3044,6 +3324,9 @@ async function executeTaskMapAssignment(
         const hasPausedSub = subStatuses.some(
           (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
         );
+        const hasHandoverOutSub = subStatuses.some(
+          (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+        );
         const hadSubHandover =
           subHandedOver ||
           subStatuses.some((s) => {
@@ -3052,9 +3335,15 @@ async function executeTaskMapAssignment(
           });
         const isSubTransferBetweenUsers =
           action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
+        const keepSubHandoverOutInQueue =
+          mode === 'QUEUE' &&
+          !isSubTransferBetweenUsers &&
+          !Boolean((req.body as any)?.preserveHandover) &&
+          hasHandoverOutSub;
         const shouldSetSubHandover =
           mode === 'QUEUE' &&
           !hasPausedSub &&
+          !keepSubHandoverOutInQueue &&
           (hadSubHandover || isSubTransferBetweenUsers || Boolean((req.body as any)?.preserveHandover));
 
         subStatuses = subStatuses.filter((s) => {
@@ -3062,8 +3351,10 @@ async function executeTaskMapAssignment(
           if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
           return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER' && up !== 'HANDOVEROUT' && up !== 'HANDOVERIN';
         });
-        if (shouldSetSubHandover) {
-          subStatuses = ['Hand-over'];
+        if (keepSubHandoverOutInQueue) {
+          subStatuses = ['Hand-over Out'];
+        } else if (shouldSetSubHandover) {
+          subStatuses = ['Hand-over In'];
         } else if (mode === 'IN_PROGRESS' && !subStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
           subStatuses.push('In progress');
         } else if (mode === 'QUEUE' && subStatuses.length === 0) {
@@ -3177,6 +3468,7 @@ async function executeTaskMapAssignment(
             userName: subMaName,
             userEmail: targetSubUser?.email || actorUser?.email,
             dailySheetUrl: (targetSubUser as any)?.dailySheetUrl,
+            dailySheetLogId: savedSubLog?.id || null,
             taskId: currentSubtask.taskId,
             subtaskId: currentSubtask.id,
             taskTitle: subTaskTitleForSheet,
@@ -3662,6 +3954,9 @@ async function executeTaskMapAssignment(
       const hasPausedMain = newStatuses.some(
         (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
       );
+      const hasHandoverOutMain = newStatuses.some(
+        (s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+      );
       const hadMainHandover =
         Boolean(record.handedOver) ||
         newStatuses.some((s) => {
@@ -3670,9 +3965,15 @@ async function executeTaskMapAssignment(
         });
       const isMainTransferBetweenUsers =
         action === 'TRANSFER' || Boolean(currentOwnerId && currentOwnerId !== assigneeId);
+      const keepMainHandoverOutInQueue =
+        mode === 'QUEUE' &&
+        !isMainTransferBetweenUsers &&
+        !Boolean((req.body as any)?.preserveHandover) &&
+        hasHandoverOutMain;
       const shouldSetMainHandover =
         mode === 'QUEUE' &&
         !hasPausedMain &&
+        !keepMainHandoverOutInQueue &&
         (hadMainHandover || isMainTransferBetweenUsers || Boolean((req.body as any)?.preserveHandover));
 
       newStatuses = newStatuses.filter((s) => {
@@ -3680,8 +3981,10 @@ async function executeTaskMapAssignment(
         if (mode === 'QUEUE' && up === 'INPROGRESS') return false;
         return up !== 'AVAILABLETASK' && up !== 'PENDING' && up !== 'REVISION' && up !== 'REVISIONS' && up !== 'INREVIEW' && up !== 'TOREVIEW' && up !== 'HANDOVER' && up !== 'HANDOVEROUT' && up !== 'HANDOVERIN';
       });
-      if (shouldSetMainHandover) {
-        newStatuses = ['Hand-over'];
+      if (keepMainHandoverOutInQueue) {
+        newStatuses = ['Hand-over Out'];
+      } else if (shouldSetMainHandover) {
+        newStatuses = ['Hand-over In'];
       } else if (mode === 'IN_PROGRESS' && !newStatuses.some((s) => s.toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
         newStatuses.push('In progress');
       } else if (mode === 'QUEUE' && newStatuses.length === 0) {
@@ -3769,6 +4072,7 @@ async function executeTaskMapAssignment(
           userName: mainMaName,
           userEmail: updatedTask.assignee?.email || actorUser?.email,
           dailySheetUrl: (updatedTask.assignee as any)?.dailySheetUrl,
+          dailySheetLogId: savedMainLog?.id || null,
           taskId: id,
           taskTitle: updatedTask.title,
           clientName: mainClientForSheet,
@@ -3860,7 +4164,7 @@ async function executeTaskMapAssignment(
         return n === 'HANDOVER' || n === 'HANDOVEROUT' || n === 'HANDOVERIN';
       });
       handedOver = hadHandoverTag;
-      newStatuses = hadHandoverTag ? ['Hand-over In'] : ['Available Task'];
+      newStatuses = hadHandoverTag ? ['Hand-over'] : ['Available Task'];
 
       // Clear PM assignment when returning to pool (preserve subtask assignments!)
       reviewsList = reviewsList.filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && !r?.subtaskId));
@@ -5499,14 +5803,25 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
     }
 
     if (type === 'AUDIT') {
-      // Find tasks assigned to this auditor in review status
-      const reviewTasks = await prisma.task.findMany({
-        where: {
-          assigneeId: targetUserId,
-          status: { in: ['In Review', 'IN REVIEW', 'To review', 'TO REVIEW', 'Review', 'Checking', 'CHECKING', 'In Checking', 'IN CHECKING'] },
-        },
-        select: { id: true, title: true, listId: true, checklists: { include: { items: true } } },
-      });
+      const reviewStatusNames = ['In Review', 'IN REVIEW', 'To review', 'TO REVIEW', 'Review', 'Checking', 'CHECKING', 'In Checking', 'IN CHECKING'];
+      // Find tasks and subtasks assigned to this auditor in review status
+      const [reviewTasks, reviewSubtasks] = await Promise.all([
+        prisma.task.findMany({
+          where: {
+            assigneeId: targetUserId,
+            status: { in: reviewStatusNames },
+          },
+          select: { id: true, title: true, listId: true, checklists: { include: { items: true } } },
+        }),
+        prisma.subtask.findMany({
+          where: {
+            assigneeId: targetUserId,
+            completed: false,
+            status: { in: reviewStatusNames },
+          },
+          select: { id: true, taskId: true, title: true },
+        }),
+      ]);
 
       for (const t of reviewTasks) {
         await prisma.task.update({
@@ -5521,12 +5836,37 @@ export const resetColumnTasksHandler = async (req: Request, res: Response) => {
         await invalidateCache(`task:${t.id}`, 'task_map:*', 'tasks:all');
       }
 
+      for (const st of reviewSubtasks) {
+        await prisma.subtask.update({
+          where: { id: st.id },
+          data: {
+            assigneeId: null,
+            status: 'IN REVIEW',
+            assignees: { set: [] },
+          },
+        });
+        const parentRec = await getOrCreateTaskMapRecord(st.taskId);
+        let revs: any[] = Array.isArray(parentRec.pmReviews) ? [...parentRec.pmReviews] : [];
+        revs = revs
+          .filter((r: any) => !(r?.type === 'PM_ASSIGNMENT' && r?.subtaskId === st.id))
+          .map((r: any) =>
+            r?.type === 'SUBTASK_STATE' && r?.subtaskId === st.id
+              ? { ...r, statuses: [], handedOver: false }
+              : r
+          );
+        await updateTaskMapRecord(st.taskId, { pmReviews: revs });
+        await invalidateCache(`task:${st.taskId}`, 'task_map:*', 'tasks:all');
+      }
+
       await invalidateCache('task_map:*').catch(() => { });
-    io.emit('task_map:updated');
+      io.emit('task_map:updated');
       return res.json({
         success: true,
-        count: reviewTasks.length,
-        resetTaskIds: reviewTasks.map((t) => t.id),
+        count: reviewTasks.length + reviewSubtasks.length,
+        resetTaskIds: [
+          ...reviewTasks.map((t) => t.id),
+          ...reviewSubtasks.map((st) => `subtask:${st.id}`),
+        ],
       });
     }
 
@@ -6065,6 +6405,11 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       }
     }
 
+    const normalizedTargetDeliverables =
+      targetRow?.taskDeliverablesDescription !== undefined && targetRow?.taskDeliverablesDescription !== null
+        ? String(targetRow.taskDeliverablesDescription).trim()
+        : '';
+
     if (cleanTaskId && targetRow) {
       const parentRecord = await getOrCreateTaskMapRecord(cleanTaskId);
       let pmReviews = parsePmReviewsArray(parentRecord.pmReviews);
@@ -6074,13 +6419,13 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
         if (r?.type === 'SHEET_PROGRESS' && (!subtaskId || r.subtaskId === subtaskId)) {
           if (targetRow.timeIn && r.timeIn === targetRow.timeIn) {
             r.timeOut = effectiveTimeOut || '';
-            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (normalizedTargetDeliverables) r.taskDeliverables = normalizedTargetDeliverables;
             if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
             if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
             matched = true;
           } else if (!r.timeOut) {
             r.timeOut = effectiveTimeOut || '';
-            if (targetRow.taskDeliverablesDescription) r.taskDeliverables = targetRow.taskDeliverablesDescription;
+            if (normalizedTargetDeliverables) r.taskDeliverables = normalizedTargetDeliverables;
             if (targetRow.taskUpdateAndDeliverables) r.taskUpdateAndDeliverables = targetRow.taskUpdateAndDeliverables;
             if (!resolvedSheetRow && r.sheetRow) resolvedSheetRow = Number(r.sheetRow);
             matched = true;
@@ -6096,7 +6441,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           timeOut: nowTimeOut,
           client: targetRow.client || 'General',
           task: targetRow.task || 'Task',
-          taskDeliverables: targetRow.taskDeliverablesDescription || null,
+          taskDeliverables: normalizedTargetDeliverables || null,
           taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
           updatedAt: new Date().toISOString(),
         });
@@ -6120,7 +6465,7 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
         isUpwork: (targetRow.timeTracker || '').toLowerCase() === 'upwork',
         timeTracker: targetRow.timeTracker || null,
         status: targetRow.taskStatus || (mode === 'STOP' ? 'Completed' : 'In Progress'),
-        taskDeliverables: targetRow.taskDeliverablesDescription || null,
+        taskDeliverables: normalizedTargetDeliverables || null,
         taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables || null,
         taskLink: targetRow.taskLink || (cleanTaskId ? `https://nexus.vipscaleph.com/task/${cleanTaskId}` : null),
         source: source || (cleanTaskId ? 'NEXUS_BOARD' : 'NEXUS_DAILY_TRACKER'),
@@ -6180,7 +6525,8 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
     if (targetRow) {
       let skipDuplicateWebhook = false;
       if (mode === 'STOP') {
-        const dedupeKey = `${String(targetRow.date || getManilaDateStr()).split('T')[0]}::${actorDisplayName.trim().toLowerCase()}::${cleanTaskId || 'none'}${subtaskId ? `:${subtaskId}` : ''}`;
+        const dedupeTarget = subtaskId ? `subtask:${subtaskId}` : (cleanTaskId || 'none');
+        const dedupeKey = `${getManilaDateStr()}::${actorDisplayName.trim().toLowerCase()}::${dedupeTarget}`;
         if (isRedisReady()) {
           const acquired = await redis.set(`task_map:stop_dedupe:${dedupeKey}`, '1', 'EX', 30, 'NX').catch(() => 'OK');
           if (!acquired) skipDuplicateWebhook = true;
@@ -6196,11 +6542,12 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
       }
 
       if (!skipDuplicateWebhook) {
-        void triggerN8nStartTaskWebhook({
+        const webhookPayload = {
           userId: user?.id,
           userName: actorDisplayName,
           userEmail: actorUser?.email,
           dailySheetUrl: actorUser?.dailySheetUrl,
+          dailySheetLogId: savedLog?.id || null,
           taskId: cleanTaskId || null,
           subtaskId: subtaskId || null,
           sheetRow: resolvedSheetRow,
@@ -6212,11 +6559,16 @@ export const syncSpreadsheetRowHandler = async (req: Request, res: Response) => 
           timeIn: resolvedTimeIn || targetRow.timeIn,
           timeOut: effectiveTimeOut,
           timeTracker: targetRow.timeTracker || null,
-          taskDeliverablesDescription: targetRow.taskDeliverablesDescription,
-          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables,
-          description: targetRow.taskDeliverablesDescription || targetRow.task,
+          taskDeliverablesDescription: normalizedTargetDeliverables,
+          taskUpdateAndDeliverables: targetRow.taskUpdateAndDeliverables ? String(targetRow.taskUpdateAndDeliverables).trim() : '',
+          description: normalizedTargetDeliverables || targetRow.task,
           mode: mode || 'UPDATE',
-        });
+        };
+        if (mode === 'STOP') {
+          await triggerN8nStartTaskWebhook(webhookPayload);
+        } else {
+          void triggerN8nStartTaskWebhook(webhookPayload);
+        }
 
         // Also post the submitted deliverables/update directly to the Nexus task's Activity/Comments
         // because Google Sheets API writes from n8n do not fire Apps Script onEdit triggers.

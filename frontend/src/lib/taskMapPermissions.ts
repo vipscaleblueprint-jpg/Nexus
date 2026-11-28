@@ -4,6 +4,7 @@ export interface CanDragTaskMapCardParams {
   columnUserId?: string | null;
   isFromAvailable?: boolean;
   isAssumptionBlock?: boolean;
+  isWaiting?: boolean;
 }
 
 export function canDragTaskMapCard(params: CanDragTaskMapCardParams): boolean {
@@ -13,9 +14,11 @@ export function canDragTaskMapCard(params: CanDragTaskMapCardParams): boolean {
     columnUserId,
     isFromAvailable = false,
     isAssumptionBlock = false,
+    isWaiting = false,
   } = params;
 
   if (isAssumptionBlock) return false;
+  if (isFromAvailable && isWaiting) return false;
   // Available tasks can be dragged by PMs or by any user to assign to themselves
   if (isFromAvailable) return true;
   if (!columnUserId) return false;
@@ -126,7 +129,12 @@ export function canTransferTaskMapCard(isPmUser: boolean): boolean {
   return Boolean(isPmUser);
 }
 
-export function isColumnCollapsedByDefault(
+/**
+ * For non-PM/non-Admin users, other team members' columns are hidden by default
+ * (instead of rendered as collapsed vertical strips), keeping only Available Tasks
+ * and the logged-in user's own column visible unless explicitly unhidden.
+ */
+export function isColumnHiddenByDefault(
   columnId: string,
   currentUserId?: string | null,
   isPmUser: boolean = false
@@ -135,6 +143,27 @@ export function isColumnCollapsedByDefault(
   if (isPmUser) return false;
   if (!currentUserId) return false;
   return columnId !== currentUserId;
+}
+
+export function resolveColumnHiddenState(
+  columnId: string,
+  overrides: Record<string, boolean>,
+  currentUserId?: string | null,
+  isPmUser: boolean = false
+): boolean {
+  if (Object.prototype.hasOwnProperty.call(overrides, columnId)) {
+    return Boolean(overrides[columnId]);
+  }
+  return isColumnHiddenByDefault(columnId, currentUserId, isPmUser);
+}
+
+export function isColumnCollapsedByDefault(
+  _columnId: string,
+  _currentUserId?: string | null,
+  _isPmUser: boolean = false
+): boolean {
+  // Non-PM other-user columns are hidden by default via isColumnHiddenByDefault rather than collapsed.
+  return false;
 }
 
 export function resolveColumnCollapsedState(
@@ -157,6 +186,8 @@ const OTHER_BOARD_STATUS_SET = new Set([
   'INCHECKING',
   'WAITING',
   'CRM',
+  'TOSEND',
+  'TOFOLLOWUP',
   'ASKCLIENT',
 ]);
 

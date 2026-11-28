@@ -62,6 +62,9 @@ export const getRequiredAudits = (taskTitle: string, auditorRoles?: string[]): s
     audits.add('Funnel Audit');
   }
 
+  // Video editing gets Production Audit, asset creation gets Design Audit: never both.
+  if (audits.has('Production Audit')) audits.delete('Design Audit');
+
   return Array.from(audits);
 };
 
@@ -169,6 +172,8 @@ export const CHECKING_STATUSES = ['checking', 'in checking', 'inchecking'];
 export const COMPLETION_GATE_STATUSES = [
   'closed',
   'crm',
+  'to send',
+  'to follow up',
   'crm needed to send',
   'crm_to_send',
   'crm needed to follow up',

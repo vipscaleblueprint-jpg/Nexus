@@ -12,8 +12,10 @@ import {
   computeMaLoads,
   DEFAULT_ESTIMATED_HOURS,
   getBoardItemOwnerId,
+  hasTaskInProgress,
   isAutoQueueEligibleUser,
   isBoardItemStarted,
+  isHandedOver,
   isMaWorkItem,
   isUserOnShiftNow,
   itemHours,
@@ -21,6 +23,7 @@ import {
   rankCandidatesByLoad,
   remainingShiftHours,
   scheduledShiftHours,
+  shiftGroupOf,
   usersInGroup,
   type BoardItem,
   type MaLoad,
@@ -59,7 +62,25 @@ const clientOf = (it: BoardItem) => (it.list?.name || '').trim();
 const clientIdOf = (it: BoardItem) => it.listId || it.list?.id || '';
 
 /** userId -> client (list id) -> how many of that client's tasks the person has commented on before. */
+/** Also holds `taskHistoryKey(taskId)` entries: tasks the person has commented on (worked on) before. */
 export type ClientHistory = Map<string, Map<string, number>>;
+
+export const taskHistoryKey = (taskId: string) => `task:${taskId}`;
+
+/** The Task row a board item belongs to (a subtask's parent task). */
+const taskRowIdOf = (it: BoardItem) => (it.isSubtask ? it.parentTaskId || '' : it.id);
+
+/** Worked on this task before: its original MA, or commented on it (or its parent task). */
+/** Tagged IsRole = "Collaborator" on this task in the MA daily tracker. Always tried first. */
+const isTaggedCollaborator = (userId: string, task: BoardItem) =>
+  Boolean(task.trackerCollaboratorIds?.includes(userId));
+
+function isCollaborator(userId: string, task: BoardItem, history?: ClientHistory): boolean {
+  if (isTaggedCollaborator(userId, task)) return true;
+  if (userId === originalMaId(task)) return true;
+  const rowId = taskRowIdOf(task);
+  return Boolean(rowId && history?.get(userId)?.has(taskHistoryKey(rowId)));
+}
 
 function originalMaId(task: BoardItem): string | null {
   const reviews = Array.isArray(task.taskMap?.pmReviews) ? task.taskMap!.pmReviews : [];
@@ -170,23 +191,35 @@ export async function planAssignments(input: PlanInput): Promise<Plan> {
         .map((user) => ({ user, load: loads.get(user.id) as MaLoad }))
         .filter((c) => c.load.queued < input.maxQueuedPerMa)
     );
-    if (withRoom.length === 0) break;
     const eligible = withRoom.filter((c) => canUserTakeTask(c.user, task));
     if (eligible.length === 0) continue; // nobody with this task's role has room: leave it in the pool
 
-    const ai = await askAi(input.pick, task, shortlist(eligible, eligible, task), clients);
-    const chosen = ai?.candidate || eligible[0];
+    // Collaborators on this task (parent or any subtask) come first, if the estimate fits the time
+    // left in their shift. Lightest load among them (no AI), so shared collaborators split evenly.
+    const hours = itemHours(task);
+    const tagged = eligible.filter(
+      (c) =>
+        isTaggedCollaborator(c.user.id, task) &&
+        remainingShiftHours(c.user, input.shifts, input.minuteOfDay) - c.load.hours >= hours
+    );
+    const ai = tagged.length > 0 ? null : await askAi(input.pick, task, shortlist(eligible, eligible, task), clients);
+    const chosen = tagged[0] || ai?.candidate || eligible[0];
     decisions.push({
       taskId: task.id,
       taskTitle: task.title,
       userId: chosen.user.id,
       userName: chosen.user.name,
       method: ai ? 'ai' : 'rules',
-      reason: ai ? ai.reason : 'Fewest open tasks among on-shift MAs with the right role',
+      reason: ai
+        ? ai.reason
+        : tagged.length > 0
+          ? 'Collaborator on this task (MA daily tracker); fewest open tasks among them'
+          : 'Fewest open tasks among on-shift MAs with the right role',
     });
 
     chosen.load.active++;
     chosen.load.queued++;
+    chosen.load.hours += hours;
     if (clientOf(task)) clients.get(chosen.user.id)!.add(clientOf(task));
   }
 
@@ -217,6 +250,13 @@ export interface DailyPlanInput {
   roomLabel?: string;
   /** Past work per client (from comments): people who worked the client before are preferred. */
   clientHistory?: ClientHistory;
+  /** When true, only workers who currently have at least one task In Progress receive work. */
+  requireInProgress?: boolean;
+  /**
+   * Handovers: prefer collaborators (people who worked on this task before) over people who only
+   * worked the client before. Role match still applies (canUserTakeTask) and the task must fit their time.
+   */
+  preferCollaborators?: boolean;
 }
 
 export interface MaDaySummary {
@@ -241,6 +281,7 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
   const getCapacity = input.capacityHours ?? ((user: QueueUser) => scheduledShiftHours(user, input.shifts));
   const scheduled = input.users
     .filter(isAutoQueueEligibleUser)
+    .filter((user) => !input.requireInProgress || hasTaskInProgress(user, input.boardItems))
     .map((user) => ({ user, shiftHours: getCapacity(user) }))
     .filter((s) => s.shiftHours > 0);
 
@@ -294,6 +335,9 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
     // Keep it balanced: the AI only chooses among people the task fits into today
     // (or the three with the most room when it fits no one, unless requireRoom is set).
     const fits = ranked.filter((c) => c.freeHours! >= hours);
+    // Collaborators on this task (parent or any subtask) come first, but only if it fits their
+    // remaining hours. Lightest day first among them (no AI), so shared collaborators split evenly.
+    const tagged = fits.filter((c) => isTaggedCollaborator(c.user.id, task));
     if (input.requireRoom && fits.length === 0) {
       skipped.push({
         taskId: task.id,
@@ -306,9 +350,16 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
     // as long as it fits their day; only fall back to everyone else when none of them has room.
     const doneBefore = (c: Candidate) => input.clientHistory?.get(c.user.id)?.get(clientIdOf(task)) || 0;
     const familiar = fits.filter((c) => doneBefore(c) > 0);
-    const pickable = familiar.length > 0 ? familiar : fits.length > 0 ? fits : ranked.slice(0, 3);
+    const collaborators = tagged.length > 0
+      ? tagged
+      : input.preferCollaborators
+        ? fits.filter((c) => isCollaborator(c.user.id, task, input.clientHistory))
+        : [];
+    const pickable =
+      collaborators.length > 0 ? collaborators : familiar.length > 0 ? familiar : fits.length > 0 ? fits : ranked.slice(0, 3);
+    const chosenIsCollaborator = (c: Candidate) => collaborators.includes(c);
 
-    const ai = await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
+    const ai = tagged.length > 0 ? null : await askAi(input.pick, task, shortlist(pickable, pickable, task), clients);
     const chosen = ai?.candidate || pickable[0];
     const lightest = `lightest day relative to shift (${chosen.load.hours.toFixed(1)}h of ${(shiftHours.get(chosen.user.id) || 0).toFixed(1)}h before this)`;
     decisions.push({
@@ -319,7 +370,9 @@ export async function planDailyDistribution(input: DailyPlanInput): Promise<Dail
       method: ai ? 'ai' : 'rules',
       reason: ai
         ? ai.reason
-        : doneBefore(chosen) > 0
+        : chosenIsCollaborator(chosen)
+          ? `Collaborator: ${isTaggedCollaborator(chosen.user.id, task) ? 'tagged Collaborator on this task (MA daily tracker)' : 'worked on this task before'}; ${lightest}`
+          : doneBefore(chosen) > 0
           ? `Worked ${clientOf(task) || 'this client'} before (commented on ${doneBefore(chosen)} task${doneBefore(chosen) === 1 ? '' : 's'}); ${lightest}`
           : `${familiar.length === 0 && fits.length > 0 && input.clientHistory ? 'No one free has worked this client before; ' : ''}${lightest[0].toUpperCase()}${lightest.slice(1)}`,
       hours,
@@ -357,13 +410,17 @@ export interface CheckpointPlanInput {
   users: QueueUser[];
   shifts: ShiftWindow[];
   minuteOfDay: number;
-  from: ShiftGroup; // group being checked
-  to: ShiftGroup; // group receiving handovers
+  from: ShiftGroup | ShiftGroup[]; // group(s) being checked
+  to: ShiftGroup | ShiftGroup[]; // group(s) receiving handovers
   botId: string;
   defaultHours?: number;
   judge?: JudgeFn;
   pick?: PickFn;
   clientHistory?: ClientHistory;
+  /** When true (e.g. 5pm checkpoint), morning shift workers (8-5) are treated as signing out (0 remaining hours). */
+  morningSigningOut?: boolean;
+  /** When true, handovers only go to workers with at least one task already In Progress. */
+  requireInProgress?: boolean;
 }
 
 export interface CheckpointPlan {
@@ -390,10 +447,15 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
   const atRisk: CheckpointPlan['atRisk'] = [];
 
   for (const user of fromUsers) {
+    const userGroup = shiftGroupOf(user, input.shifts);
     const userItems = input.boardItems.filter(
       (it) => isMaWorkItem(it) && getBoardItemOwnerId(it) === user.id
     );
-    const remHours = remainingShiftHours(user, input.shifts, input.minuteOfDay);
+    // At 5 PM, morning shift workers (8-5) are signing out, so remaining hours is 0
+    const remHours =
+      input.morningSigningOut && userGroup === 'morning'
+        ? 0
+        : remainingShiftHours(user, input.shifts, input.minuteOfDay);
     const verdict = await decideDoable(userItems, remHours, {
       judge: input.judge,
       defaultHours,
@@ -411,7 +473,10 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
     for (const id of verdict.cannotFinishIds) {
       const item = byId.get(id);
       if (!item || isBoardItemStarted(item)) continue;
-      if (autoQueuedTo(item, input.botId) === user.id) {
+      const isAuto = autoQueuedTo(item, input.botId) === user.id;
+      const isHo = isHandedOver(item);
+      const isSigningOut = Boolean(input.morningSigningOut) && (userGroup === 'morning' || remHours === 0);
+      if (isSigningOut || isAuto || isHo) {
         candidates.push(item);
         candidateFrom.set(item.id, user.id);
       } else {
@@ -429,17 +494,28 @@ export async function planCheckpoint(input: CheckpointPlanInput): Promise<Checkp
     return { verdicts, handovers: [], returned: [], atRisk };
   }
 
+  const toCandidates = usersInGroup(input.users, input.shifts, input.to);
+  const toUsers = input.requireInProgress
+    ? toCandidates.filter((u) => {
+        // At 5 PM turnover, incoming night workers are just starting their shift, so
+        // they may not have an in-progress task yet; noon workers (midway) must be active.
+        if (input.morningSigningOut && shiftGroupOf(u, input.shifts) === 'night') return true;
+        return hasTaskInProgress(u, input.boardItems);
+      })
+    : toCandidates;
   const candidateIds = new Set(candidates.map((c) => c.id));
   const dist = await planDailyDistribution({
     pool: candidates,
     boardItems: input.boardItems.filter((it) => !candidateIds.has(it.id)),
-    users: usersInGroup(input.users, input.shifts, input.to),
+    users: toUsers,
     shifts: input.shifts,
     defaultHours,
     pick: input.pick,
     requireRoom: true,
     capacityHours: (u) => remainingShiftHours(u, input.shifts, input.minuteOfDay),
     clientHistory: input.clientHistory,
+    requireInProgress: false,
+    preferCollaborators: true,
   });
 
   const handovers: Decision[] = dist.decisions.map((d) => ({

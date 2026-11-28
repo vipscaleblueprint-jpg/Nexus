@@ -4,12 +4,14 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 're
 import { createPortal } from 'react-dom';
 import { Flag, ChevronDown, Check, CheckCircle2, Clock, Infinity as InfinityIcon } from 'lucide-react';
 import { DEFAULT_ESTIMATED_HOURS, formatEstimatedHours } from '@/components/modals/EstimatedHoursField';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, STATUS_COLORS, isClosedStatus, isHiddenBoardStatus, sortStatusesWithClosedAndKycAtEnd } from '@/lib/taskTokens';
 import { fetchListStatuses, getCachedListStatuses } from '@/lib/listStatusCache';
 import { getPriorityConfig } from '@/lib/priority';
-import { TaskMapItem, isTaskMapItemOnHold, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
+import { TaskMapItem, isTaskMapItemOnHold, compareAvailablePoolTasks, toCanonicalTaskStatus, resolveDbStatusColor, isTaskHandedOver, matchesTaskLinkOrId } from '@/api/taskMap';
 import { format } from 'date-fns';
 import { useAppStore } from '@/lib/store';
+import { canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
+import { toast } from '@/lib/toast';
 import { useLiveClock } from '@/lib/liveClock';
 import { HoverHint } from './HoverHint';
 export { ColumnSubStatusDropdown, matchesSubStatusFilter, getColumnSubStatusCounts, getSubStatusColor } from './ColumnSubStatusDropdown';
@@ -213,11 +215,44 @@ export const sortTasksUrgentFirst = (
 };
 
 export const sortAvailablePoolTasks = (items: TaskMapItem[]) =>
-  groupTasksWithSubtasks(sortTasksUrgentFirst(items, { prioritizeInProgress: true }));
+  groupTasksWithSubtasks([...items].sort(compareAvailablePoolTasks));
+
+/**
+ * Returns true if a subtask should visually nest/attach directly below its parent task.
+ * A subtask with a different status color than its parent (or On-Hold/Waiting mismatch)
+ * acts independently like a whole task even when its parent is in the same column.
+ */
+export const shouldSubtaskAttachToParent = (
+  subtask: TaskMapItem,
+  parent?: TaskMapItem | null
+): boolean => {
+  if (!subtask.isSubtask || !subtask.parentTaskId || !parent || parent.isSubtask) return false;
+  if (parent.id !== subtask.parentTaskId) return false;
+  // Keep On-Hold subtasks at the very bottom rather than pulling them up under an active parent
+  if (isTaskOnHold(subtask) && !isTaskOnHold(parent)) return false;
+
+  const subColor = resolveTaskStatusColor(
+    subtask.status || 'PENDING',
+    subtask.listId || subtask.list?.id,
+    subtask.list?.statuses
+  )
+    .trim()
+    .toLowerCase();
+  const parentColor = resolveTaskStatusColor(
+    parent.status || 'PENDING',
+    parent.listId || parent.list?.id,
+    parent.list?.statuses
+  )
+    .trim()
+    .toLowerCase();
+
+  if (subColor !== parentColor) return false;
+  return true;
+};
 
 /**
  * Places subtasks directly below their parent main task whenever both exist in the same column
- * (unless a subtask is On-Hold under an active parent, keeping On-Hold at the bottom),
+ * and share the same status color (subtasks with a different status color act like whole tasks),
  * while keeping separated subtasks at their natural sorted positions.
  */
 export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[] => {
@@ -229,10 +264,7 @@ export const groupTasksWithSubtasks = (sortedItems: TaskMapItem[]): TaskMapItem[
   const shouldAttachToParent = (item: TaskMapItem): boolean => {
     if (!item.isSubtask || !item.parentTaskId) return false;
     const parent = parentById.get(item.parentTaskId);
-    if (!parent) return false;
-    // Keep On-Hold subtasks at the very bottom rather than pulling them up under an active parent
-    if (isTaskOnHold(item) && !isTaskOnHold(parent)) return false;
-    return true;
+    return shouldSubtaskAttachToParent(item, parent);
   };
 
   const attachedByParent = new Map<string, TaskMapItem[]>();
@@ -603,6 +635,8 @@ export const CardStatusDropdown: React.FC<{
   excludeStatuses?: string[];
   readOnly?: boolean;
 }> = ({ taskId, currentStatus, listId, listStatuses, onSelect, excludeStatuses = [], readOnly = false }) => {
+  const currentUser = useAppStore((s) => s.currentUser);
+  const canEditStatus = canUserEditTaskStatus(currentUser);
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -642,7 +676,7 @@ export const CardStatusDropdown: React.FC<{
       ? fetchedStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
       : ALL_STATUSES;
     const excludeSet = new Set(excludeStatuses.map((s) => s.toUpperCase().trim()));
-    const filtered = raw.filter((s: string) => !excludeSet.has(s.toUpperCase().trim()));
+    const filtered = raw.filter((s: string) => !isHiddenBoardStatus(s) && !excludeSet.has(s.toUpperCase().trim()));
     return sortStatusesWithClosedAndKycAtEnd(filtered);
   }, [fetchedStatuses, excludeStatuses]);
 
@@ -666,6 +700,10 @@ export const CardStatusDropdown: React.FC<{
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (readOnly) return;
+    if (!canEditStatus) {
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
     if (isOpen) {
       setIsOpen(false);
       setCoords(null);
@@ -728,6 +766,10 @@ export const CardStatusDropdown: React.FC<{
         onClick={() => {
           setIsOpen(false);
           setCoords(null);
+          if (!canEditStatus) {
+            toast.error(STATUS_EDIT_DENIED_MESSAGE);
+            return;
+          }
           onSelect(s);
         }}
         className={`w-full shrink-0 flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
@@ -1206,15 +1248,19 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
       hasManualUpworkTag
     );
 
-  // 1. Missing Time Alert: Red badge with infinity icon (only for active live working sessions, never on handed-over or available pool tasks)
-  if (prog?.isMissingTime && isLive && !isTaskHandedOver(task)) {
+  // 1. Missing Time Alert: Red badge with crossed-out time (when user started/entered task without Time In)
+  if (prog?.isMissingTime && !prog?.timeOut && isLive && !isTaskHandedOver(task)) {
     return (
       <div
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-400 font-bold text-[10px] shadow-xs select-none"
-        title="Missing Time! Status/Client entered without Time In"
+        className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/50 text-red-400 font-bold text-[10px] shadow-[0_0_8px_rgba(239,68,68,0.18)] select-none truncate max-w-full"
+        title="Missing Time In — user did not input a Time In on their Daily Schedule"
       >
-        <InfinityIcon className="size-3 text-red-500 animate-pulse shrink-0" />
-        <span className="font-mono">∞</span>
+        <span className="relative flex size-1.5 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+          <span className="relative inline-flex rounded-full size-1.5 bg-red-500" />
+        </span>
+        <span className="font-mono line-through decoration-red-400 decoration-[1.5px] opacity-90">--:--</span>
+        <span className="text-[9px] font-semibold text-red-300 truncate">No Time In</span>
       </div>
     );
   }
@@ -1240,8 +1286,8 @@ export const TaskTimeProgressSlot: React.FC<TaskTimeProgressSlotProps> = ({ task
 
   // 3. In-Progress Live Time: Time In | Mins or Hrs with mins (Counting elapsed)
   if (prog?.timeIn && !prog?.timeOut) {
-    const isStale = task.isAssumptionBlock ? false : isStaleLiveSession(prog.timeIn, prog.date, now);
-    const elapsed = computeElapsed(prog.timeIn, prog.date, now) || (task.isAssumptionBlock ? '0hr 0m' : '');
+    const isStale = isStaleLiveSession(prog.timeIn, prog.date, now);
+    const elapsed = computeElapsed(prog.timeIn, prog.date, now);
     const timeInDisplay = cleanDisplayTime(prog.timeIn);
 
     // If session is runaway / stale (>14h or unclosed old date), or not marked as active live task, display static Time In without live pinging beacon

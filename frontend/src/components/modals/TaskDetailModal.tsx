@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info, PauseCircle, Play } from 'lucide-react';
+import { X, User, Flag, FileEdit, Repeat, Calendar, CircleDashed, CheckSquare, Link2, ListTodo, Paperclip, Check, ChevronRight, ChevronDown, ChevronLeft, ChevronUp, ArrowLeft, ArrowRightLeft, Search, Folder, Pencil, Lock, Unlock, Send, ThumbsUp, SmilePlus, MessageSquare, Plus, AlignLeft, CornerDownRight, CheckCircle2, CircleDot, ImageIcon, File, FileText, Share2, MoreHorizontal, Trash2, ExternalLink, ShieldCheck, Loader2, Maximize2, Minimize2, Clock, AlertTriangle, Info, PauseCircle, Play } from 'lucide-react';
 import { validateUploadFile, formatFileSize, ATTACHMENT_SOFT_MAX_BYTES, IMAGE_SOFT_MAX_BYTES, MAX_FILES_PER_BATCH } from '@/lib/fileValidation';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -16,7 +16,7 @@ import { uploadApi } from '@/api/upload';
 import { Task, User as UserModel, Priority } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { useShallow } from 'zustand/react/shallow';
-import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess, isProjectManagerOrAdmin } from '@/lib/permissions';
+import { canUserMoveTask, canTransitionTaskStatus, hasCrmAccess, isProjectManagerOrAdmin, canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 import { EstimatedHoursField } from './EstimatedHoursField';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 import { toast } from '@/lib/toast';
@@ -28,6 +28,7 @@ import { usersApi, tasksApi } from '@/api';
 import { draftsApi, TaskDraft } from '@/api/drafts';
 import { fetchListStatuses } from '@/lib/listStatusCache';
 import { SubtasksSection } from './SubtasksSection';
+import { openGalaxySubtaskForTask } from '@/lib/galaxyTask';
 import { ChecklistsSection } from './ChecklistsSection';
 import { AuditSection } from './AuditSection';
 import { AttachmentsGrid } from './AttachmentsGrid';
@@ -37,6 +38,7 @@ import { UserMentionChip } from '../ui/UserMentionChip';
 import { triggerMentionConfetti, preloadMentionConfettiImage } from '../ui/MentionConfetti';
 import { TaskMentionChip } from '../ui/TaskMentionChip';
 import { LinkWithPreview } from '../ui/LinkHoverPreview';
+import { CommentLinkChip } from '@/components/ui/CommentLinkChip';
 import { commentHtmlForMarkdown, isBlankCommentHtml, trimCommentHtml, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, parseNexusTaskLink, toggleCommentChecklistItem, getNexusTaskUrl, matchMentionTrigger, matchSlashCommandTrigger } from '@/lib/links';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { CrmTaskFollowUpModal } from './CrmTaskFollowUpModal';
@@ -187,6 +189,7 @@ import {
   CustomCircleDot,
   ALL_STATUSES,
   isClosedStatus,
+  isHiddenBoardStatus,
   sortStatusesWithClosedAndKycAtEnd,
   activityCache,
   prefetchTaskActivities,
@@ -206,11 +209,41 @@ import {
   type ActivityCacheEntry,
 } from '@/lib/taskTokens';
 
+
+const KANBAN_DATE_PICKER_CSS = `
+                              .kanban-date-picker .rdp-root {
+                                --rdp-accent-color: #6366f1;
+                                --rdp-accent-background-color: rgba(99, 102, 241, 0.2);
+                                --rdp-day-height: 26px; --rdp-day-width: 26px;
+                                --rdp-day_button-height: 24px; --rdp-day_button-width: 24px;
+                                --rdp-day_button-border-radius: 4px;
+                                --rdp-selected-border: none;
+                                --rdp-nav-height: 24px;
+                                --rdp-nav_button-height: 20px; --rdp-nav_button-width: 20px;
+                                --rdp-weekday-padding: 2px 0;
+                                margin: 0; font-size: 11px;
+                              }
+                              .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
+                              .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
+                              .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: var(--foreground); padding-left: 4px; }
+                              .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
+                              .kanban-date-picker .rdp-weekday { color: var(--muted-foreground); font-weight: 600; font-size: 10px; }
+                              .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; color: var(--foreground); }
+                              .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
+                              .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: var(--hover-subtle); }
+                              .kanban-date-picker .rdp-today:not(.rdp-outside) { color: var(--primary, #818cf8); font-weight: 700; }
+                              .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
+                              .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
+                              .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: var(--hover-subtle); }
+                              .kanban-date-picker .rdp-chevron { fill: var(--foreground); width: 12px; height: 12px; }
+                            `;
+
 export {
   CustomCircleDotted,
   CustomCircleDot,
   ALL_STATUSES,
   isClosedStatus,
+  isHiddenBoardStatus,
   sortStatusesWithClosedAndKycAtEnd,
   activityCache,
   prefetchTaskActivities,
@@ -462,6 +495,23 @@ const renderTitleChangeActivity = (act: any, currentUserName?: string) => {
  * Normalizes comment text or HTML preview for reliable substring matching
  * regardless of HTML entities, mentions, image markdown tags, or surrounding whitespace.
  */
+function readCommentIdFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  return new URL(window.location.href).searchParams.get('comment');
+}
+
+function copyCommentLink(commentId: string, taskId?: string | null, subtaskId?: string | null) {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (taskId) url.searchParams.set('task', taskId);
+  if (subtaskId) url.searchParams.set('subtask', subtaskId);
+  else if (subtaskId === null) url.searchParams.delete('subtask');
+  url.searchParams.set('comment', commentId);
+  navigator.clipboard.writeText(url.toString())
+    .then(() => toast.success('Comment link copied'))
+    .catch(() => toast.error('Failed to copy link'));
+}
+
 export function normalizeCommentSearchText(str: string): string {
   if (!str) return '';
   return str
@@ -480,6 +530,228 @@ export function normalizeCommentSearchText(str: string): string {
     .toLowerCase();
 }
 
+function extractPmAssignedUserId(pmReviews: any, subtaskId?: string | null): string | null {
+  let reviewsList = pmReviews;
+  if (typeof reviewsList === 'string') {
+    try {
+      reviewsList = JSON.parse(reviewsList);
+    } catch {
+      reviewsList = [];
+    }
+  }
+  if (!Array.isArray(reviewsList)) return null;
+  const match = reviewsList.find(
+    (r: any) =>
+      r?.type === 'PM_ASSIGNMENT' &&
+      r?.assignedTo &&
+      (subtaskId ? r?.subtaskId === subtaskId : !r?.subtaskId)
+  );
+  return match?.assignedTo || null;
+}
+
+function TaskMapAssignDropdown({
+  targetId,
+  assignedUserId,
+  users,
+  disabled,
+  disabledReason,
+  onAssigned,
+}: {
+  targetId: string;
+  assignedUserId: string | null;
+  users: any[];
+  disabled?: boolean;
+  disabledReason?: string;
+  onAssigned?: (nextUserId: string | null, taskMap?: any) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localAssignedId, setLocalAssignedId] = useState<string | null>(assignedUserId);
+
+  useEffect(() => {
+    setLocalAssignedId(assignedUserId);
+  }, [assignedUserId, targetId]);
+
+  const nonSystemUsers = useMemo(() => {
+    return (users || [])
+      .filter((u) => u && u.id && !isSystemUser(u))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    const clean = searchQuery.trim().toLowerCase();
+    if (!clean) return nonSystemUsers;
+    return nonSystemUsers.filter(
+      (u) =>
+        (u.name || '').toLowerCase().includes(clean) ||
+        (u.email || '').toLowerCase().includes(clean)
+    );
+  }, [nonSystemUsers, searchQuery]);
+
+  const assignedUser = useMemo(
+    () => (localAssignedId ? nonSystemUsers.find((u) => u.id === localAssignedId) || null : null),
+    [nonSystemUsers, localAssignedId]
+  );
+
+  const handleSelectUser = async (nextUserId: string | null) => {
+    if (isSubmitting) return;
+    setIsOpen(false);
+    setSearchQuery('');
+    setIsSubmitting(true);
+    try {
+      const res = await taskMapApi.assignTask(targetId, nextUserId, 'QUEUE');
+      setLocalAssignedId(nextUserId);
+      onAssigned?.(nextUserId, res?.taskMap);
+      if (nextUserId) {
+        const picked = nonSystemUsers.find((u) => u.id === nextUserId);
+        toast.success(`Assigned to ${picked?.name || 'user'}'s Task Map column`);
+      } else {
+        toast.info('Returned to Available Tasks on Task Map');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update Task Map column');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Popover.Root
+      open={isOpen && !disabled}
+      onOpenChange={(open) => {
+        if (disabled) return;
+        setIsOpen(open);
+        if (!open) setSearchQuery('');
+      }}
+    >
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={(e) => {
+            if (disabled) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (disabledReason) toast.error(disabledReason);
+            }
+          }}
+          title={
+            disabled && disabledReason
+              ? disabledReason
+              : assignedUser
+                ? `Task Map column: ${assignedUser.name} (click to reassign)`
+                : 'Assign to a Task Map column (lands in To Do)'
+          }
+          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold border transition-all select-none leading-none whitespace-nowrap ${
+            disabled
+              ? 'opacity-50 cursor-not-allowed bg-blue-500/10 text-blue-300/60 border-blue-500/20'
+              : isOpen
+                ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-500/30 cursor-pointer'
+                : 'bg-blue-500/15 text-blue-300 border-blue-500/35 hover:bg-blue-500/25 hover:text-white hover:border-blue-400/70 cursor-pointer'
+          }`}
+        >
+          {isSubmitting ? (
+            <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+          ) : (
+            <ArrowRightLeft className="w-3 h-3 shrink-0" />
+          )}
+          <span>Task Map</span>
+          {assignedUser && (
+            <span className="max-w-[90px] truncate text-[10px] font-medium opacity-90 pl-1.5 ml-0.5 border-l border-blue-400/35">
+              {assignedUser.name?.split(' ')[0] || assignedUser.name}
+            </span>
+          )}
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="start"
+          sideOffset={4}
+          onClick={(e) => e.stopPropagation()}
+          className="z-[100000] w-60 bg-popover border border-zinc-700/80 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 text-zinc-200 animate-in fade-in zoom-in-95 duration-75 outline-none"
+        >
+          <div className="px-2 pt-1 pb-1 border-b border-zinc-800/80 flex items-center justify-between">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+              Task Map Column
+            </span>
+            <span className="text-[9px] text-zinc-500">Lands in To Do</span>
+          </div>
+
+          <div className="px-1 pt-0.5">
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg">
+              <Search className="w-3 h-3 text-zinc-500 shrink-0" />
+              <input
+                autoFocus
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search member..."
+                className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 outline-none"
+              />
+            </div>
+          </div>
+
+          {localAssignedId && (
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleSelectUser(null)}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800/80 hover:text-rose-300 transition-colors cursor-pointer border-b border-zinc-800/60"
+            >
+              <X className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Return to Available Tasks</span>
+            </button>
+          )}
+
+          <div className="max-h-52 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 p-0.5">
+            {filteredUsers.length === 0 ? (
+              <p className="text-[11px] text-zinc-500 italic text-center py-4">No matching users</p>
+            ) : (
+              filteredUsers.map((u) => {
+                const isCurrent = Boolean(localAssignedId && localAssignedId === u.id);
+                const initials = (u.name || 'U').substring(0, 2).toUpperCase();
+                const avatarBg = getAssigneeAvatarColor(u.name || 'U');
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    disabled={isCurrent || isSubmitting}
+                    onClick={() => handleSelectUser(u.id)}
+                    className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors ${
+                      isCurrent
+                        ? 'bg-blue-500/15 text-blue-300 cursor-default font-semibold'
+                        : 'text-zinc-200 hover:bg-zinc-800/80 hover:text-white cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {u.avatarUrl ? (
+                        <img
+                          src={u.avatarUrl}
+                          alt={u.name}
+                          className="w-5 h-5 rounded-full object-cover shrink-0 border border-zinc-700/80"
+                        />
+                      ) : (
+                        <span
+                          className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${avatarBg}`}
+                        >
+                          {initials}
+                        </span>
+                      )}
+                      <span className="truncate font-medium">{u.name}</span>
+                    </div>
+                    {isCurrent && <Check className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 export function TaskDetailModalContent({
   isOpen,
   onClose,
@@ -490,11 +762,13 @@ export function TaskDetailModalContent({
   listStatuses = [],
   workspaceRoles = [],
   mode = 'modal',
-  targetCommentId,
+  targetCommentId: targetCommentIdProp,
   targetCommentText,
   targetSubtaskId,
   scrollToComments,
 }: Props) {
+  const [urlCommentId] = useState<string | null>(() => (targetCommentIdProp ? null : readCommentIdFromUrl()));
+  const targetCommentId = targetCommentIdProp || urlCommentId;
   const router = useRouter();
 
   const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
@@ -1470,6 +1744,7 @@ export function TaskDetailModalContent({
         return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
+      if (nexus?.commentId) return <CommentLinkChip commentId={nexus.commentId} href={normalizeHref(href)} />;
       if (nexus) {
         return (
           <TaskMentionChip
@@ -2692,7 +2967,9 @@ export function TaskDetailModalContent({
   }, [localStatus, internalListStatuses, task]);
 
   const orderedListStatuses = React.useMemo(() => {
-    const sortedInternals = [...(internalListStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sortedInternals = [...(internalListStatuses || [])]
+      .filter((s) => !isHiddenBoardStatus(s))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === task?.listId || l.id === task?.listId);
     const list = listObj?.list || listObj;
 
@@ -2793,9 +3070,14 @@ export function TaskDetailModalContent({
   if (!isOpen || !task) return null;
 
   const permission = canUserMoveTask(task, listStatuses, currentUser, workspaceRoles);
+  const canEditStatus = canUserEditTaskStatus(currentUser as any);
 
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!task) return;
+    if (!canEditStatus) {
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
 
     let currentTask = taskRef.current || task;
     let transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
@@ -2953,14 +3235,21 @@ export function TaskDetailModalContent({
   };
 
   const handleStatusClick = () => {
-    const statuses = (internalListStatuses && internalListStatuses.length > 0)
-      ? internalListStatuses.map(s => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+    const statuses = (orderedListStatuses && orderedListStatuses.length > 0)
+      ? orderedListStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
       : ALL_STATUSES;
     const currentIndex = statuses.indexOf(localStatus || 'Pending');
     const nextIndex = (currentIndex + 1) % statuses.length;
     const newStatus = statuses[nextIndex];
     handleStatusChangeAction(newStatus);
   };
+
+  const [localTaskMapAssigneeId, setLocalTaskMapAssigneeId] = useState<string | null>(() =>
+    extractPmAssignedUserId((task as any)?.taskMap?.pmReviews, null)
+  );
+  useEffect(() => {
+    setLocalTaskMapAssigneeId(extractPmAssignedUserId((task as any)?.taskMap?.pmReviews, null));
+  }, [task?.id, (task as any)?.taskMap?.pmReviews]);
 
   const [localAssignees, setLocalAssignees] = useState<UserModel[]>(() => {
     return (task?.assignees && task.assignees.length > 0)
@@ -3958,11 +4247,11 @@ export function TaskDetailModalContent({
               </div>
 
               {/* Properties Stack â€” row layout */}
-              <div className="flex flex-col gap-2 mb-8 mt-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 mb-8 mt-2">
 
                 {/* Status Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-1">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     {(() => {
                       const isClosed = localStatus === 'Closed' || localStatus === 'CLOSED' || localStatus === 'DONE';
                       return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((localStatus || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
@@ -3987,11 +4276,24 @@ export function TaskDetailModalContent({
                           style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
                           className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-[#fff]' : defaultClasses} shadow-sm group/status`}
                         >
-                          <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                          <Popover.Root open={canEditStatus ? isStatusOpen : false} onOpenChange={(open) => {
+                            if (open && !canEditStatus) {
+                              toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                              return;
+                            }
+                            setIsStatusOpen(open);
+                          }}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!canEditStatus) {
+                                    e.preventDefault();
+                                    toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                                  }
+                                }}
+                                title={!canEditStatus ? STATUS_EDIT_DENIED_MESSAGE : undefined}
+                                className={`flex items-center h-full px-2.5 rounded-l-md ${canEditStatus ? 'cursor-pointer hover:brightness-110' : 'cursor-not-allowed opacity-85'}`}
                               >
                                 {statusName}
                               </div>
@@ -4104,8 +4406,8 @@ export function TaskDetailModalContent({
                 </div>
 
                 {/* Assignees Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-3">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                     <span className="text-[12px] text-zinc-500">Assignees</span>
                   </div>
@@ -4407,14 +4709,39 @@ export function TaskDetailModalContent({
                   </div>
                 </div>
 
+                {/* Task Map Row */}
+                {task?.id && (
+                  <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-5">
+                    <div className="flex items-center gap-2 w-24 shrink-0">
+                      <ArrowRightLeft className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                      <span className="text-[12px] text-zinc-500">Task Map</span>
+                    </div>
+                    <TaskMapAssignDropdown
+                      targetId={task.id}
+                      assignedUserId={localTaskMapAssigneeId}
+                      users={workspaceUsers}
+                      disabled={!canAssignTask}
+                      disabledReason={assignDeniedMessage}
+                      onAssigned={(nextUserId, nextTaskMap) => {
+                        setLocalTaskMapAssigneeId(nextUserId);
+                        if (nextTaskMap && task) {
+                          const updatedTask = { ...task, taskMap: nextTaskMap } as any;
+                          onUpdateTask?.(updatedTask);
+                          window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedTask } }));
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
 
 
 
 
 
                 {/* Priority Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-2">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                     <span className="text-[12px] text-zinc-500">Priority</span>
                   </div>
@@ -4467,13 +4794,14 @@ export function TaskDetailModalContent({
                 </div>
 
                 {/* Dates / Due Date & Recurrence Row */}
-                <div className="flex items-center gap-3 min-h-[32px]">
-                  <div className="flex items-center gap-2 w-28 shrink-0">
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-4">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
                     <Calendar className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                     <span className="text-[12px] text-zinc-500">Dates</span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Left: Due Date */}
+                    {/* Left: Due Date (hidden when status is a Recurring Status) */}
+                    {!isInRecurringGroup && (
                     <Popover.Root open={isDateOpen && canEditTask} onOpenChange={setIsDateOpen}>
                       <Popover.Trigger asChild>
                         <div className="inline-flex items-center gap-1.5 h-7 px-2.5 cursor-pointer bg-zinc-800/50 hover:bg-zinc-700/50 rounded-md transition-colors text-[11px] select-none w-fit text-zinc-300">
@@ -4488,33 +4816,7 @@ export function TaskDetailModalContent({
                       <Popover.Portal>
                         <Popover.Content className="z-[100000] p-2.5 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none w-[230px]" side="bottom" align="start" sideOffset={4}>
                           <div className="kanban-date-picker">
-                            <style>{`
-                              .kanban-date-picker .rdp-root {
-                                --rdp-accent-color: #6366f1;
-                                --rdp-accent-background-color: rgba(99, 102, 241, 0.2);
-                                --rdp-day-height: 26px; --rdp-day-width: 26px;
-                                --rdp-day_button-height: 24px; --rdp-day_button-width: 24px;
-                                --rdp-day_button-border-radius: 4px;
-                                --rdp-selected-border: none;
-                                --rdp-nav-height: 24px;
-                                --rdp-nav_button-height: 20px; --rdp-nav_button-width: 20px;
-                                --rdp-weekday-padding: 2px 0;
-                                margin: 0; font-size: 11px;
-                              }
-                              .kanban-date-picker .rdp-months, .kanban-date-picker .rdp-month { max-width: 100%; }
-                              .kanban-date-picker .rdp-month_grid { margin: 0 auto; border-collapse: separate; border-spacing: 1px; }
-                              .kanban-date-picker .rdp-month_caption { height: var(--rdp-nav-height); color: var(--foreground); padding-left: 4px; }
-                              .kanban-date-picker .rdp-caption_label { font-size: 12px; font-weight: 600; }
-                              .kanban-date-picker .rdp-weekday { color: var(--muted-foreground); font-weight: 600; font-size: 10px; }
-                              .kanban-date-picker .rdp-day { font-size: 11px; padding: 0; color: var(--foreground); }
-                              .kanban-date-picker .rdp-day_button { transition: background-color 0.15s; }
-                              .kanban-date-picker .rdp-day_button:hover:not([disabled]) { background-color: var(--hover-subtle); }
-                              .kanban-date-picker .rdp-today:not(.rdp-outside) { color: var(--primary, #818cf8); font-weight: 700; }
-                              .kanban-date-picker .rdp-selected .rdp-day_button { background-color: var(--rdp-accent-color); color: white; font-weight: 700; }
-                              .kanban-date-picker .rdp-button_previous, .kanban-date-picker .rdp-button_next { border-radius: 4px; }
-                              .kanban-date-picker .rdp-button_previous:hover, .kanban-date-picker .rdp-button_next:hover { background-color: var(--hover-subtle); }
-                              .kanban-date-picker .rdp-chevron { fill: var(--foreground); width: 12px; height: 12px; }
-                            `}</style>
+                            <style>{KANBAN_DATE_PICKER_CSS}</style>
                             <div className="flex justify-between items-center mb-2 px-1">
                               <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
                               {task.dueDate && (
@@ -4535,6 +4837,7 @@ export function TaskDetailModalContent({
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
+                    )}
 
                     {/* Right: Recurrence & Pause - ONLY if in recurring group! */}
                     {isInRecurringGroup && (
@@ -4564,7 +4867,7 @@ export function TaskDetailModalContent({
                                   <Repeat className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                                   <span className="text-zinc-500 hover:text-zinc-300">
                                     {['DAILY', 'WEEKLY', 'MONTHLY'].includes((localStatus || '').toUpperCase())
-                                      ? `Set ${(localStatus || '').toUpperCase()} Time`
+                                      ? `Set ${(localStatus || '').toUpperCase()} Due Date`
                                       : 'Set Recurrence'}
                                   </span>
                                 </>
@@ -4878,7 +5181,7 @@ export function TaskDetailModalContent({
 
               {(!task.subtasks || task.subtasks.length === 0) && !addingSubtask && (
                 <div className="my-1">
-                  <button onClick={() => setAddingSubtask(true)} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 px-2 py-1 hover:bg-zinc-800/50 rounded-md transition-colors text-xs font-medium cursor-pointer">
+                  <button onClick={() => openGalaxySubtaskForTask(task, allLists)} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 px-2 py-1 hover:bg-zinc-800/50 rounded-md transition-colors text-xs font-medium cursor-pointer">
                     <Plus className="w-3.5 h-3.5 shrink-0" /> Add subtask
                   </button>
                 </div>
@@ -5170,7 +5473,7 @@ export function TaskDetailModalContent({
                               >
                                 <Maximize2 className="w-3.5 h-3.5" />
                               </button>
-                              {comment.user?.id === currentUser?.id && (
+                              {(
                                 <Popover.Root>
                                   <Popover.Trigger asChild>
                                     <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
@@ -5186,6 +5489,12 @@ export function TaskDetailModalContent({
                                       }}
                                     >
                                       <Popover.Close asChild>
+                                        <button onClick={(e) => { copyCommentLink(comment.id, task?.id, null); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                          <Link2 className="w-3.5 h-3.5" /> Copy link
+                                        </button>
+                                      </Popover.Close>
+                                      {comment.user?.id === currentUser?.id && (<>
+                                      <Popover.Close asChild>
                                         <button onClick={() => { setEditingCommentId(comment.id); setEditCommentText(comment.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
                                           <Pencil className="w-3.5 h-3.5" /> Edit
                                         </button>
@@ -5195,6 +5504,7 @@ export function TaskDetailModalContent({
                                           <Trash2 className="w-3.5 h-3.5" /> Delete
                                         </button>
                                       </Popover.Close>
+                                      </>)}
                                     </Popover.Content>
                                   </Popover.Portal>
                                 </Popover.Root>
@@ -6294,7 +6604,7 @@ export function SubtaskDetailView({
   listStatuses,
   workspaceTeams = [],
   mode = 'modal',
-  targetCommentId,
+  targetCommentId: targetCommentIdProp,
   targetCommentText,
   scrollToComments,
   initialReplyCommentId,
@@ -6324,6 +6634,8 @@ export function SubtaskDetailView({
   activityWidth?: number;
   onActivityWidthChange?: (width: number) => void;
 }) {
+  const [urlCommentId] = useState<string | null>(() => (targetCommentIdProp ? null : readCommentIdFromUrl()));
+  const targetCommentId = targetCommentIdProp || urlCommentId;
   const router = useRouter();
 
   const handleCtrlRightClick = useCallback((e: React.MouseEvent) => {
@@ -6998,6 +7310,7 @@ export function SubtaskDetailView({
         return <UserMentionChip userId={cleanUserId}>{rest.children}</UserMentionChip>;
       }
       const nexus = parseNexusTaskLink(href);
+      if (nexus?.commentId) return <CommentLinkChip commentId={nexus.commentId} href={normalizeHref(href)} />;
       if (nexus) {
         return (
           <TaskMentionChip
@@ -7134,8 +7447,14 @@ export function SubtaskDetailView({
   const subtaskActivityPanelRef = useRef<HTMLDivElement>(null);
   const [isCheckLocked, setIsCheckLocked] = useState(false);
 
+  const canEditStatus = canUserEditTaskStatus(currentUser as any);
+
   const handleStatusChangeAction = async (newStatus: string) => {
     if (!subtask || isSubmittingStatus) return;
+    if (!canEditStatus) {
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
 
     let currentSubtask = subtaskRef.current || subtask;
     let transitionCheck = canTransitionTaskStatus(currentSubtask, newStatus);
@@ -8918,11 +9237,11 @@ export function SubtaskDetailView({
             </div>
 
             {/* Properties Stack â€” row layout */}
-            <div className="flex flex-col gap-2 mb-8 mt-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 mb-8 mt-2">
 
               {/* Status Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-1">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   {(() => {
                     const isClosed = localCompleted || (localStatus || '').toLowerCase() === 'closed' || (localStatus || '').toLowerCase() === 'done';
                     return isClosed ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : ((localStatus || '').toUpperCase() === 'KYC' ? <CustomCircleDotted className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> : <CustomCircleDot className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />);
@@ -8932,7 +9251,11 @@ export function SubtaskDetailView({
                   <div className="flex items-center gap-1.5">
                     {(() => {
                       const orderedStatuses = (listStatuses && listStatuses.length > 0)
-                        ? sortStatusesWithClosedAndKycAtEnd(listStatuses.map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || '')))
+                        ? sortStatusesWithClosedAndKycAtEnd(
+                            listStatuses
+                              .filter((s: any) => !isHiddenBoardStatus(s))
+                              .map((s: any) => typeof s === 'string' ? s : (s.name || s.status || s.title || ''))
+                          )
                         : ALL_STATUSES;
 
                       const statusName = localStatus || 'No Status';
@@ -8958,11 +9281,24 @@ export function SubtaskDetailView({
                           style={hasCustomColor ? { backgroundColor: getHexColor(statusObj.color) } : {}}
                           className={`inline-flex items-center h-7 rounded-md text-[11px] font-bold uppercase tracking-wider select-none transition-colors ${hasCustomColor ? 'text-[#fff]' : defaultClasses} shadow-sm group/status`}
                         >
-                          <Popover.Root open={isStatusOpen} onOpenChange={setIsStatusOpen}>
+                          <Popover.Root open={canEditStatus ? isStatusOpen : false} onOpenChange={(open) => {
+                            if (open && !canEditStatus) {
+                              toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                              return;
+                            }
+                            setIsStatusOpen(open);
+                          }}>
                             <Popover.Trigger asChild>
                               <div
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex items-center h-full px-2.5 cursor-pointer hover:brightness-110 rounded-l-md"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!canEditStatus) {
+                                    e.preventDefault();
+                                    toast.error(STATUS_EDIT_DENIED_MESSAGE);
+                                  }
+                                }}
+                                title={!canEditStatus ? STATUS_EDIT_DENIED_MESSAGE : undefined}
+                                className={`flex items-center h-full px-2.5 rounded-l-md ${canEditStatus ? 'cursor-pointer hover:brightness-110' : 'cursor-not-allowed opacity-85'}`}
                               >
                                 {statusName}
                               </div>
@@ -9078,8 +9414,8 @@ export function SubtaskDetailView({
 
 
               {/* Assignees Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-3">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   <User className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Assignees</span>
                 </div>
@@ -9372,9 +9708,32 @@ export function SubtaskDetailView({
                 </div>
               </div>
 
+              {/* Task Map Row */}
+              {subtask?.id && (
+                <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-5">
+                  <div className="flex items-center gap-2 w-24 shrink-0">
+                    <ArrowRightLeft className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                    <span className="text-[12px] text-zinc-500">Task Map</span>
+                  </div>
+                  <TaskMapAssignDropdown
+                    targetId={`subtask:${subtask.id}`}
+                    assignedUserId={extractPmAssignedUserId((parentTask as any)?.taskMap?.pmReviews, subtask.id)}
+                    users={workspaceUsers || []}
+                    disabled={!canAssignTask}
+                    disabledReason={assignDeniedMessage}
+                    onAssigned={(_nextUserId, nextTaskMap) => {
+                      if (nextTaskMap && parentTask) {
+                        const updatedParent = { ...parentTask, taskMap: nextTaskMap } as any;
+                        window.dispatchEvent(new CustomEvent('task:updated', { detail: { task: updatedParent } }));
+                      }
+                    }}
+                  />
+                </div>
+              )}
+
               {/* Priority Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-2">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   <Flag className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Priority</span>
                 </div>
@@ -9427,8 +9786,8 @@ export function SubtaskDetailView({
               </div>
 
               {/* Dates / Due Date Row */}
-              <div className="flex items-center gap-3 min-h-[32px]">
-                <div className="flex items-center gap-2 w-28 shrink-0">
+              <div className="flex items-center gap-3 min-h-[32px] min-w-0 md:order-4">
+                <div className="flex items-center gap-2 w-24 shrink-0">
                   <Calendar className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
                   <span className="text-[12px] text-zinc-500">Dates</span>
                 </div>
@@ -9453,6 +9812,7 @@ export function SubtaskDetailView({
                   <Popover.Portal>
                     <Popover.Content className="z-[100000] p-2.5 bg-background border border-zinc-800 rounded-xl shadow-2xl outline-none w-[230px]" side="bottom" align="start" sideOffset={4}>
                       <div className="kanban-date-picker">
+                        <style>{KANBAN_DATE_PICKER_CSS}</style>
                         <div className="flex justify-between items-center mb-2 px-1">
                           <div className="text-[11px] text-zinc-500 font-semibold uppercase">Set Due Date</div>
                           {subtask.dueDate && (
@@ -9881,7 +10241,7 @@ export function SubtaskDetailView({
                             >
                               <Maximize2 className="w-3.5 h-3.5" />
                             </button>
-                            {c.user?.id === currentUser?.id && (
+                            {(
                               <Popover.Root>
                                 <Popover.Trigger asChild>
                                   <button className="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Comment Options">
@@ -9897,6 +10257,12 @@ export function SubtaskDetailView({
                                     }}
                                   >
                                     <Popover.Close asChild>
+                                      <button onClick={(e) => { e.stopPropagation(); copyCommentLink(c.id, parentTask?.id, subtask?.id); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+                                        <Link2 className="w-3.5 h-3.5" /> Copy link
+                                      </button>
+                                    </Popover.Close>
+                                    {c.user?.id === currentUser?.id && (<>
+                                    <Popover.Close asChild>
                                       <button onClick={(e) => { e.stopPropagation(); setEditingCommentId(c.id); setEditCommentText(c.content); }} className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-foreground rounded-md transition-colors flex items-center gap-2 cursor-pointer">
                                         <Pencil className="w-3.5 h-3.5" /> Edit
                                       </button>
@@ -9906,6 +10272,7 @@ export function SubtaskDetailView({
                                         <Trash2 className="w-3.5 h-3.5" /> Delete
                                       </button>
                                     </Popover.Close>
+                                    </>)}
                                   </Popover.Content>
                                 </Popover.Portal>
                               </Popover.Root>

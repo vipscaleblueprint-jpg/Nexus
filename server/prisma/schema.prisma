@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -93,6 +94,7 @@ model User {
   pageVersions          PageVersion[]
   createdLaunches       LaunchRecord[]        @relation("LaunchRecordCreator")
   assignedLaunches      LaunchRecord[]        @relation("LaunchRecordAssignees")
+  shiftTime             UserShiftTime?
 
   @@index([email])
   @@index([systemRole])
@@ -852,4 +854,17 @@ model LaunchRecord {
   @@index([targetPeriod])
   @@index([creatorId])
   @@index([taskId])
+}
+
+model UserShiftTime {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  schedule  String   // Canonical format e.g. "M-F 9AM to 4PM", "T-S 5PM to 2AM"
+  updatedBy String?
+  source    String   @default("NEXUS") // "NEXUS" | "VIPSCALE" | "GOOGLE_SHEET"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

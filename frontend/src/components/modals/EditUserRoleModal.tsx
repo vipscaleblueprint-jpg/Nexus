@@ -7,6 +7,7 @@ import { Shield, X, User as UserIcon, Check, Loader2, Star, ChevronDown, Search 
 import { usersApi } from '@/api/users';
 import { getRoles } from '@/api/roles';
 import { User, SystemRole, EmploymentType, WorkspaceRole } from '@/lib/types';
+import { ShiftScheduleEditor } from '@/components/settings/ShiftScheduleEditor';
 
 interface EditUserRoleModalProps {
   isOpen: boolean;
@@ -28,6 +29,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
 
   const [starRating, setStarRating] = useState<number>(1);
   const [isActive, setIsActive] = useState(true);
+  const [shiftSchedule, setShiftSchedule] = useState('');
 
   const [availableRoles, setAvailableRoles] = useState<WorkspaceRole[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
@@ -53,6 +55,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
       setRoles(user.roles || []);
       setStarRating(user.starRating || 1);
       setIsActive(user.isActive ?? true);
+      setShiftSchedule(user.shiftSchedule || '');
       setError(null);
       setSuccess(false);
     }
@@ -112,6 +115,7 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
         roles,
         starRating,
         isActive,
+        shiftSchedule: shiftSchedule.trim(),
       });
 
       setSuccess(true);
@@ -460,6 +464,20 @@ export function EditUserRoleModal({ isOpen, onClose, onSuccess, user }: EditUser
               >
                 {isActive ? 'Active' : 'Deactivated'}
               </button>
+            </div>
+          </div>
+
+          {/* Shift Schedule */}
+          <div>
+            <label className="block text-[11px] font-medium text-zinc-300 mb-1.5">
+              Shift Schedule
+            </label>
+            <div className="p-3 rounded-xl bg-background border border-zinc-800">
+              <ShiftScheduleEditor
+                value={shiftSchedule}
+                onChange={setShiftSchedule}
+                compact
+              />
             </div>
           </div>
 

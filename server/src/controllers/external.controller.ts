@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { queueUserPush } from '../services/toolsSync';
 import { scheduleLaunchPlan } from '../services/launchPlanner';
 import bcrypt from 'bcryptjs';
 import { timingSafeEqual, randomBytes } from 'crypto';
@@ -381,8 +382,6 @@ export async function createExternalList(req: Request, res: Response) {
       { name: 'CLOSED', color: '#2FA37A', groupName: 'Closed Task' },
       { name: 'WAITING', color: '#D9534F', groupName: 'Management' },
       { name: 'IN REVIEW', color: '#D97B3A', groupName: 'Management' },
-      { name: 'CRM Needed to Send', color: '#0284c7', groupName: 'Management' },
-      { name: 'CRM Needed to Follow Up', color: '#6366F1', groupName: 'Management' },
       { name: 'CRM', color: '#22A3AE', groupName: 'Management' },
     ];
 
@@ -2078,6 +2077,9 @@ export async function updateExternalUserRoles(req: Request, res: Response) {
       }
     });
 
+    // Keep the tools' assistant row in step, or the next reconcile reverts this edit.
+    queueUserPush(updatedUser.email);
+
     return res.json({ user: updatedUser });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -2248,6 +2250,10 @@ const NEXUS_STATUS_HEX: Record<string, string> = {
   'CRM Needed to Follow Up': '#6366F1',
   'CRM NEEDED TO FOLLOW UP': '#6366F1',
   'crm_follow_up': '#6366F1',
+  'TO SEND': '#0284c7',
+  'To Send': '#0284c7',
+  'TO FOLLOW UP': '#6366F1',
+  'To Follow Up': '#6366F1',
   'CRM': '#22A3AE',
   'CLOSED': '#2FA37A',
   'ON-HOLD': '#8A8F98',

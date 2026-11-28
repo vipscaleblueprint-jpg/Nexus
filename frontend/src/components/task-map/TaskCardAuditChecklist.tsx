@@ -122,6 +122,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     };
   });
 
+  const taskWithLocalChecklists = { ...task, checklists: localChecklists };
   const completedCount = auditItems.filter((i) => i.completed).length;
   const totalCount = auditItems.length;
   const allComplete = completedCount === totalCount && totalCount > 0;
@@ -140,7 +141,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
     const nextCompleted = !itemDef.completed;
 
     if (nextCompleted) {
-      const permCheck = canPerformAudit(itemDef.name, task, undefined, currentUser?.id);
+      const permCheck = canPerformAudit(itemDef.name, taskWithLocalChecklists, undefined, currentUser?.id);
       if (!permCheck.allowed) {
         toast.error(permCheck.reason || 'Prerequisites not completed.');
         return;
@@ -199,16 +200,24 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
 
     // 2. Persist to server (server-side automation enforces partial vs all-checked transitions)
     try {
+      const apiTaskId = task.isSubtask && task.parentTaskId ? task.parentTaskId : task.id;
+      const apiSubtaskId = task.isSubtask
+        ? task.subtaskId || task.id.replace(/^subtask:/, '')
+        : undefined;
+      const isOwnChecklist = !task.isSubtask || targetCl.subtaskId === apiSubtaskId;
+
       let apiRes: any = null;
-      if (itemDef.item && itemDef.item.id && !itemDef.item.id.startsWith('temp-')) {
-        apiRes = await tasksApi.updateChecklistItem(task.id, targetCl.id, itemDef.item.id, {
+      if (isOwnChecklist && itemDef.item && itemDef.item.id && !itemDef.item.id.startsWith('temp-')) {
+        apiRes = await tasksApi.updateChecklistItem(apiTaskId, targetCl.id, itemDef.item.id, {
           completed: nextCompleted,
         });
       } else {
-        apiRes = await tasksApi.createChecklistItem(task.id, targetCl.id, {
+        const targetChecklistId = isOwnChecklist ? targetCl.id : 'audit';
+        apiRes = await tasksApi.createChecklistItem(apiTaskId, targetChecklistId, {
           text: itemDef.name,
           completed: nextCompleted,
           checklistName: 'Audit',
+          ...(apiSubtaskId ? { subtaskId: apiSubtaskId } : {}),
         });
         if (apiRes?.item) {
           // Reconcile id
@@ -216,7 +225,14 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
             normalizeAuditName(i.text) === itemDef.norm ? { ...i, id: apiRes.item.id } : i
           );
           const reconciledCls = finalCls.map((c) =>
-            c.id === targetCl!.id ? { ...c, items: reconciledItems } : c
+            c.id === targetCl!.id
+              ? {
+                  ...c,
+                  id: apiRes.item.checklistId || c.id,
+                  subtaskId: apiSubtaskId ?? c.subtaskId,
+                  items: reconciledItems,
+                }
+              : c
           );
           setLocalChecklists(reconciledCls);
           task.checklists = reconciledCls;
@@ -294,7 +310,7 @@ export const TaskCardAuditChecklist: React.FC<Props> = ({
       <div className="space-y-1">
         {auditItems.map((itemDef) => {
           const permCheck: AuditPermissionCheck = !itemDef.completed
-            ? canPerformAudit(itemDef.name, task, undefined, currentUser?.id)
+            ? canPerformAudit(itemDef.name, taskWithLocalChecklists, undefined, currentUser?.id)
             : { allowed: true, missingPrerequisites: [] };
           const isLockedByHierarchy = !itemDef.completed && !permCheck.allowed;
 

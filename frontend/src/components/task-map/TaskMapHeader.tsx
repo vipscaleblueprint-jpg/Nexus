@@ -825,7 +825,7 @@ export const TaskMapHeader: React.FC<Props> = ({
     return [
       { key: 'ALL', label: 'All', hoursLabel: 'All shifts' },
       { key: 'LIVE', label: 'Live', hoursLabel: 'Only users with Live Working clocked in right now' },
-      { key: 'ACTIVE', label: 'Active', hoursLabel: 'Only users who logged progress today' },
+      { key: 'ACTIVE', label: 'Active', hoursLabel: 'Only users on shift with a latest spreadsheet row' },
       ...dynamicShifts,
       { key: 'CUSTOM', label: 'Custom', hoursLabel: 'Custom MA selection' },
     ];

@@ -83,6 +83,7 @@ export interface User {
   roles: string[];
   teamId?: string;
   teamName?: string;
+  shiftSchedule?: string | null;
   notificationPreferences?: UserNotificationPreferences;
 }
 

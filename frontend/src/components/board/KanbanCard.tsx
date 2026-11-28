@@ -9,7 +9,7 @@ import { Task, Subtask } from '@/lib/types';
 import { Check, CheckSquare, Calendar, Repeat, User, Users, Flag, AlignLeft, CheckCircle2, CircleDashed, CircleDot, Tag, Lock, CornerDownRight, ChevronDown, ChevronRight, MoreHorizontal, Plus, Pencil, X, Shield, Copy, Trash2, ShieldCheck, Link2, PauseCircle } from 'lucide-react';
 import { getNexusTaskUrl } from '@/lib/links';
 import { getTaskAuditStatus } from '@/lib/auditChecklist';
-import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isSystemUser } from '@/lib/taskTokens';
+import { CustomCircleDot, CustomCircleDotted, ALL_STATUSES, sortStatusesWithClosedAndKycAtEnd, resolveUsersFromRoleRestrictions, resolveAssignableUsersFromRoleRestrictions, matchesRole, hasRole, withoutRole, normalizeRoles, getAssigneeAvatarColor, prefetchTaskActivities, isClosedStatus, isHiddenBoardStatus, isSystemUser } from '@/lib/taskTokens';
 import {
   RecurrencePicker,
   formatTimeDisplay,
@@ -21,10 +21,11 @@ import {
 import { RecurrencePausePreset } from '@/lib/types';
 import { tasksApi, usersApi } from '@/api';
 import { useAppStore } from '@/lib/store';
+import { openGalaxySubtaskForTask } from '@/lib/galaxyTask';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from '@/lib/toast';
 import { PortalDropdown } from '@/components/ui/PortalDropdown';
-import { canUserEditTask, canTransitionTaskStatus } from '@/lib/permissions';
+import { canUserEditTask, canTransitionTaskStatus, canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 import { useCanSetAssignees, useAssignDeniedMessage } from '@/lib/useCanSetAssignees';
 
 
@@ -150,7 +151,9 @@ const CardContent = memo(({
   }, [workspaceTeams.length, hydrateTeamsFromCache]);
 
   const orderedListStatuses = useMemo(() => {
-    const sortedInternals = [...(listStatuses || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sortedInternals = [...(listStatuses || [])]
+      .filter((s) => !isHiddenBoardStatus(s))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
     const listObj = allLists.find((l: any) => l.list?.id === (task as any)?.listId || l.id === (task as any)?.listId);
     const list = listObj?.list || listObj;
 
@@ -206,6 +209,11 @@ const CardContent = memo(({
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
+    if (!canUserEditTaskStatus(currentUser)) {
+      closeDropdown();
+      toast.error(STATUS_EDIT_DENIED_MESSAGE);
+      return;
+    }
 
     const currentTask = useAppStore.getState().tasks.find((t) => t.id === task.id) || task;
     const transitionCheck = canTransitionTaskStatus(currentTask, newStatus);
@@ -322,6 +330,12 @@ const CardContent = memo(({
       setTask(initialTask);
     }
   };
+
+  const isRecurringFrequencyStatus = useMemo(() => {
+    if (isSubtask) return false;
+    const statusUpper = ((task as any).status || '').toUpperCase().trim();
+    return ['DAILY', 'WEEKLY', 'MONTHLY'].includes(statusUpper);
+  }, [isSubtask, (task as any).status]);
 
   const isInRecurringGroup = useMemo(() => {
     if (isSubtask) return false;
@@ -648,6 +662,10 @@ const CardContent = memo(({
                 'CRM NEEDED TO FOLLOW UP': 'text-[#6366F1]',
                 'crm_follow_up': 'text-[#6366F1]',
                 'CRM': 'text-[#22A3AE]',
+                'TO SEND': 'text-[#0284c7]',
+                'To Send': 'text-[#0284c7]',
+                'TO FOLLOW UP': 'text-[#6366F1]',
+                'To Follow Up': 'text-[#6366F1]',
                 'ON-HOLD': 'text-[#8A8F98]',
               };
 
@@ -704,6 +722,10 @@ const CardContent = memo(({
                     'CRM NEEDED TO FOLLOW UP': 'text-[#6366F1]',
                     'crm_follow_up': 'text-[#6366F1]',
                     'CRM': 'text-[#22A3AE]',
+                'TO SEND': 'text-[#0284c7]',
+                'To Send': 'text-[#0284c7]',
+                'TO FOLLOW UP': 'text-[#6366F1]',
+                'To Follow Up': 'text-[#6366F1]',
                     'ON-HOLD': 'text-[#8A8F98]',
                   };
 
@@ -1034,7 +1056,8 @@ const CardContent = memo(({
 
         {/* Due Date & Recurrence Row */}
         <div className="flex items-center gap-1.5 w-full">
-          {/* Due Date (Left side) */}
+          {/* Due Date (Left side) - hidden for DAILY, WEEKLY, MONTHLY recurring statuses */}
+          {!isRecurringFrequencyStatus && (
           <div className="relative">
             <div
               ref={dateTriggerRef}
@@ -1098,6 +1121,7 @@ const CardContent = memo(({
               </PortalDropdown>
             )}
           </div>
+          )}
 
           {/* Recurrence (Right side) - ONLY if in recurring group! */}
           {isInRecurringGroup && (
@@ -1128,8 +1152,8 @@ const CardContent = memo(({
                           {recConfig?.time
                             ? formatTimeDisplay(recConfig.time)
                             : (task as any).status && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(((task as any).status || '').toUpperCase())
-                              ? `Set ${(task as any).status} Time`
-                              : 'Set Time'}
+                              ? `Set ${(task as any).status} Due Date`
+                              : 'Set Due Date'}
                         </span>
                       </>
                     )}
@@ -1744,7 +1768,10 @@ export const KanbanCard = memo(function KanbanCard({
                 style={{ top: '1.25rem', width: 10 }}
               />
               <button
-                onClick={() => setIsAddingSubtask(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openGalaxySubtaskForTask(task, useAppStore.getState().allLists);
+                }}
                 className="ml-3 mt-1.5 flex items-center gap-2 text-zinc-500 dark:text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 hover:bg-zinc-800/30 rounded text-xs font-medium"
               >
                 <Plus className="w-3 h-3" /> Add Subtask

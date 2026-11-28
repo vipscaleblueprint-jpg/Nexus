@@ -10,6 +10,7 @@ export const updateUserSchema = z
     systemRole: z.enum(SYSTEM_ROLES).optional(),
     employmentType: z.enum(EMPLOYMENT_TYPES).optional(),
     isActive: z.boolean().optional(),
+    shiftSchedule: z.string().max(250).nullable().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'at least one field must be provided',

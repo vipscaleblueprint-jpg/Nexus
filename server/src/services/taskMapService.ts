@@ -84,6 +84,8 @@ export interface TaskMapShift {
   timezone: string;
   order: number;
   isActive: boolean;
+  memberIds?: string[];
+  memberNames?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -212,6 +214,8 @@ export async function getShiftConfigs(): Promise<TaskMapShift[]> {
         timezone: 'Asia/Manila',
         order: s.order,
         isActive: s.isActive,
+        memberIds: Array.isArray(s.memberIds) ? s.memberIds : [],
+        memberNames: Array.isArray(s.memberNames) ? s.memberNames : [],
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
       }));
@@ -1060,6 +1064,7 @@ export async function executeTaskMapDailyRollover(params?: {
       if (
         s === 'WAITING' || s.includes('WAITING') ||
         s === 'CRM' || s.includes('CRM') ||
+        s === 'TOSEND' || s === 'TOFOLLOWUP' ||
         s === 'INREVIEW' || s === 'TOREVIEW' || s === 'REVIEW' ||
         s === 'CHECKING' || s === 'INCHECKING' ||
         s === 'DAILY' || s.includes('DAILY') ||

@@ -1,5 +1,6 @@
 import { prisma } from '../config/prisma';
 import { invalidateCache } from './redisService';
+import { getManilaClock, worksToday } from '../utils/workSchedule';
 
 function getIo() {
   try {
@@ -230,11 +231,11 @@ export interface AuditUserRef {
  * People who worked on a task (MA daily tracker collaborators) may not audit it. Matches by
  * id, and by name or email because tracker rows often carry only a name.
  */
-export async function getTaskCollaboratorBlock(taskId: string): Promise<{
+export async function getTaskCollaboratorBlock(taskId: string, subtaskId?: string): Promise<{
   blockedUserIds: Set<string>;
   isUserBlocked: (u: AuditUserRef) => boolean;
 }> {
-  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId);
+  const { maUpdaterIds, maUpdaterNames } = await getTaskMoverAndUpdaters(taskId, subtaskId);
   const blockedUserIds = new Set<string>(maUpdaterIds);
   const blockedNames = new Set<string>(maUpdaterNames.map((n) => n.trim().toLowerCase()));
 
@@ -347,10 +348,14 @@ export async function autoAssignAudits(
 
   // Fetch active users and filter to active shift auditors from DB configs
   const allUsers = await prisma.user.findMany({
-    where: { isActive: true },
-    select: { id: true, name: true, email: true, roles: true },
+    // No Shift Schedule = not working, so those users are skipped in the query itself
+    where: { isActive: true, shiftTime: { isNot: null } },
+    select: { id: true, name: true, email: true, roles: true, shiftTime: { select: { schedule: true } } },
   });
-  const shiftAuditors = allUsers.filter((u) => isUserInShift(u, currentShift, shiftConfigs));
+  const clock = getManilaClock();
+  const shiftAuditors = allUsers.filter(
+    (u) => isUserInShift(u, currentShift, shiftConfigs) && worksToday(u.shiftTime?.schedule, clock)
+  );
 
   // Align with audit restrictions: exclude MA daily tracker participants (collaborators)
   const { blockedUserIds, isUserBlocked } = await getTaskCollaboratorBlock(task.id);

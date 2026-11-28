@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Film } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
+import { CommentLinkChip } from '@/components/ui/CommentLinkChip';
 import { commentHtmlForMarkdown, linkifyPlainMentions, normalizeHref, rehypeLinkify, rehypeUnknownTagsToText, rehypeSanitizeComment, parseNexusTaskLink } from '@/lib/links';
 import { extractImagesFromContent } from '@/lib/commentImages';
 import { UserMentionChip } from './UserMentionChip';
@@ -144,6 +145,7 @@ function CommentLinkOrMedia({ node, href, children, ...rest }: any) {
     return <UserMentionChip userId={cleanUserId}>{children}</UserMentionChip>;
   }
   const nexus = parseNexusTaskLink(target);
+  if (nexus?.commentId) return <CommentLinkChip commentId={nexus.commentId} href={normalizeHref(target)} />;
   if (nexus) {
     return (
       <TaskMentionChip

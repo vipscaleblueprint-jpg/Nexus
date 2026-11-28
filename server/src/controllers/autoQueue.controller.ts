@@ -10,6 +10,7 @@ import {
   setAutoQueueExcluded,
   runCheckpoint,
   runDailyAutoQueue,
+  runActiveShiftQueue,
 } from '../services/autoQueue/autoQueueService';
 
 /** PMs and Admins only, same as assigning on the Task Map. Returns the user, or null after replying 403. */
@@ -41,9 +42,15 @@ export const previewAutoQueueHandler = async (req: Request, res: Response) => {
     const result =
       kind === '1pm' || kind === '5pm'
         ? await runCheckpoint(kind, { modeOverride: 'dry_run' })
-        : kind === 'distribute'
-          ? await distributeAutoQueue(actor, { preview: true })
-          : await runDailyAutoQueue({ modeOverride: 'dry_run' });
+        : kind === '10am'
+          ? await runActiveShiftQueue('morning', '10am')
+          : kind === '3pm'
+            ? await runActiveShiftQueue('noon', '3pm')
+            : kind === '8pm'
+              ? await runActiveShiftQueue('night', '8pm')
+              : kind === 'distribute'
+                ? await distributeAutoQueue(actor, { preview: true })
+                : await runDailyAutoQueue({ modeOverride: 'dry_run' });
     return res.json({
       success: true,
       kind,

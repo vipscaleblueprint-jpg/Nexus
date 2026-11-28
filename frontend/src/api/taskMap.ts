@@ -1,5 +1,6 @@
 import { apiClient } from './client';
 import { tasksApi } from './tasks';
+export { canUserEditTaskStatus, STATUS_EDIT_DENIED_MESSAGE } from '@/lib/permissions';
 
 export interface TaskMapOption {
   id: string;
@@ -20,6 +21,8 @@ export interface TaskMapShift {
   timezone: string;
   order: number;
   isActive: boolean;
+  memberIds?: string[];
+  memberNames?: string[];
 }
 
 export interface TaskMapRecord {
@@ -315,7 +318,7 @@ export function matchesTaskLinkOrId(
   return false;
 }
 
-/** Header user-visibility filter: ALL users, LIVE (live-working clocked in), ACTIVE (logged today). */
+/** Header user-visibility filter: ALL users, LIVE (live-working clocked in), ACTIVE (on-shift with latest spreadsheet row in current shift window). */
 export type TrackFilter = 'ALL' | 'LIVE' | 'ACTIVE';
 
 /**
@@ -348,6 +351,433 @@ export function isProgressLoggedToday(
     key = getManilaDateKey(prog.updatedAt);
   }
   return !!key && key === targetDateKey;
+}
+
+/**
+ * Returns Manila (Asia/Manila, UTC+8) calendar date key and hour/minute components for `now`.
+ */
+export function getManilaTimeParts(now: Date = new Date()): {
+  dateKey: string;
+  hour: number;
+  minute: number;
+  totalMinutes: number;
+} {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(now);
+
+  const year = parts.find((p) => p.type === 'year')?.value || '1970';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  let hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  if (hour === 24) hour = 0;
+
+  return {
+    dateKey: `${year}-${month}-${day}`,
+    hour,
+    minute,
+    totalMinutes: hour * 60 + minute,
+  };
+}
+
+/**
+ * Shifts a `YYYY-MM-DD` date key by `deltaDays` (e.g. -1 for yesterday, +1 for tomorrow).
+ */
+export function shiftDateKeyByDays(dateKey: string, deltaDays: number): string {
+  const m = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return dateKey;
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  const y = dt.getUTCFullYear();
+  const mo = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${mo}-${d}`;
+}
+
+/**
+ * Computes the current shift window [startMs, endMs] in Manila time, properly handling
+ * overnight/night shifts (where endHour < startHour, e.g. 5 PM - 2 AM or 8 PM - 5 AM).
+ */
+export function getShiftWindowBounds(
+  shift: Pick<TaskMapShift, 'startHour' | 'startMinute' | 'endHour' | 'endMinute'>,
+  now: Date = new Date()
+): { isWithinShift: boolean; startMs: number; endMs: number } {
+  const { dateKey, totalMinutes } = getManilaTimeParts(now);
+  const startMin = shift.startMinute || 0;
+  const endMin = shift.endMinute || 0;
+  const startTotal = shift.startHour * 60 + startMin;
+  const endTotal = shift.endHour * 60 + endMin;
+
+  let isWithinShift = false;
+  let startDateKey = dateKey;
+  let endDateKey = dateKey;
+
+  if (startTotal <= endTotal) {
+    isWithinShift = totalMinutes >= startTotal && totalMinutes < endTotal;
+  } else {
+    // Overnight / night shift crossing midnight
+    isWithinShift = totalMinutes >= startTotal || totalMinutes < endTotal;
+    if (totalMinutes < endTotal) {
+      startDateKey = shiftDateKeyByDays(dateKey, -1);
+      endDateKey = dateKey;
+    } else {
+      startDateKey = dateKey;
+      endDateKey = shiftDateKeyByDays(dateKey, 1);
+    }
+  }
+
+  const startIso = `${startDateKey}T${String(shift.startHour).padStart(2, '0')}:${String(startMin).padStart(2, '0')}:00+08:00`;
+  const endIso = `${endDateKey}T${String(shift.endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}:00+08:00`;
+  return {
+    isWithinShift,
+    startMs: new Date(startIso).getTime(),
+    endMs: new Date(endIso).getTime(),
+  };
+}
+
+/**
+ * Returns the configured active shifts that include `user` (by `memberIds` or `memberNames`).
+ */
+export function getUserConfiguredShifts(
+  user?: { id?: string | null; name?: string | null } | null,
+  shifts: TaskMapShift[] = []
+): TaskMapShift[] {
+  if (!user || !Array.isArray(shifts) || shifts.length === 0) return [];
+  const uid = user.id || '';
+  const nameLower = (user.name || '').trim().toLowerCase();
+  const firstName = nameLower.split(/\s+/)[0] || '';
+
+  return shifts.filter((s) => {
+    if (s.isActive === false) return false;
+    const ids = Array.isArray(s.memberIds) ? s.memberIds : [];
+    if (uid && ids.includes(uid)) return true;
+    const names = Array.isArray(s.memberNames)
+      ? s.memberNames.map((n) => (n || '').trim().toLowerCase()).filter(Boolean)
+      : [];
+    if (!nameLower || names.length === 0) return false;
+    return names.some(
+      (n) =>
+        n === nameLower ||
+        nameLower.includes(n) ||
+        n.includes(nameLower) ||
+        (firstName.length >= 2 && n.split(/\s+/)[0] === firstName)
+    );
+  });
+}
+
+function parseClockTimeMinutes(timeStr?: string | null): number | null {
+  if (!timeStr) return null;
+  const m = String(timeStr)
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let hrs = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const ampm = (m[3] || '').toLowerCase();
+  if (ampm === 'pm' && hrs < 12) hrs += 12;
+  if (ampm === 'am' && hrs === 12) hrs = 0;
+  if (hrs < 0 || hrs > 23 || mins < 0 || mins > 59) return null;
+  return hrs * 60 + mins;
+}
+
+function resolveSheetRowDateKey(
+  prog?: {
+    date?: string | null;
+    dateKey?: string | null;
+    dateDisplay?: string | null;
+    updatedAt?: string | null;
+    submittedAt?: string | null;
+    startedAt?: string | null;
+    endedAt?: string | null;
+  } | null
+): string | null {
+  if (!prog) return null;
+  if (prog.dateKey && /^\d{4}-\d{2}-\d{2}$/.test(prog.dateKey.trim())) {
+    return prog.dateKey.trim();
+  }
+  const raw = (prog.date || prog.dateDisplay || '').trim();
+  if (raw) {
+    const sheet = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (sheet) return `${sheet[3]}-${sheet[1].padStart(2, '0')}-${sheet[2].padStart(2, '0')}`;
+    const ymd = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+    if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+    const hasTime = /\d{1,2}:\d{2}/.test(raw);
+    const parsed = hasTime ? new Date(raw) : new Date(`${raw} 12:00:00`);
+    const key = !isNaN(parsed.getTime()) ? getManilaDateKey(parsed) : getManilaDateKey(raw);
+    if (key) return key;
+  }
+  for (const fallback of [prog.endedAt, prog.startedAt, prog.submittedAt, prog.updatedAt]) {
+    if (fallback) {
+      const key = getManilaDateKey(fallback);
+      if (key) return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolves the latest timestamp (ms) represented by a spreadsheet progress row.
+ * Uses timeOut/endedAt if present, else timeIn/startedAt, else submittedAt/updatedAt.
+ */
+export function getProgressRowTimestampMs(
+  prog?: {
+    date?: string | null;
+    dateKey?: string | null;
+    dateDisplay?: string | null;
+    timeIn?: string | null;
+    timeOut?: string | null;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    updatedAt?: string | null;
+    submittedAt?: string | null;
+  } | null
+): number | null {
+  if (!prog) return null;
+  const dateKey = resolveSheetRowDateKey(prog);
+  const inMins = parseClockTimeMinutes(prog.timeIn);
+  const outMins = parseClockTimeMinutes(prog.timeOut);
+
+  if (dateKey && outMins !== null) {
+    const effectiveOutDateKey =
+      inMins !== null && outMins < inMins ? shiftDateKeyByDays(dateKey, 1) : dateKey;
+    const h = Math.floor(outMins / 60);
+    const m = outMins % 60;
+    const ms = new Date(
+      `${effectiveOutDateKey}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+08:00`
+    ).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  if (prog.endedAt) {
+    const ms = new Date(prog.endedAt).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  if (dateKey && inMins !== null) {
+    const h = Math.floor(inMins / 60);
+    const m = inMins % 60;
+    const ms = new Date(
+      `${dateKey}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+08:00`
+    ).getTime();
+    if (!isNaN(ms)) return ms;
+  }
+  for (const fallback of [prog.startedAt, prog.submittedAt, prog.updatedAt]) {
+    if (fallback) {
+      const ms = new Date(fallback).getTime();
+      if (!isNaN(ms)) return ms;
+    }
+  }
+  return null;
+}
+
+/**
+ * Shift-aware check for the Task Map ACTIVE filter.
+ * Determines whether a spreadsheet progress row belongs to the user's current shift window
+ * (properly supporting overnight/night shifts that cross midnight) rather than naively comparing
+ * against today's calendar date.
+ */
+export function isProgressActiveForShift(
+  prog?: {
+    date?: string | null;
+    dateKey?: string | null;
+    dateDisplay?: string | null;
+    timeIn?: string | null;
+    timeOut?: string | null;
+    isMissingTime?: boolean;
+    isLive?: boolean;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    updatedAt?: string | null;
+    submittedAt?: string | null;
+  } | null,
+  options?: {
+    user?: { id?: string | null; name?: string | null } | null;
+    shifts?: TaskMapShift[];
+    activeShift?: string | null;
+    now?: Date;
+    targetDate?: Date | string | null;
+    isHistory?: boolean;
+    preShiftGraceMinutes?: number;
+    postShiftGraceMinutes?: number;
+  }
+): boolean {
+  if (!prog) return false;
+  const hasRowActivity = Boolean(
+    (prog.timeIn && String(prog.timeIn).trim()) ||
+    (prog.timeOut && String(prog.timeOut).trim()) ||
+    prog.isMissingTime ||
+    prog.startedAt ||
+    prog.endedAt
+  );
+  if (!hasRowActivity) return false;
+
+  const now = options?.now ?? new Date();
+  const todayKey = getManilaDateKey(now);
+  const targetKey = options?.targetDate ? getManilaDateKey(options.targetDate) : todayKey;
+  if (options?.isHistory || (targetKey && todayKey && targetKey !== todayKey)) {
+    return isProgressLoggedToday(prog, options?.targetDate ?? now);
+  }
+
+  const rowTs = getProgressRowTimestampMs(prog);
+  if (rowTs === null) return false;
+
+  const nowMs = now.getTime();
+  const preGraceMs = (options?.preShiftGraceMinutes ?? 120) * 60 * 1000;
+  const postGraceMs = (options?.postShiftGraceMinutes ?? 120) * 60 * 1000;
+
+  // Resolve the most recent wall-clock submission timestamp as fallback when a sheet row's Date column wasn't updated after midnight
+  const submittedMs = (() => {
+    for (const ts of [prog.submittedAt, prog.updatedAt, prog.endedAt, prog.startedAt]) {
+      if (ts) {
+        const ms = new Date(ts).getTime();
+        if (!isNaN(ms)) return ms;
+      }
+    }
+    return null;
+  })();
+
+  // 1. Actively clocked-in live row (no timeOut) within max shift duration always counts as active
+  const isLiveNow = Boolean(
+    prog.timeIn &&
+    String(prog.timeIn).trim() &&
+    !(prog.timeOut && String(prog.timeOut).trim()) &&
+    !prog.isMissingTime &&
+    prog.isLive !== false &&
+    (
+      (nowMs - rowTs <= 14 * 60 * 60 * 1000 && rowTs <= nowMs + 15 * 60 * 1000) ||
+      (submittedMs !== null && nowMs - submittedMs <= 14 * 60 * 60 * 1000 && submittedMs <= nowMs + 15 * 60 * 1000)
+    )
+  );
+  if (isLiveNow) return true;
+
+  // 2. Any spreadsheet row logged today (Manila calendar date) counts as ACTIVE,
+  // even if the MA started early, worked overtime, or logged outside their configured shift hours
+  const rowDateKey = resolveSheetRowDateKey(prog);
+  if (todayKey && rowDateKey === todayKey) return true;
+  if (todayKey && submittedMs !== null && getManilaDateKey(new Date(submittedMs)) === todayKey) return true;
+
+  // 3. Overnight / previous-day rows: allow if within the user's configured shift window or active shift window
+  const shifts = Array.isArray(options?.shifts) ? options.shifts : [];
+  const userShifts = getUserConfiguredShifts(options?.user, shifts);
+
+  if (userShifts.length > 0) {
+    const inUserShift = userShifts.some((s) => {
+      const bounds = getShiftWindowBounds(s, now);
+      const isOnShiftNow = nowMs >= bounds.startMs - preGraceMs && nowMs <= bounds.endMs + postGraceMs;
+      if (!isOnShiftNow) return false;
+      return rowTs >= bounds.startMs - preGraceMs && rowTs <= bounds.endMs + postGraceMs;
+    });
+    if (inUserShift) return true;
+  }
+
+  // Fallback when user has no explicit shift assignment or worked cross-shift overnight: check active shift windows
+  const activeShiftTokens = (options?.activeShift || '')
+    .toUpperCase()
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const activeShifts = shifts.filter((s) => {
+    if (s.isActive === false) return false;
+    const bounds = getShiftWindowBounds(s, now);
+    if (nowMs >= bounds.startMs - preGraceMs && nowMs <= bounds.endMs + postGraceMs) return true;
+    return activeShiftTokens.includes((s.shiftKey || '').toUpperCase().trim());
+  });
+
+  if (activeShifts.length > 0) {
+    const inActiveShift = activeShifts.some((s) => {
+      const bounds = getShiftWindowBounds(s, now);
+      return rowTs >= bounds.startMs - preGraceMs && rowTs <= bounds.endMs + postGraceMs;
+    });
+    if (inActiveShift) return true;
+  }
+
+  // Final fallback for recent overnight activity: rolling 12-hour window
+  return (
+    (rowTs >= nowMs - 12 * 60 * 60 * 1000 && rowTs <= nowMs + 60 * 60 * 1000) ||
+    (submittedMs !== null && submittedMs >= nowMs - 12 * 60 * 60 * 1000 && submittedMs <= nowMs + 60 * 60 * 1000)
+  );
+}
+
+/**
+ * Determines whether a user should appear in the Task Map ACTIVE filter based on their shift time
+ * and whether they have a latest spreadsheet row within their active shift window.
+ */
+export function isUserActiveInShift(params: {
+  user?: { id?: string | null; name?: string | null } | null;
+  shifts?: TaskMapShift[];
+  activeShift?: string | null;
+  allItems?: TaskMapItem[];
+  activeSession?: any;
+  dailySheetLogs?: DailySheetLogItem[];
+  latestSheetRows?: DailySheetLogItem[];
+  now?: Date;
+  targetDate?: Date | string | null;
+  isHistory?: boolean;
+}): boolean {
+  const userName = (params.user?.name || '').trim();
+  if (!userName) return false;
+
+  const userLower = userName.toLowerCase();
+  const userFirst = userLower.split(/\s+/)[0] || '';
+  const matchesMa = (maName?: string | null, userId?: string | null): boolean => {
+    if (params.user?.id && userId && params.user.id === userId) return true;
+    if (!maName) return false;
+    const pLower = maName.trim().toLowerCase();
+    const pFirst = pLower.split(/\s+/)[0] || '';
+    return (
+      pLower === userLower ||
+      (userFirst.length >= 2 && pFirst === userFirst) ||
+      userLower.includes(pLower) ||
+      pLower.includes(userLower)
+    );
+  };
+
+  const checkOpts = {
+    user: params.user,
+    shifts: params.shifts,
+    activeShift: params.activeShift,
+    now: params.now,
+    targetDate: params.targetDate,
+    isHistory: params.isHistory,
+  };
+
+  // 1. Check latest spreadsheet rows (includes overnight/night-shift rows from previous calendar day)
+  if (Array.isArray(params.latestSheetRows)) {
+    const matchedLatest = params.latestSheetRows.some(
+      (row) => matchesMa(row.maName, row.userId) && isProgressActiveForShift(row, checkOpts)
+    );
+    if (matchedLatest) return true;
+  }
+
+  // 2. Check today's DailySheetLog rows
+  if (Array.isArray(params.dailySheetLogs)) {
+    const matchedLog = params.dailySheetLogs.some(
+      (row) => matchesMa(row.maName, row.userId) && isProgressActiveForShift(row, checkOpts)
+    );
+    if (matchedLog) return true;
+  }
+
+  // 3. Check active session (Redis / live socket session)
+  if (params.activeSession && isProgressActiveForShift(params.activeSession, checkOpts)) {
+    return true;
+  }
+
+  // 4. Check task-level spreadsheet progress entries
+  if (Array.isArray(params.allItems)) {
+    return params.allItems.some(
+      (t) =>
+        matchesMa(t.progress?.maName) &&
+        isProgressActiveForShift(t.progress, checkOpts)
+    );
+  }
+
+  return false;
 }
 
 export interface ShiftUser {
@@ -689,12 +1119,12 @@ export function applyOptimisticTaskMapAssignment(
   const existingStatuses = Array.isArray(task.taskMap?.statuses) ? [...task.taskMap.statuses] : [];
 
   if (!targetUser) {
-    // Unassign / return to Available Tasks pool (preserve status & mark Available Task or Hand-over In to match backend)
+    // Unassign / return to Available Tasks pool (preserve status & mark Available Task or Hand-over to match backend)
     const hadHandover =
       Boolean(preserveHandover) ||
       Boolean(task.taskMap?.handedOver) ||
       existingStatuses.some((st) => isHandoverSubStatusKey(st.trim().toUpperCase().replace(/[\s_-]+/g, '')));
-    const poolStatuses = hadHandover ? ['Hand-over In'] : ['Available Task'];
+    const poolStatuses = hadHandover ? ['Hand-over'] : ['Available Task'];
     return {
       ...task,
       assigneeId: null,
@@ -740,14 +1170,23 @@ export function applyOptimisticTaskMapAssignment(
   const hasPausedStatus = existingStatuses.some(
     (st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'PAUSED'
   );
+  const hasHandoverOutStatus = existingStatuses.some(
+    (st) => st.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVEROUT'
+  );
   const hadHandover =
     Boolean(task.taskMap?.handedOver) ||
     existingStatuses.some((st) => isHandoverSubStatusKey(st.trim().toUpperCase().replace(/[\s_-]+/g, '')));
   const previousOwnerId = getEffectiveTaskMapHandlerId(task) || task.assigneeId || null;
   const isCrossUserTransfer = Boolean(previousOwnerId && previousOwnerId !== targetUser.id);
+  const keepHandoverOutInQueue =
+    mode === 'QUEUE' &&
+    !isCrossUserTransfer &&
+    !preserveHandover &&
+    hasHandoverOutStatus;
   const shouldSetHandover =
     mode === 'QUEUE' &&
     !hasPausedStatus &&
+    !keepHandoverOutInQueue &&
     (hadHandover || isCrossUserTransfer || Boolean(preserveHandover));
 
   let cleanedStatuses = existingStatuses.filter((st) => {
@@ -757,8 +1196,10 @@ export function applyOptimisticTaskMapAssignment(
     return true;
   });
 
-  if (shouldSetHandover) {
-    cleanedStatuses = ['Hand-over'];
+  if (keepHandoverOutInQueue) {
+    cleanedStatuses = ['Hand-over Out'];
+  } else if (shouldSetHandover) {
+    cleanedStatuses = ['Hand-over In'];
   } else if (mode === 'IN_PROGRESS' && !cleanedStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'INPROGRESS')) {
     cleanedStatuses.push('In progress');
   } else if (mode === 'QUEUE' && cleanedStatuses.length === 0) {
@@ -932,6 +1373,7 @@ export interface TaskMapDataResponse {
   tasks: TaskMapItem[];
   launchTasks?: TaskMapItem[];
   availablePool: TaskMapItem[];
+  availablePoolIds?: string[];
   allClients?: Array<{ id: string; name: string }>;
   options: TaskMapOption[];
   shifts: TaskMapShift[];
@@ -951,6 +1393,7 @@ export interface TaskMapDataResponse {
   upworkProjectClients?: string[];
   maActiveSessions?: Record<string, any>;
   dailySheetLogs?: DailySheetLogItem[];
+  latestSheetRows?: DailySheetLogItem[];
 }
 
 export interface DailySheetLogItem {
@@ -1006,61 +1449,281 @@ export interface DailyScheduleSheetMetadata {
   totalRows: number;
   source: string;
 }
+// ===========================================================================
+// Client-Side Request Cache & In-Flight Deduplication for taskMapApi
+// ===========================================================================
+
+interface TaskMapApiCacheEntry<T = any> {
+  data: T;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+const TASK_MAP_API_CACHE_MAX_ENTRIES = 100;
+const TASK_MAP_CACHE_TTL = {
+  DATA: 15_000,
+  ADMIN_TASKS: 30_000,
+  OPTIONS: 5 * 60_000,
+  SHIFTS: 5 * 60_000,
+  HISTORY_DATES: 2 * 60_000,
+  LAUNCH_DATA: 30_000,
+  LAUNCH_CANDIDATES: 30_000,
+  DAILY_OTP: 60_000,
+  CLIENT_LOCK: 30_000,
+  TIMELINE: 15_000,
+  UPWORK_CLIENTS: 5 * 60_000,
+  UPWORK_ACTIVE: 10_000,
+  TASK_DESCRIPTION: 60_000,
+  CRM_FOLLOW_UPS: 20_000,
+  DAILY_SHEET_LOGS: 10_000,
+  DAILY_SCHEDULE_CONFIG: 5 * 60_000,
+  USER_SHEET_ACTIVITY: 15_000,
+} as const;
+
+const taskMapApiCache = new Map<string, TaskMapApiCacheEntry>();
+const taskMapApiInflight = new Map<string, Promise<any>>();
+
+function getCacheEntry<T>(key: string): T | undefined {
+  const entry = taskMapApiCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    taskMapApiCache.delete(key);
+    return undefined;
+  }
+  // Refresh LRU order
+  taskMapApiCache.delete(key);
+  taskMapApiCache.set(key, entry);
+  return entry.data as T;
+}
+
+function setCacheEntry<T>(key: string, data: T, ttlMs: number): void {
+  if (ttlMs <= 0) return;
+  const now = Date.now();
+  if (taskMapApiCache.has(key)) {
+    taskMapApiCache.delete(key);
+  }
+  taskMapApiCache.set(key, {
+    data,
+    updatedAt: now,
+    expiresAt: now + ttlMs,
+  });
+  while (taskMapApiCache.size > TASK_MAP_API_CACHE_MAX_ENTRIES) {
+    const oldestKey = taskMapApiCache.keys().next().value;
+    if (!oldestKey) break;
+    taskMapApiCache.delete(oldestKey);
+  }
+}
+
+function createAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', 'AbortError');
+  }
+  const err = new Error('The operation was aborted.');
+  err.name = 'AbortError';
+  return err;
+}
+
+function raceWithAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(createAbortError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(createAbortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
+function cachedRequest<T>(
+  key: string,
+  ttlMs: number,
+  fetcher: () => Promise<T>,
+  options?: { force?: boolean; signal?: AbortSignal }
+): Promise<T> {
+  if (options?.signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
+  if (!options?.force) {
+    const cached = getCacheEntry<T>(key);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+    const existingInflight = taskMapApiInflight.get(key) as Promise<T> | undefined;
+    if (existingInflight) {
+      return raceWithAbortSignal(existingInflight, options?.signal);
+    }
+  }
+
+  const requestPromise = fetcher()
+    .then((result) => {
+      setCacheEntry(key, result, ttlMs);
+      return result;
+    })
+    .finally(() => {
+      if (taskMapApiInflight.get(key) === requestPromise) {
+        taskMapApiInflight.delete(key);
+      }
+    });
+
+  taskMapApiInflight.set(key, requestPromise);
+  return raceWithAbortSignal(requestPromise, options?.signal);
+}
+
+/**
+ * Invalidates cached entries in taskMapApi matching the given prefix(es).
+ * Omit `prefixes` to clear all in-memory taskMapApi cache entries.
+ */
+export function invalidateTaskMapCache(prefixes?: string | string[]): void {
+  if (!prefixes) {
+    taskMapApiCache.clear();
+    return;
+  }
+  const list = Array.isArray(prefixes) ? prefixes : [prefixes];
+  for (const key of Array.from(taskMapApiCache.keys())) {
+    if (list.some((prefix) => key.startsWith(prefix))) {
+      taskMapApiCache.delete(key);
+    }
+  }
+}
+
+/**
+ * Clears all taskMapApi in-memory caches, in-flight trackers, and Task Map sessionStorage SWR entries.
+ */
+export function clearTaskMapApiCache(): void {
+  taskMapApiCache.clear();
+  taskMapApiInflight.clear();
+  if (typeof window !== 'undefined') {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (key && key.startsWith('nexus_taskmap_swr_v1:')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => sessionStorage.removeItem(k));
+    } catch {
+      // Ignore storage access errors
+    }
+  }
+}
 
 export const taskMapApi = {
-  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<TaskMapDataResponse> => {
-    const q = new URLSearchParams();
-    if (params?.shift) q.set('shift', params.shift);
-    if (params?.date) q.set('date', params.date);
-    if (params?.client) q.set('client', params.client);
-    q.set('_t', String(Date.now()));
-    const queryString = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
-      signal: params?.signal,
-      timeoutMs: params?.timeoutMs ?? 25000,
-    });
+  invalidateCache: invalidateTaskMapCache,
+  clearCache: clearTaskMapApiCache,
+
+  getData: async (params?: { shift?: string; date?: string; search?: string; client?: string; signal?: AbortSignal; timeoutMs?: number; force?: boolean }): Promise<TaskMapDataResponse> => {
+    const shiftKey = (params?.shift || 'DEFAULT').trim().toUpperCase();
+    const dateKey = (params?.date || 'TODAY').trim();
+    const clientKey = (params?.client || '').trim().toLowerCase();
+    const cacheKey = `data:${shiftKey}::${dateKey}::${clientKey}`;
+
+    return cachedRequest<TaskMapDataResponse>(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.DATA,
+      async () => {
+        const q = new URLSearchParams();
+        if (params?.shift) q.set('shift', params.shift);
+        if (params?.date) q.set('date', params.date);
+        if (params?.client) q.set('client', params.client);
+        // Request compact wire payload (deduplicates availablePool via availablePoolIds)
+        q.set('compact', '1');
+        const queryString = q.toString() ? `?${q.toString()}` : '';
+        const res = await apiClient<TaskMapDataResponse>(`/api/task-map/data${queryString}`, {
+          timeoutMs: params?.timeoutMs ?? 25000,
+        });
+        // Transparently hydrate availablePool from availablePoolIds + tasks so all consumers see the exact same shape
+        if (res && !Array.isArray(res.availablePool) && Array.isArray(res.availablePoolIds)) {
+          const byId = new Map<string, TaskMapItem>();
+          for (const t of res.tasks || []) {
+            byId.set(t.id, t);
+          }
+          res.availablePool = res.availablePoolIds
+            .map((id) => byId.get(id))
+            .filter((t): t is TaskMapItem => Boolean(t));
+        }
+        return res;
+      },
+      { force: params?.force, signal: params?.signal }
+    );
   },
 
-  searchAdminTasks: async (query?: string, limit?: number): Promise<TaskMapItem[]> => {
+  searchAdminTasks: async (query?: string, limit?: number, options?: { force?: boolean }): Promise<TaskMapItem[]> => {
+    const cleanQuery = (query || '').trim().toLowerCase();
+    const cacheKey = `admin-tasks:${cleanQuery}::${limit ?? ''}`;
     try {
-      const q = new URLSearchParams();
-      if (query) q.set('q', query);
-      if (limit) q.set('limit', String(limit));
-      q.set('_t', String(Date.now()));
-      const res = await apiClient<{ success: boolean; tasks: TaskMapItem[] }>(`/api/task-map/admin-tasks?${q.toString()}`);
-      return res.tasks || [];
+      return await cachedRequest<TaskMapItem[]>(
+        cacheKey,
+        TASK_MAP_CACHE_TTL.ADMIN_TASKS,
+        async () => {
+          const q = new URLSearchParams();
+          if (query) q.set('q', query);
+          if (limit) q.set('limit', String(limit));
+          const qs = q.toString() ? `?${q.toString()}` : '';
+          const res = await apiClient<{ success: boolean; tasks: TaskMapItem[] }>(`/api/task-map/admin-tasks${qs}`);
+          return res.tasks || [];
+        },
+        { force: options?.force }
+      );
     } catch (err) {
       console.warn('Failed to search admin tasks:', err);
       return [];
     }
   },
 
-  getOptions: async (): Promise<{ success: boolean; options: TaskMapOption[] }> => {
-    return apiClient<{ success: boolean; options: TaskMapOption[] }>(`/api/task-map/options?_t=${Date.now()}`);
+  getOptions: async (options?: { force?: boolean }): Promise<{ success: boolean; options: TaskMapOption[] }> => {
+    return cachedRequest(
+      'options',
+      TASK_MAP_CACHE_TTL.OPTIONS,
+      () => apiClient<{ success: boolean; options: TaskMapOption[] }>('/api/task-map/options'),
+      { force: options?.force }
+    );
   },
 
   upsertOption: async (data: Partial<TaskMapOption>): Promise<{ success: boolean; option: TaskMapOption }> => {
-    return apiClient<{ success: boolean; option: TaskMapOption }>('/api/task-map/options', {
+    const res = await apiClient<{ success: boolean; option: TaskMapOption }>('/api/task-map/options', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['options', 'data:']);
+    return res;
   },
 
   deleteOption: async (id: string, force = false): Promise<{ success: boolean; inUseCount?: number }> => {
-    return apiClient<{ success: boolean; inUseCount?: number }>(`/api/task-map/options/${id}?force=${force}`, {
+    const res = await apiClient<{ success: boolean; inUseCount?: number }>(`/api/task-map/options/${id}?force=${force}`, {
       method: 'DELETE',
     });
+    invalidateTaskMapCache(['options', 'data:']);
+    return res;
   },
 
-  getShifts: async (): Promise<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }> => {
-    return apiClient<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }>(`/api/task-map/shifts?_t=${Date.now()}`);
+  getShifts: async (options?: { force?: boolean }): Promise<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }> => {
+    return cachedRequest(
+      'shifts',
+      TASK_MAP_CACHE_TTL.SHIFTS,
+      () => apiClient<{ success: boolean; shifts: TaskMapShift[]; activeShiftKey: string }>('/api/task-map/shifts'),
+      { force: options?.force }
+    );
   },
 
   updateShifts: async (shifts: Partial<TaskMapShift>[]): Promise<{ success: boolean; shifts: TaskMapShift[] }> => {
-    return apiClient<{ success: boolean; shifts: TaskMapShift[] }>('/api/task-map/shifts', {
+    const res = await apiClient<{ success: boolean; shifts: TaskMapShift[] }>('/api/task-map/shifts', {
       method: 'PUT',
       body: JSON.stringify({ shifts }),
     });
+    invalidateTaskMapCache(['shifts', 'data:']);
+    return res;
   },
 
   updateTaskStatuses: async (
@@ -1086,7 +1749,7 @@ export const taskMapApi = {
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{
+      const res = await apiClient<{
         success: boolean;
         taskMap: TaskMapRecord;
         upworkStartedAt?: string | null;
@@ -1099,6 +1762,17 @@ export const taskMapApi = {
         method: 'PATCH',
         body: JSON.stringify({ statuses, ...(extra || {}) }),
       });
+      invalidateTaskMapCache([
+        'data:',
+        'admin-tasks:',
+        'launch-data:',
+        `timeline:${taskId}`,
+        'task-desc:',
+        'upwork-active',
+        'crm-follow-ups',
+        'daily-sheet-logs:',
+      ]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1107,9 +1781,11 @@ export const taskMapApi = {
   claimTask: async (taskId: string): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/claim`, {
+      const res = await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/claim`, {
         method: 'PATCH',
       });
+      invalidateTaskMapCache(['data:', 'admin-tasks:', 'launch-data:', `timeline:${taskId}`]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1123,10 +1799,21 @@ export const taskMapApi = {
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }>(`/api/task-map/tasks/${taskId}/assign`, {
+      const res = await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord; progress?: any; maSession?: any }>(`/api/task-map/tasks/${taskId}/assign`, {
         method: 'PATCH',
         body: JSON.stringify({ assigneeId, mode, ...options }),
       });
+      invalidateTaskMapCache([
+        'data:',
+        'admin-tasks:',
+        'launch-data:',
+        `timeline:${taskId}`,
+        'task-desc:',
+        'upwork-active',
+        'daily-sheet-logs:',
+        'user-sheet-activity:',
+      ]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1139,10 +1826,12 @@ export const taskMapApi = {
   ): Promise<{ success: boolean; task: any; taskMap: TaskMapRecord }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/transfer`, {
+      const res = await apiClient<{ success: boolean; task: any; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/transfer`, {
         method: 'POST',
         body: JSON.stringify({ targetUserId, ...options }),
       });
+      invalidateTaskMapCache(['data:', 'admin-tasks:', 'launch-data:', `timeline:${taskId}`]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1152,20 +1841,24 @@ export const taskMapApi = {
     columnId: string,
     type: 'BOARD' | 'AUDIT' = 'BOARD'
   ): Promise<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }> => {
-    return apiClient<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }>(
+    const res = await apiClient<{ success: boolean; count: number; resetTaskIds: string[]; message?: string }>(
       `/api/task-map/columns/${columnId}/reset`,
       {
         method: 'POST',
         body: JSON.stringify({ type }),
       }
     );
+    invalidateTaskMapCache(['data:', 'admin-tasks:', 'upwork-active']);
+    return res;
   },
 
   pmReview: async (taskId: string, data: { action: 'APPROVE' | 'REQUEST_REVISION'; pmTag?: string; comment?: string }): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/pm-review`, {
+    const res = await apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/pm-review`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['data:', `timeline:${taskId}`]);
+    return res;
   },
 
   runRollover: async (data?: {
@@ -1175,10 +1868,12 @@ export const taskMapApi = {
     fromDate?: string;
     toDate?: string;
   }): Promise<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord; retainedDate?: string; newDate?: string }> => {
-    return apiClient('/api/task-map/rollover', {
+    const res = await apiClient<{ success: boolean; rolledCount?: number; nextShift?: string; taskMap?: TaskMapRecord; retainedDate?: string; newDate?: string }>('/api/task-map/rollover', {
       method: 'POST',
       body: JSON.stringify(data || {}),
     });
+    invalidateTaskMapCache(['data:', 'history-dates']);
+    return res;
   },
 
   runDailyRollover: async (data?: {
@@ -1186,48 +1881,69 @@ export const taskMapApi = {
     toDate?: string;
     retainCurrent?: boolean;
   }): Promise<DailyRolloverResult> => {
-    return apiClient<DailyRolloverResult>('/api/task-map/daily-rollover', {
+    const res = await apiClient<DailyRolloverResult>('/api/task-map/daily-rollover', {
       method: 'POST',
       body: JSON.stringify(data || {}),
     });
+    invalidateTaskMapCache(['data:', 'history-dates']);
+    return res;
   },
 
-  getHistoryDates: async (): Promise<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }> => {
-    return apiClient<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }>(`/api/task-map/history-dates?_t=${Date.now()}`);
+  getHistoryDates: async (options?: { force?: boolean }): Promise<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }> => {
+    return cachedRequest(
+      'history-dates',
+      TASK_MAP_CACHE_TTL.HISTORY_DATES,
+      () => apiClient<{ success: boolean; dates: string[]; currentDate: string; latestDate?: string }>('/api/task-map/history-dates'),
+      { force: options?.force }
+    );
   },
 
   updateTaskMeta: async (taskId: string, meta: { dontRollover?: boolean; handedOver?: boolean; stepOrder?: number; shift?: string }): Promise<{ success: boolean; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/meta`, {
+    const res = await apiClient<{ success: boolean; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/meta`, {
       method: 'PATCH',
       body: JSON.stringify(meta),
     });
+    invalidateTaskMapCache(['data:', `timeline:${taskId}`, 'task-desc:']);
+    return res;
   },
 
-  getLaunchData: async (params?: { start?: string; end?: string; signal?: AbortSignal }): Promise<LaunchMapDataResponse> => {
-    const q = new URLSearchParams();
-    if (params?.start) q.set('start', params.start);
-    if (params?.end) q.set('end', params.end);
-    const qs = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<LaunchMapDataResponse>(`/api/task-map/launch${qs}`, {
-      ...(params?.signal ? { signal: params.signal } : {}),
-    });
+  getLaunchData: async (params?: { start?: string; end?: string; signal?: AbortSignal; force?: boolean }): Promise<LaunchMapDataResponse> => {
+    const cacheKey = `launch-data:${params?.start || ''}::${params?.end || ''}`;
+    return cachedRequest<LaunchMapDataResponse>(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.LAUNCH_DATA,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.start) q.set('start', params.start);
+        if (params?.end) q.set('end', params.end);
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient<LaunchMapDataResponse>(`/api/task-map/launch${qs}`);
+      },
+      { force: params?.force, signal: params?.signal }
+    );
   },
 
-  getLaunchCandidates: async (params?: { q?: string; limit?: number; includeClosed?: boolean; signal?: AbortSignal }): Promise<{
+  getLaunchCandidates: async (params?: { q?: string; limit?: number; includeClosed?: boolean; signal?: AbortSignal; force?: boolean }): Promise<{
     success: boolean;
     candidates: LaunchMapLightItem[];
   }> => {
-    const q = new URLSearchParams();
-    if (params?.q) q.set('q', params.q);
-    if (params?.limit) q.set('limit', String(params.limit));
-    if (params?.includeClosed) q.set('includeClosed', 'true');
-    const qs = q.toString() ? `?${q.toString()}` : '';
-    return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`, {
-      ...(params?.signal ? { signal: params.signal } : {}),
-    });
+    const cacheKey = `launch-candidates:${(params?.q || '').trim().toLowerCase()}::${params?.limit ?? ''}::${Boolean(params?.includeClosed)}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.LAUNCH_CANDIDATES,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.q) q.set('q', params.q);
+        if (params?.limit) q.set('limit', String(params.limit));
+        if (params?.includeClosed) q.set('includeClosed', 'true');
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient<{ success: boolean; candidates: LaunchMapLightItem[] }>(`/api/task-map/launch/candidates${qs}`);
+      },
+      { force: params?.force, signal: params?.signal }
+    );
   },
 
-  getMyDailyOtp: async (): Promise<{
+  getMyDailyOtp: async (options?: { force?: boolean }): Promise<{
     isPm: boolean;
     otp: string | null;
     date?: string;
@@ -1239,18 +1955,31 @@ export const taskMapApi = {
       timestamp: string;
     }>;
   }> => {
-    return apiClient(`/api/task-map/my-daily-otp?_t=${Date.now()}`);
+    return cachedRequest(
+      'daily-otp',
+      TASK_MAP_CACHE_TTL.DAILY_OTP,
+      () => apiClient('/api/task-map/my-daily-otp'),
+      { force: options?.force }
+    );
   },
 
   verifyClientOtp: async (data: { client: string; otp: string }): Promise<{ success: boolean; pmName?: string; error?: string }> => {
-    return apiClient<{ success: boolean; pmName?: string; error?: string }>(`/api/task-map/verify-client-otp`, {
+    const res = await apiClient<{ success: boolean; pmName?: string; error?: string }>('/api/task-map/verify-client-otp', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['daily-otp', `client-lock:${(data.client || '').trim().toLowerCase()}`]);
+    return res;
   },
 
-  getClientLockStatus: async (client: string): Promise<{ clientName: string; isLocked: boolean; isOvertime: boolean; hoursLogged?: number; weeklyLimit?: number }> => {
-    return apiClient(`/api/task-map/client-lock-status?client=${encodeURIComponent(client)}&_t=${Date.now()}`);
+  getClientLockStatus: async (client: string, options?: { force?: boolean }): Promise<{ clientName: string; isLocked: boolean; isOvertime: boolean; hoursLogged?: number; weeklyLimit?: number }> => {
+    const cacheKey = `client-lock:${(client || '').trim().toLowerCase()}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.CLIENT_LOCK,
+      () => apiClient(`/api/task-map/client-lock-status?client=${encodeURIComponent(client)}`),
+      { force: options?.force }
+    );
   },
 
   createLaunchRecord: async (payload: {
@@ -1312,7 +2041,7 @@ export const taskMapApi = {
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient<{
+      const res = await apiClient<{
         success: boolean;
         launchMeta: LaunchMeta;
         effectiveLaunchDate: string | null;
@@ -1323,17 +2052,29 @@ export const taskMapApi = {
         method: 'PATCH',
         body: JSON.stringify(payload),
       });
+      invalidateTaskMapCache(['launch-data:', 'launch-candidates:', 'data:']);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
   },
 
-  getTimeline: async (taskId: string): Promise<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }> => {
-    return apiClient<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/timeline`);
+  getTimeline: async (taskId: string, options?: { force?: boolean }): Promise<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }> => {
+    return cachedRequest(
+      `timeline:${taskId}`,
+      TASK_MAP_CACHE_TTL.TIMELINE,
+      () => apiClient<{ success: boolean; logs: any[]; taskMap: TaskMapRecord }>(`/api/task-map/tasks/${taskId}/timeline`),
+      { force: options?.force }
+    );
   },
 
-  getUpworkClients: async (): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>(`/api/task-map/upwork-clients?_t=${Date.now()}`);
+  getUpworkClients: async (options?: { force?: boolean }): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
+    return cachedRequest(
+      'upwork-clients',
+      TASK_MAP_CACHE_TTL.UPWORK_CLIENTS,
+      () => apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients'),
+      { force: options?.force }
+    );
   },
 
   toggleUpworkClient: async (data: {
@@ -1344,20 +2085,28 @@ export const taskMapApi = {
     clients?: string[];
     projectClients?: string[];
   }): Promise<{ success: boolean; clients: string[]; projectClients?: string[] }> => {
-    return apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients', {
+    const res = await apiClient<{ success: boolean; clients: string[]; projectClients?: string[] }>('/api/task-map/upwork-clients', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    invalidateTaskMapCache(['upwork-clients', 'data:']);
+    return res;
   },
 
-  getUpworkActiveSessions: async (): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
-    return apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>(`/api/task-map/upwork-active?_t=${Date.now()}`);
+  getUpworkActiveSessions: async (options?: { force?: boolean }): Promise<{ success: boolean; activeUpworkSessions: UpworkSession[] }> => {
+    return cachedRequest(
+      'upwork-active',
+      TASK_MAP_CACHE_TTL.UPWORK_ACTIVE,
+      () => apiClient<{ success: boolean; activeUpworkSessions: UpworkSession[] }>('/api/task-map/upwork-active'),
+      { force: options?.force }
+    );
   },
 
   getTaskDescription: async (params: {
     taskId?: string | null;
     title?: string | null;
     client?: string | null;
+    force?: boolean;
   }): Promise<{
     success: boolean;
     taskId: string | null;
@@ -1368,19 +2117,32 @@ export const taskMapApi = {
     subStatuses?: string[];
     description: string | null;
   }> => {
-    const q = new URLSearchParams();
-    if (params.taskId) q.set('taskId', params.taskId);
-    if (params.title) q.set('title', params.title);
-    if (params.client) q.set('client', params.client);
-    const qs = q.toString() ? `?${q.toString()}` : '';
-    return apiClient(`/api/task-map/task-description${qs}`);
+    const cacheKey = `task-desc:${params.taskId || ''}::${(params.title || '').trim().toLowerCase()}::${(params.client || '').trim().toLowerCase()}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.TASK_DESCRIPTION,
+      () => {
+        const q = new URLSearchParams();
+        if (params.taskId) q.set('taskId', params.taskId);
+        if (params.title) q.set('title', params.title);
+        if (params.client) q.set('client', params.client);
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient(`/api/task-map/task-description${qs}`);
+      },
+      { force: params.force }
+    );
   },
 
-  getPendingCrmFollowUps: async (): Promise<{
+  getPendingCrmFollowUps: async (options?: { force?: boolean }): Promise<{
     success: boolean;
     items: PendingCrmFollowUpItem[];
   }> => {
-    return apiClient(`/api/task-map/crm/follow-ups?_t=${Date.now()}`);
+    return cachedRequest(
+      'crm-follow-ups',
+      TASK_MAP_CACHE_TTL.CRM_FOLLOW_UPS,
+      () => apiClient('/api/task-map/crm/follow-ups'),
+      { force: options?.force }
+    );
   },
 
   acknowledgeCrmFollowUps: async (
@@ -1390,10 +2152,16 @@ export const taskMapApi = {
     count?: number;
     error?: string;
   }> => {
-    return apiClient('/api/task-map/crm/follow-ups/acknowledge', {
+    const res = await apiClient<{
+      success: boolean;
+      count?: number;
+      error?: string;
+    }>('/api/task-map/crm/follow-ups/acknowledge', {
       method: 'POST',
       body: JSON.stringify({ taskIds }),
     });
+    invalidateTaskMapCache(['crm-follow-ups']);
+    return res;
   },
 
   respondCrmFollowUp: async (
@@ -1409,10 +2177,19 @@ export const taskMapApi = {
   }> => {
     markTaskSavingToDb(taskId, true);
     try {
-      return await apiClient(`/api/task-map/crm/follow-ups/${taskId}/respond`, {
+      const res = await apiClient<{
+        success: boolean;
+        task?: any;
+        comment?: any;
+        error?: string;
+        uncheckedAudits?: string[];
+        openSubtasks?: string[];
+      }>(`/api/task-map/crm/follow-ups/${taskId}/respond`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
+      invalidateTaskMapCache(['crm-follow-ups', 'data:', `timeline:${taskId}`]);
+      return res;
     } finally {
       markTaskSavingToDb(taskId, false);
     }
@@ -1441,6 +2218,7 @@ export const taskMapApi = {
       const start = params.startedAt ? new Date(params.startedAt) : new Date();
       const end = params.stoppedAt ? new Date(params.stoppedAt) : params.mode === 'STOP' ? new Date() : null;
 
+      const normalizedDeliverables = normalizeTaskDeliverablesInput(params.taskDeliverablesDescription);
       rows = splitMidnightScheduleRows({
         start,
         end,
@@ -1449,14 +2227,14 @@ export const taskMapApi = {
         taskLink: params.taskLink,
         status: params.status,
         timeTracker: params.timeTracker || (params.isUpwork ? 'Upwork' : 'No Need to Track'),
-        taskDeliverablesDescription: params.taskDeliverablesDescription || params.taskTitle,
+        taskDeliverablesDescription: normalizedDeliverables || params.taskTitle,
         taskUpdateAndDeliverables: params.taskUpdateAndDeliverables || '',
       });
     }
 
     const isSplitAcrossMidnight = rows.length > 1;
 
-    return apiClient<{
+    const res = await apiClient<{
       success: boolean;
       rows: SpreadsheetScheduleRow[];
       log?: DailySheetLogItem | null;
@@ -1474,19 +2252,29 @@ export const taskMapApi = {
         isSplitAcrossMidnight,
       }),
     });
+    invalidateTaskMapCache(['data:', 'daily-sheet-logs:', 'upwork-active', 'user-sheet-activity:']);
+    return res;
   },
 
-  getDailySheetLogs: async (params?: { date?: string; maName?: string; search?: string }): Promise<{
+  getDailySheetLogs: async (params?: { date?: string; maName?: string; search?: string; force?: boolean }): Promise<{
     success: boolean;
     date: string;
     logs: DailySheetLogItem[];
   }> => {
-    const q = new URLSearchParams();
-    if (params?.date) q.set('date', params.date);
-    if (params?.maName) q.set('maName', params.maName);
-    if (params?.search) q.set('search', params.search);
-    q.set('_t', String(Date.now()));
-    return apiClient(`/api/task-map/sheets/logs?${q.toString()}`);
+    const cacheKey = `daily-sheet-logs:${params?.date || 'TODAY'}::${(params?.maName || '').trim().toLowerCase()}::${(params?.search || '').trim().toLowerCase()}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.DAILY_SHEET_LOGS,
+      () => {
+        const q = new URLSearchParams();
+        if (params?.date) q.set('date', params.date);
+        if (params?.maName) q.set('maName', params.maName);
+        if (params?.search) q.set('search', params.search);
+        const qs = q.toString() ? `?${q.toString()}` : '';
+        return apiClient(`/api/task-map/sheets/logs${qs}`);
+      },
+      { force: params?.force }
+    );
   },
 
   createDailySheetLog: async (payload: {
@@ -1507,13 +2295,15 @@ export const taskMapApi = {
     taskUpdateAndDeliverables?: string | null;
     taskLink?: string | null;
   }): Promise<{ success: boolean; log: DailySheetLogItem }> => {
-    return apiClient('/api/task-map/sheets/logs', {
+    const res = await apiClient<{ success: boolean; log: DailySheetLogItem }>('/api/task-map/sheets/logs', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    invalidateTaskMapCache(['data:', 'daily-sheet-logs:', 'user-sheet-activity:']);
+    return res;
   },
 
-  getDailyScheduleConfig: async (userId?: string): Promise<{
+  getDailyScheduleConfig: async (userId?: string, options?: { force?: boolean }): Promise<{
     success: boolean;
     userId: string;
     userName: string | null;
@@ -1521,8 +2311,16 @@ export const taskMapApi = {
     dailySheetScriptUrl?: string | null;
     spreadsheetId: string | null;
   }> => {
-    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
-    return apiClient(`/api/task-map/sheets/user-config${q}`);
+    const cacheKey = `daily-schedule-config:${userId || 'SELF'}`;
+    return cachedRequest(
+      cacheKey,
+      TASK_MAP_CACHE_TTL.DAILY_SCHEDULE_CONFIG,
+      () => {
+        const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+        return apiClient(`/api/task-map/sheets/user-config${q}`);
+      },
+      { force: options?.force }
+    );
   },
 
   updateDailyScheduleConfig: async (payload: {
@@ -1574,21 +2372,30 @@ export const taskMapApi = {
     client?: string | null;
     note?: string | null;
   }): Promise<{ success: boolean; check: SuperviseCheckItem }> => {
-    return apiClient('/api/task-map/supervise/check', {
+    const res = await apiClient<{ success: boolean; check: SuperviseCheckItem }>('/api/task-map/supervise/check', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    invalidateTaskMapCache(['data:']);
+    return res;
   },
 
   uncheckSuperviseSession: async (sessionKey: string): Promise<{ success: boolean; sessionKey: string }> => {
-    return apiClient('/api/task-map/supervise/uncheck', {
+    const res = await apiClient<{ success: boolean; sessionKey: string }>('/api/task-map/supervise/uncheck', {
       method: 'POST',
       body: JSON.stringify({ sessionKey }),
     });
+    invalidateTaskMapCache(['data:']);
+    return res;
   },
 
-  checkUserSheetActivity: async (userId: string): Promise<UserSheetActivityStatus> => {
-    return apiClient<UserSheetActivityStatus>(`/api/task-map/users/${encodeURIComponent(userId)}/sheet-activity?_t=${Date.now()}`);
+  checkUserSheetActivity: async (userId: string, options?: { force?: boolean }): Promise<UserSheetActivityStatus> => {
+    return cachedRequest(
+      `user-sheet-activity:${userId}`,
+      TASK_MAP_CACHE_TTL.USER_SHEET_ACTIVITY,
+      () => apiClient<UserSheetActivityStatus>(`/api/task-map/users/${encodeURIComponent(userId)}/sheet-activity`),
+      { force: options?.force }
+    );
   },
 };
 
@@ -1650,7 +2457,7 @@ export interface SpreadsheetScheduleRow {
   timeTracker: string; // Col H (8): "Upwork" | "No Need to Track" | "Clockify"
   task: string; // Col I (9): Task Title
   dc?: boolean | string; // Col J (10): false
-  taskDeliverablesDescription?: string; // Col K (11): High-level deliverable scope/title
+  taskDeliverablesDescription?: string | number; // Col K (11): High-level deliverable scope/title (plain number or text)
   taskUpdateAndDeliverables?: string; // Col L (12): Detailed update & outcome
   taskLink?: string; // Col M (13): Nexus or ClickUp link
   taskStatus?: string; // Col N (14): "In Progress" | "In Review" | "Handover" | "Closed" (managed by Sheet automation)
@@ -1659,6 +2466,14 @@ export interface SpreadsheetScheduleRow {
   doubleCheckedBy?: string; // Col Q (17)
   automation?: string; // Col R (18)
   notes?: string; // Col S (19)
+}
+
+/**
+ * Normalizes a Task Deliverables Description input, accepting plain numbers (including 0) or text.
+ */
+export function normalizeTaskDeliverablesInput(value?: string | number | null): string {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
 }
 
 export interface SyncScheduleToSpreadsheetParams {
@@ -1671,7 +2486,7 @@ export interface SyncScheduleToSpreadsheetParams {
   mode: 'START' | 'STOP' | 'UPDATE';
   startedAt?: Date | string | null;
   stoppedAt?: Date | string | null;
-  taskDeliverablesDescription?: string | null;
+  taskDeliverablesDescription?: string | number | null;
   taskUpdateAndDeliverables?: string | null;
   timeTracker?: string | null;
   isUpwork?: boolean;
@@ -1805,11 +2620,13 @@ export function splitMidnightScheduleRows(
     taskLink?: string;
     status: string;
     timeTracker?: string;
-    taskDeliverablesDescription?: string;
+    taskDeliverablesDescription?: string | number | null;
     taskUpdateAndDeliverables?: string;
   }
 ): SpreadsheetScheduleRow[] {
   const { start, end } = session;
+  const normalizedDeliverables =
+    normalizeTaskDeliverablesInput(session.taskDeliverablesDescription) || session.task;
   if (!end) {
     // Ongoing task (still in progress): single row for start date with blank Time Out
     return [
@@ -1823,7 +2640,7 @@ export function splitMidnightScheduleRows(
         timeTracker: session.timeTracker || 'No Need to Track',
         task: session.task,
         dc: 'FALSE',
-        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskDeliverablesDescription: normalizedDeliverables,
         taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
       },
     ];
@@ -1849,7 +2666,7 @@ export function splitMidnightScheduleRows(
         timeTracker: session.timeTracker || 'No Need to Track',
         task: session.task,
         dc: 'FALSE',
-        taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+        taskDeliverablesDescription: normalizedDeliverables,
         taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
       },
     ];
@@ -1873,7 +2690,7 @@ export function splitMidnightScheduleRows(
     timeTracker: session.timeTracker || 'No Need to Track',
     task: session.task,
     dc: 'FALSE',
-    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskDeliverablesDescription: normalizedDeliverables,
     taskUpdateAndDeliverables: `${session.taskUpdateAndDeliverables || ''} (Part 1 - Until Midnight)`.trim(),
   });
 
@@ -1891,7 +2708,7 @@ export function splitMidnightScheduleRows(
     timeTracker: session.timeTracker || 'No Need to Track',
     task: session.task,
     dc: 'FALSE',
-    taskDeliverablesDescription: session.taskDeliverablesDescription || session.task,
+    taskDeliverablesDescription: normalizedDeliverables,
     taskUpdateAndDeliverables: session.taskUpdateAndDeliverables || '',
   });
 
@@ -2555,9 +3372,12 @@ export function createEmptyUserBlock(params?: {
       timeOut: cleanTimeOut,
       isLive: isLiveAssumed,
       isMissingTime: Boolean(
-        params?.rowNumber &&
         !cleanTimeIn &&
-        (cleanTimeOut || (params?.status && params?.status.toLowerCase() !== 'in progress'))
+        !cleanTimeOut &&
+        (Boolean(params?.rowNumber) ||
+          assumedClient !== 'No client inputted' ||
+          assumedTitle !== 'No task inputted' ||
+          Boolean(params?.status))
       ),
       isUpwork: Boolean(params?.isUpwork),
       client: assumedClient,
@@ -2605,6 +3425,7 @@ export {
  * as grey to match user preference and spreadsheet workflow.
  */
 export const TASK_MAP_STATUS_COLORS = {
+  IN_PROGRESS: '#D04A7C',    // -> IN PROGRESS (Pink)
   AVAILABLE_TASK: '#2563eb', // Workflow pool (no main status change)
   HAND_OVER: '#3f3f46',      // Retains IN PROGRESS (Grey)
   PAUSED: '#eab308',         // Retains IN PROGRESS
@@ -2616,7 +3437,11 @@ export const TASK_MAP_STATUS_COLORS = {
   REVISION: '#5B6BD6',       // -> REVISION (Indigo)
   TO_SEND: '#0284c7',        // -> CRM Needed to Send (Sky-600)
   READY_TO_SEND: '#0284c7',  // -> CRM Needed to Send (Sky-600)
-  FOLLOW_UP: '#6366F1',      // -> CRM Needed to Follow Up (Indigo)
+  FOLLOW_UP: '#6366F1',      // -> To Follow Up (Indigo)
+  FOLLOW_UP_1D: '#eab308',   // Follow-up 1 Day (Yellow)
+  FOLLOW_UP_3D: '#f97316',   // Follow-up 3rd Day (Orange)
+  FOLLOW_UP_5D: '#ef4444',   // Follow-up 5th Day (Red)
+  FOLLOW_UP_1W: '#8b5cf6',   // Follow-up 1 Week (Violet)
   CRM: '#22A3AE',            // Existing historical CRM (Teal)
   CRM_TO_SEND: '#0284c7',    // CRM Needed to Send (Sky-600)
   CRM_FOLLOW_UP: '#6366F1',  // CRM Needed to Follow Up (Indigo)
@@ -2671,6 +3496,7 @@ export function getTaskMapSubStatusStyle(
 
   // 3. Known canonical fallback map
   const canonicalColors: Record<string, { color: string; textColor: string }> = {
+    INPROGRESS: { color: TASK_MAP_STATUS_COLORS.IN_PROGRESS, textColor: '#ffffff' },
     AVAILABLETASK: { color: TASK_MAP_STATUS_COLORS.AVAILABLE_TASK, textColor: '#ffffff' },
     HANDOVER: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
     HANDOVEROUT: { color: TASK_MAP_STATUS_COLORS.HAND_OVER, textColor: '#ffffff' },
@@ -2687,6 +3513,10 @@ export function getTaskMapSubStatusStyle(
     TOSEND: { color: TASK_MAP_STATUS_COLORS.TO_SEND, textColor: '#ffffff' },
     READYTOSEND: { color: TASK_MAP_STATUS_COLORS.READY_TO_SEND, textColor: '#ffffff' },
     FOLLOWUP: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP, textColor: '#ffffff' },
+    FOLLOWUP1DAY: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1D, textColor: '#ffffff' },
+    FOLLOWUP3RDDAY: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_3D, textColor: '#ffffff' },
+    FOLLOWUP5THDAY: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_5D, textColor: '#ffffff' },
+    FOLLOWUP1WEEK: { color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1W, textColor: '#ffffff' },
     CRM: { color: TASK_MAP_STATUS_COLORS.CRM, textColor: '#ffffff' },
     CRMTOSEND: { color: TASK_MAP_STATUS_COLORS.CRM_TO_SEND, textColor: '#ffffff' },
     CRMNEEDEDTOSEND: { color: TASK_MAP_STATUS_COLORS.CRM_TO_SEND, textColor: '#ffffff' },
@@ -2769,13 +3599,13 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     key: 'HANDOVEROUT',
     label: 'Hand-over Out',
     title: 'Hand-over Out & Clock Out',
-    summary: 'Clocks out active work with deliverables/notes and hands the task over out of this MA column to Available Tasks.',
-    destination: 'Task Map -> Available Tasks (Hand-over In)',
-    mainStatusChange: null,
+    summary: 'Clocks out active work with deliverables/notes and moves the task to Queue tagged as Hand-over Out.',
+    destination: 'Task Map -> MA Queue (Hand-over Out)',
+    mainStatusChange: 'PENDING (preserves recurring cadence)',
     sideEffects: [
       'Requires Task Deliverables Description & Task Update before clock-out.',
       'Stamps Time Out in DailySheetLog & Google Daily Schedule.',
-      'Moves task out to Available Tasks as Hand-over In for PM reassignment.',
+      'Moves task to Queue tagged as Hand-over Out.',
     ],
     requiresDeliverablesClockOut: true,
     requiresConfirmModal: true,
@@ -2785,12 +3615,12 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     key: 'HANDOVERIN',
     label: 'Hand-over In',
     title: 'Mark as Hand-over In',
-    summary: 'Marks this task in the Available Tasks pool as a Hand-over In task ready for MA assignment.',
-    destination: 'Task Map -> Available Tasks (Hand-over In)',
+    summary: 'Marks this task in the MA Queue as Hand-over In (received from Available Tasks or another MA).',
+    destination: 'Task Map -> MA Queue (Hand-over In)',
     mainStatusChange: null,
     sideEffects: [
-      'Keeps the task in Available Tasks tagged as Hand-over In.',
-      'Preserves Hand-over tag when dragged into an MA’s Queue.',
+      'Keeps the task in the MA Queue tagged as Hand-over In.',
+      'Automatically applied when dragged from Available Tasks or another MA.',
     ],
     requiresDeliverablesClockOut: false,
     requiresConfirmModal: true,
@@ -2897,7 +3727,7 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     label: 'Ready to Send',
     title: 'Approve & Move to CRM (To Send)',
     summary: 'Verifies all required audits & subtasks are complete, then transfers the task to CRM Map.',
-    destination: 'CRM Map -> CRM Needed to Send',
+    destination: 'CRM Map -> To Send',
     mainStatusChange: 'CRM',
     sideEffects: [
       'Checks audit checklist and open subtasks gate before moving.',
@@ -2912,7 +3742,7 @@ export const TASK_MAP_SUBSTATUS_GUIDE: Record<string, Omit<SubStatusTransitionGu
     label: 'To send',
     title: 'Mark Ready to Send (CRM)',
     summary: 'Places the task in the CRM To Send queue ready for client outreach.',
-    destination: 'CRM Map -> CRM Needed to Send',
+    destination: 'CRM Map -> To Send',
     mainStatusChange: 'CRM',
     sideEffects: [
       'Verifies completion gate before entering CRM.',
@@ -3137,13 +3967,18 @@ const SUB_STATUS_DB_ALIAS: Record<string, string> = {
   SENTBUTWAITING: 'WAITING',
   ONHOLD: 'ON-HOLD',
   TOREVIEW: 'IN REVIEW',
-  TOSEND: 'CRM Needed to Send',
-  READYTOSEND: 'CRM Needed to Send',
-  CRMTOSEND: 'CRM Needed to Send',
-  CRMNEEDEDTOSEND: 'CRM Needed to Send',
-  FOLLOWUP: 'CRM Needed to Follow Up',
-  CRMFOLLOWUP: 'CRM Needed to Follow Up',
-  CRMNEEDEDTOFOLLOWUP: 'CRM Needed to Follow Up',
+  TOSEND: 'TO SEND',
+  READYTOSEND: 'TO SEND',
+  CRMTOSEND: 'TO SEND',
+  CRMNEEDEDTOSEND: 'TO SEND',
+  FOLLOWUP: 'TO FOLLOW UP',
+  TOFOLLOWUP: 'TO FOLLOW UP',
+  FOLLOWUP1DAY: 'TO FOLLOW UP',
+  FOLLOWUP3RDDAY: 'TO FOLLOW UP',
+  FOLLOWUP5THDAY: 'TO FOLLOW UP',
+  FOLLOWUP1WEEK: 'TO FOLLOW UP',
+  CRMFOLLOWUP: 'TO FOLLOW UP',
+  CRMNEEDEDTOFOLLOWUP: 'TO FOLLOW UP',
   CRM: 'CRM',
   CLOSED: 'CLOSED',
 };
@@ -3184,10 +4019,12 @@ const CANONICAL_STATUS_MAP: Record<string, string> = {
   CHECKING: 'CHECKING',
   INCHECKING: 'CHECKING',
   CRM: 'CRM',
-  CRMNEEDEDTOSEND: 'CRM Needed to Send',
-  CRMTOSEND: 'CRM Needed to Send',
-  CRMNEEDEDTOFOLLOWUP: 'CRM Needed to Follow Up',
-  CRMFOLLOWUP: 'CRM Needed to Follow Up',
+  TOSEND: 'TO SEND',
+  TOFOLLOWUP: 'TO FOLLOW UP',
+  CRMNEEDEDTOSEND: 'TO SEND',
+  CRMTOSEND: 'TO SEND',
+  CRMNEEDEDTOFOLLOWUP: 'TO FOLLOW UP',
+  CRMFOLLOWUP: 'TO FOLLOW UP',
   CLOSED: 'CLOSED',
   DONE: 'CLOSED',
   ONHOLD: 'ON-HOLD',
@@ -3218,8 +4055,8 @@ export function getDefaultTaskMapSubStatuses(
   _options?: { isAssigned?: boolean }
 ): string[] {
   const canonical = toCanonicalTaskStatus(taskStatus);
-  if (canonical === 'CRM Needed to Send' || canonical === 'CRM') return ['To send'];
-  if (canonical === 'CRM Needed to Follow Up') return ['Follow up'];
+  if (canonical === 'TO SEND' || canonical === 'CRM') return ['To send'];
+  if (canonical === 'TO FOLLOW UP') return ['Follow up'];
   if (canonical === 'WAITING') return ['Sent but Waiting'];
   if (canonical === 'ON-HOLD') return ['On-hold'];
   if (canonical === 'REVISION') return ['Revision'];
@@ -3337,7 +4174,7 @@ export function normalizeTaskMapSubStatuses(
     return clean.slice(0, 1);
   }
 
-  if (canonical === 'CRM' || canonical === 'CRM Needed to Send') {
+  if (canonical === 'CRM' || canonical === 'TO SEND') {
     if (
       clean.length === 0 ||
       clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
@@ -3347,7 +4184,7 @@ export function normalizeTaskMapSubStatuses(
     return clean.slice(0, 1);
   }
 
-  if (canonical === 'CRM Needed to Follow Up') {
+  if (canonical === 'TO FOLLOW UP') {
     if (
       clean.length === 0 ||
       clean.every((s) => STALE_CRM_SUBSTATUS_KEYS.has(normalizeSubStatusKey(s)))
@@ -3358,7 +4195,15 @@ export function normalizeTaskMapSubStatuses(
   }
 
   if (clean.length > 0) {
-    return clean.slice(0, 1);
+    const first = clean[0];
+    const firstNorm = normalizeSubStatusKey(first);
+    if (options?.isAssigned === false && isHandoverSubStatusKey(firstNorm)) {
+      return ['Hand-over'];
+    }
+    if (options?.isAssigned === true && firstNorm === 'HANDOVER') {
+      return ['Hand-over In'];
+    }
+    return [first];
   }
 
   return getDefaultTaskMapSubStatuses(taskStatus, options);
@@ -3379,11 +4224,298 @@ export function isTaskMapItemOnHold(task?: Partial<TaskMapItem> | null): boolean
 }
 
 /**
+ * Returns true if the Task Map item is in Waiting status (main status or Task Map sub-status).
+ */
+export function isTaskMapItemWaiting(task?: Partial<TaskMapItem> | null): boolean {
+  if (!task) return false;
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (s === 'WAITING' || s === 'SENT' || s.includes('WAITING')) return true;
+  const customStatuses = task.taskMap?.statuses || [];
+  return customStatuses.some((cs: string) => {
+    const up = (cs || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+    return up === 'WAITING' || up === 'SENTBUTWAITING' || up.includes('WAITING');
+  });
+}
+
+/**
+ * Returns true if a task's status or Task Map sub-statuses exclude it from the Available Tasks pool.
+ * Available Tasks includes Waiting, In Progress, Revision/Revising, Pending, and On-Hold tasks,
+ * while excluding CRM, Review/Checking, and recurring/cadence tasks.
+ */
+export function isAvailablePoolExcludedTask(
+  task?: (Partial<TaskMapItem> & { recurringConfig?: any }) | null,
+  overrideSubStatuses?: string[]
+): boolean {
+  if (!task) return true;
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const mapStatuses = (overrideSubStatuses ?? task.taskMap?.statuses ?? []).map((x: string) =>
+    (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+  );
+
+  return (
+    s === 'CRM' ||
+    s.includes('CRM') ||
+    s === 'TOSEND' ||
+    s === 'TOFOLLOWUP' ||
+    s === 'INREVIEW' ||
+    s === 'TOREVIEW' ||
+    s === 'REVIEW' ||
+    s === 'CHECKING' ||
+    s === 'INCHECKING' ||
+    s === 'DAILY' ||
+    s.includes('DAILY') ||
+    s === 'WEEKLY' ||
+    s.includes('WEEKLY') ||
+    s === 'MONTHLY' ||
+    s.includes('MONTHLY') ||
+    s === 'RECURRING' ||
+    s.includes('RECURRING') ||
+    Boolean(task.recurringConfig) ||
+    mapStatuses.some(
+      (st: string) =>
+        [
+          'CRM',
+          'ASKCLIENT',
+          'READYTOSEND',
+          'TOSEND',
+          'DAILY',
+          'WEEKLY',
+          'MONTHLY',
+          'RECURRING',
+          'INREVIEW',
+          'TOREVIEW',
+          'CHECKING',
+          'INCHECKING',
+        ].includes(st) ||
+        st.includes('CRM') ||
+        st.includes('DAILY') ||
+        st.includes('WEEKLY') ||
+        st.includes('MONTHLY') ||
+        st.includes('RECURRING')
+    )
+  );
+}
+
+/**
+ * Numeric urgency rank for Task Map priority sorting (lower = higher priority):
+ * URGENT (0) > HIGH (1) > NORMAL/MEDIUM (2) > LOW (3) > none/other (4).
+ */
+export function getTaskPriorityRank(
+  task?: (Partial<TaskMapItem> & { tags?: Array<string | { name?: string }> }) | null
+): number {
+  if (!task) return 4;
+  const p = (task.priority || '').trim().toUpperCase();
+  const customStatuses = task.taskMap?.statuses || [];
+  const tags = task.tags || [];
+  const isUrgent =
+    p === 'URGENT' ||
+    customStatuses.some((cs) => (cs || '').toUpperCase().includes('URGENT')) ||
+    tags.some((tag) => (typeof tag === 'string' ? tag : tag?.name || '').toUpperCase().includes('URGENT')) ||
+    (task.title || '').toUpperCase().includes('[URGENT]');
+
+  if (isUrgent) return 0;
+  if (p === 'HIGH') return 1;
+  if (p === 'NORMAL' || p === 'MEDIUM') return 2;
+  if (p === 'LOW') return 3;
+  return 4;
+}
+
+/**
+ * Numeric status rank for Available Tasks sorting within the same priority (lower = higher):
+ * Hand-over (0) > Revision (1) > Available Task / other (2) > Waiting (3) > On-Hold (4).
+ */
+export function getAvailableTaskStatusRank(task?: Partial<TaskMapItem> | null): number {
+  if (!task) return 2;
+  if (isTaskMapItemOnHold(task)) return 4;
+  if (isTaskMapItemWaiting(task)) return 3;
+
+  const s = (task.status || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  const mapStatuses = (task.taskMap?.statuses || []).map((x: string) =>
+    (x || '').trim().toUpperCase().replace(/[\s_-]+/g, '')
+  );
+
+  if (
+    mapStatuses.some(
+      (st) => st === 'HANDOVER' || st === 'HANDOVERIN' || st === 'HANDOVEROUT' || st.includes('HANDOVER')
+    )
+  ) {
+    return 0;
+  }
+
+  if (
+    s === 'REVISION' ||
+    s === 'REVISIONS' ||
+    s === 'REVISING' ||
+    s.includes('REVIS') ||
+    mapStatuses.some(
+      (st) => st === 'REVISION' || st === 'REVISIONS' || st === 'REVISING' || st.includes('REVIS')
+    )
+  ) {
+    return 1;
+  }
+
+  if (task.taskMap?.handedOver && !mapStatuses.includes('AVAILABLETASK')) {
+    return 0;
+  }
+
+  return 2;
+}
+
+/**
+ * Comparator for Available Tasks pool:
+ * 1. Bottom tiers: Active tasks (0) > Waiting (1) > On-Hold (2)
+ * 2. Priority urgency: URGENT > HIGH > NORMAL/MEDIUM > LOW
+ * 3. Sub-status bucket within priority: Hand-over > Revision > Available Task / other
+ * 4. Newest createdAt first
+ */
+export function compareAvailablePoolTasks(a: TaskMapItem, b: TaskMapItem): number {
+  const tierA = isTaskMapItemOnHold(a) ? 2 : isTaskMapItemWaiting(a) ? 1 : 0;
+  const tierB = isTaskMapItemOnHold(b) ? 2 : isTaskMapItemWaiting(b) ? 1 : 0;
+  if (tierA !== tierB) return tierA - tierB;
+
+  const priorityDiff = getTaskPriorityRank(a) - getTaskPriorityRank(b);
+  if (priorityDiff !== 0) return priorityDiff;
+
+  const statusDiff = getAvailableTaskStatusRank(a) - getAvailableTaskStatusRank(b);
+  if (statusDiff !== 0) return statusDiff;
+
+  const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+  const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+  return dateB - dateA;
+}
+
+export const CRM_FOLLOW_UP_STAGE_OPTIONS = [
+  { id: 'opt-crm-followup-1d', label: 'Follow-up 1 Day', days: 1, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1D, textColor: '#ffffff' },
+  { id: 'opt-crm-followup-3d', label: 'Follow-up 3rd Day', days: 3, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_3D, textColor: '#ffffff' },
+  { id: 'opt-crm-followup-5d', label: 'Follow-up 5th Day', days: 5, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_5D, textColor: '#ffffff' },
+  { id: 'opt-crm-followup-1w', label: 'Follow-up 1 Week', days: 7, color: TASK_MAP_STATUS_COLORS.FOLLOW_UP_1W, textColor: '#ffffff' },
+] as const;
+
+export function parseFollowUpScheduleDays(label?: string | null): number | null {
+  const compact = (label || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+  if (compact === 'FOLLOWUP1DAY') return 1;
+  if (compact === 'FOLLOWUP3RDDAY') return 3;
+  if (compact === 'FOLLOWUP5THDAY') return 5;
+  if (compact === 'FOLLOWUP1WEEK') return 7;
+  return null;
+}
+
+export function isTimedFollowUpSubStatus(label?: string | null): boolean {
+  return parseFollowUpScheduleDays(label) !== null;
+}
+
+export interface TaskFollowUpScheduleInfo {
+  selectedLabel: string;
+  targetDays: number;
+  selectedDateKey: string;
+  dueDateKey: string;
+  daysRemaining: number;
+  isDue: boolean;
+  effectiveLabel: string;
+  color: string;
+}
+
+function diffManilaDateKeys(fromKey: string, toKey: string): number {
+  const m1 = fromKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m2 = toKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m1 || !m2) return 0;
+  const d1 = Date.UTC(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]));
+  const d2 = Date.UTC(Number(m2[1]), Number(m2[2]) - 1, Number(m2[3]));
+  return Math.round((d2 - d1) / (24 * 60 * 60 * 1000));
+}
+
+/**
+ * Computes the live countdown state for a timed Follow-up task
+ * (Follow-up 1 Day / 3rd Day / 5th Day / 1 Week) based on the date it was selected + target days.
+ * Automatically transitions down through the tiers and becomes "Follow up" once due (daysRemaining <= 0).
+ */
+export function getTaskFollowUpScheduleInfo(
+  task?: Partial<TaskMapItem> | null,
+  now: Date = new Date()
+): TaskFollowUpScheduleInfo | null {
+  if (!task) return null;
+  const rawReviews = task.taskMap?.pmReviews;
+  let reviews: any[] = [];
+  if (Array.isArray(rawReviews)) {
+    reviews = rawReviews;
+  } else if (typeof rawReviews === 'string') {
+    try {
+      const parsed = JSON.parse(rawReviews);
+      if (Array.isArray(parsed)) reviews = parsed;
+    } catch {}
+  }
+
+  const subId = task.isSubtask ? (task.subtaskId || null) : null;
+  const meta = reviews.find(
+    (r: any) =>
+      r &&
+      r.type === 'CRM_FOLLOW_UP_SCHEDULE' &&
+      (subId ? r.subtaskId === subId : !r.subtaskId)
+  );
+
+  const matchedStatusLabel = (task.taskMap?.statuses || []).find((st) => isTimedFollowUpSubStatus(st));
+  const selectedLabel = meta?.selectedLabel || matchedStatusLabel || null;
+  const targetDays = Number(meta?.targetDays || parseFollowUpScheduleDays(selectedLabel) || 0);
+  if (!selectedLabel || !targetDays) return null;
+
+  const selectedDateKey =
+    (typeof meta?.selectedDateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(meta.selectedDateKey)
+      ? meta.selectedDateKey
+      : null) ||
+    getManilaDateKey(meta?.selectedAt || task.taskMap?.updatedAt || task.updatedAt || now) ||
+    getManilaDateKey(now);
+
+  const dueDateKey = selectedDateKey ? shiftDateKeyByDays(selectedDateKey, targetDays) : null;
+  const todayKey = getManilaDateKey(now);
+  if (!selectedDateKey || !dueDateKey || !todayKey) return null;
+  const daysRemaining = diffManilaDateKeys(todayKey, dueDateKey);
+  const isDue = daysRemaining <= 0;
+
+  let effectiveLabel: string;
+  let color: string;
+  if (isDue) {
+    effectiveLabel = 'Follow up';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP;
+  } else if (daysRemaining <= 1) {
+    effectiveLabel = 'Follow-up 1 Day';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_1D;
+  } else if (daysRemaining <= 3) {
+    effectiveLabel = 'Follow-up 3rd Day';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_3D;
+  } else if (daysRemaining <= 5) {
+    effectiveLabel = 'Follow-up 5th Day';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_5D;
+  } else {
+    effectiveLabel = 'Follow-up 1 Week';
+    color = TASK_MAP_STATUS_COLORS.FOLLOW_UP_1W;
+  }
+
+  return {
+    selectedLabel,
+    targetDays,
+    selectedDateKey,
+    dueDateKey,
+    daysRemaining,
+    isDue,
+    effectiveLabel,
+    color,
+  };
+}
+
+/**
  * Counts active Task Map items excluding On-Hold tasks for task number indicators.
  */
 export function countNonOnHoldTasks(items?: Array<Partial<TaskMapItem>> | null): number {
   if (!items || items.length === 0) return 0;
   return items.filter((t) => !isTaskMapItemOnHold(t)).length;
+}
+
+/**
+ * Counts actionable Available Tasks excluding both On-Hold and Waiting tasks.
+ */
+export function countAvailablePoolTasks(items?: Array<Partial<TaskMapItem>> | null): number {
+  if (!items || items.length === 0) return 0;
+  return items.filter((t) => !isTaskMapItemOnHold(t) && !isTaskMapItemWaiting(t)).length;
 }
 
 /**

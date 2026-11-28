@@ -12,6 +12,7 @@ import {
   isUserInShift,
   getTaskCollaboratorBlock,
 } from '../services/auditAutoAssign';
+import { getManilaClock, worksToday } from '../utils/workSchedule';
 
 /**
  * Checks if a user's roles include any auditor specialization.
@@ -325,17 +326,40 @@ export const getAuditEligibility = async (req: Request, res: Response) => {
     const taskIds: string[] = Array.isArray(req.body?.taskIds) ? req.body.taskIds.map(String).slice(0, 200) : [];
     const users = await prisma.user.findMany({
       where: { isActive: true },
-      select: { id: true, name: true, email: true, roles: true },
+      select: { id: true, name: true, email: true, roles: true, shiftTime: { select: { schedule: true } } },
     });
     const auditors = users.filter((u) => isAuditorRole(u.roles));
 
     const configs = await getDbShiftConfigs();
     const activeShift = await getActiveManilaShift();
-    const onShiftUserIds = auditors.filter((u) => isUserInShift(u, activeShift, configs)).map((u) => u.id);
+    const clock = getManilaClock();
+    const onShiftUserIds = auditors
+      .filter((u) => isUserInShift(u, activeShift, configs) && worksToday(u.shiftTime?.schedule, clock))
+      .map((u) => u.id);
 
     const blocked: Record<string, string[]> = {};
+    const subtaskTokens = taskIds.filter((id) => id.startsWith('subtask:'));
+    const subtaskParentMap = new Map<string, string>();
+    if (subtaskTokens.length > 0) {
+      const subIds = subtaskTokens.map((id) => id.slice('subtask:'.length));
+      const subs = await prisma.subtask.findMany({
+        where: { id: { in: subIds } },
+        select: { id: true, taskId: true },
+      });
+      for (const s of subs) {
+        subtaskParentMap.set(s.id, s.taskId);
+      }
+    }
     for (const taskId of taskIds) {
-      const { isUserBlocked } = await getTaskCollaboratorBlock(taskId);
+      let resolvedTaskId = taskId;
+      let resolvedSubtaskId: string | undefined;
+      if (taskId.startsWith('subtask:')) {
+        resolvedSubtaskId = taskId.slice('subtask:'.length);
+        const parentId = subtaskParentMap.get(resolvedSubtaskId);
+        if (!parentId) continue;
+        resolvedTaskId = parentId;
+      }
+      const { isUserBlocked } = await getTaskCollaboratorBlock(resolvedTaskId, resolvedSubtaskId);
       const ids = auditors.filter((u) => isUserBlocked(u)).map((u) => u.id);
       if (ids.length) blocked[taskId] = ids;
     }

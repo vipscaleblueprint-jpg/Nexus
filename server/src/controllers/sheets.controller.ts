@@ -795,6 +795,89 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
       },
     });
 
+    const taskIds = tasks.map((t) => t.id);
+    const taskMapRecords = taskIds.length
+      ? await prisma.taskMapRecord.findMany({
+          where: { taskId: { in: taskIds } },
+          select: { taskId: true, statuses: true, handedOver: true, pmReviews: true },
+        })
+      : [];
+    const taskMapByTaskId = new Map(taskMapRecords.map((r) => [r.taskId, r]));
+
+    const CANONICAL_TASK_MAP_SUBSTATUSES: Record<string, string> = {
+      HANDOVEROUT: 'Hand-over Out',
+      HANDOVERIN: 'Hand-over In',
+      HANDOVER: 'Hand-over',
+      PAUSED: 'Paused',
+      AVAILABLETASK: 'Available Task',
+      INPROGRESS: 'In progress',
+      ONHOLD: 'On-hold',
+      REVISION: 'Revision',
+      REVISIONS: 'Revision',
+      TOREVIEW: 'To Review',
+      INREVIEW: 'To Review',
+      DESIGNAUDIT: 'Design Audit',
+      UIUXAUDIT: 'UI/UX Audit',
+      INSTRUCTIONAUDIT: 'Instruction Audit',
+      INSACTIONAUDIT: 'Instruction Audit',
+      FUNNELAUDIT: 'Funnel Audit',
+      READYTOSEND: 'Ready to Send',
+      ASKCLIENT: 'Ask Client',
+      TOSEND: 'To send',
+      CRMTOSEND: 'To send',
+      CRMNEEDEDTOSEND: 'To send',
+      SENTBUTWAITING: 'Sent but Waiting',
+      SENT: 'Sent but Waiting',
+      WAITING: 'Waiting',
+      FOLLOWUP: 'Follow up',
+      CRMFOLLOWUP: 'Follow up',
+      CRMNEEDEDTOFOLLOWUP: 'Follow up',
+      CRM: 'CRM',
+      CLOSED: 'Closed',
+    };
+
+    const resolveTaskMapSheetSubStatus = (
+      statuses?: string[] | null,
+      handedOver?: boolean | null
+    ): string => {
+      const list = Array.isArray(statuses) ? statuses : [];
+      const norms = list.map((s) => String(s || '').trim().toUpperCase().replace(/[\s_-]+/g, ''));
+      // Prioritize actionable Task Map queue/pool statuses first so MA sheet filtering stays exact
+      if (norms.includes('HANDOVEROUT')) return 'Hand-over Out';
+      if (norms.includes('HANDOVERIN')) return 'Hand-over In';
+      if (norms.includes('HANDOVER')) return 'Hand-over';
+      if (norms.includes('PAUSED')) return 'Paused';
+      if (norms.includes('AVAILABLETASK')) return 'Available Task';
+      for (const n of norms) {
+        if (CANONICAL_TASK_MAP_SUBSTATUSES[n]) return CANONICAL_TASK_MAP_SUBSTATUSES[n];
+      }
+      if (handedOver) return 'Hand-over';
+      return list[0] ? String(list[0]).trim() : '';
+    };
+
+    const parseSubtaskStateMap = (pmReviews: any): Map<string, { statuses?: string[]; handedOver?: boolean }> => {
+      let arr = pmReviews;
+      if (typeof arr === 'string') {
+        try {
+          arr = JSON.parse(arr);
+        } catch {
+          arr = [];
+        }
+      }
+      const map = new Map<string, { statuses?: string[]; handedOver?: boolean }>();
+      if (Array.isArray(arr)) {
+        for (const r of arr) {
+          if (r?.type === 'SUBTASK_STATE' && r?.subtaskId) {
+            map.set(String(r.subtaskId), {
+              statuses: Array.isArray(r.statuses) ? r.statuses : [],
+              handedOver: Boolean(r.handedOver),
+            });
+          }
+        }
+      }
+      return map;
+    };
+
     const names = (one: { name: string } | null | undefined, many: { name: string }[] = []) =>
       Array.from(new Set([...(one ? [one.name] : []), ...many.map((u) => u.name)].filter(Boolean))).join(', ') || 'Unassigned';
     const statusLabel = (s: string | null | undefined) => sheetStatusLabel(s) ?? (s ? titleCase(s) : '');
@@ -805,6 +888,8 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
     for (const t of tasks) {
       const cuId = clickUpIdOf(t.externalId!);
       if (!cuId || isOffSheetStatus(t.status)) continue;
+      const tmRec = taskMapByTaskId.get(t.id);
+      const subStateMap = tmRec ? parseSubtaskStateMap(tmRec.pmReviews) : null;
       if (!isClosedSheetStatus(t.status) || t.updatedAt >= closedSince) {
         items.push({
           clickup_link: `https://app.clickup.com/t/${cuId}`,
@@ -812,6 +897,7 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
           list_name: listName.get(t.listId) || '',
           task_name: t.title,
           status: statusLabel(t.status),
+          task_map_status: tmRec ? resolveTaskMapSheetSubStatus(tmRec.statuses, tmRec.handedOver) : '',
           priority: NFT_PRIORITY_LABELS[t.priority] || '',
           assigned: names(t.assignee, t.assignees),
           start_date: manilaDate(t.createdAt),
@@ -826,12 +912,14 @@ export const getNotesForTodayItems = async (req: Request, res: Response) => {
         // closing a subtask always reaches the sheet) or the parent changed recently.
         const parentActive = !isClosedSheetStatus(t.status) || t.updatedAt >= closedSince;
         if (!subId || isOffSheetStatus(status) || (isClosedSheetStatus(status) && !parentActive)) continue;
+        const subTm = subStateMap?.get(s.id);
         items.push({
           clickup_link: `https://app.clickup.com/t/${subId}`,
           nexus_link: `${NEXUS_APP_URL}/lists/${t.listId}?task=${t.id}&subtask=${s.id}`,
           list_name: listName.get(t.listId) || '',
           task_name: s.title,
           status: statusLabel(status),
+          task_map_status: subTm ? resolveTaskMapSheetSubStatus(subTm.statuses, subTm.handedOver) : '',
           priority: NFT_PRIORITY_LABELS[s.priority] || '',
           assigned: names(s.User, s.assignees),
           start_date: manilaDate(s.createdAt),
@@ -1713,9 +1801,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
 
           if (incomingRowNum > 0) {
             try {
+              const clearedTaskIds = new Set<string>();
               const staleRecords = await prisma.taskMapRecord.findMany({
                 where: { pmReviews: { not: null as any } },
-                select: { id: true, taskId: true, pmReviews: true },
+                select: { id: true, taskId: true, pmReviews: true, statuses: true },
               });
               for (const staleRec of staleRecords) {
                 let revs = staleRec.pmReviews;
@@ -1727,7 +1816,12 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                 const filteredRevs = revs.filter((r: any) => {
                   if (r.type === 'SHEET_PROGRESS') {
                     const matchesMa = r.maName && r.maName.toLowerCase().trim() === maKey;
-                    const matchesRow = Number(r.sheetRow) === incomingRowNum;
+                    const rowNum = Number(r.sheetRow);
+                    const matchesRow =
+                      rowNum === incomingRowNum ||
+                      ((!r.sheetRow || rowNum <= 0) &&
+                        !r.timeOut &&
+                        (!currentActiveObj?.taskId || staleRec.taskId === currentActiveObj.taskId));
                     if (matchesMa && matchesRow) {
                       mod = true;
                       if (r.isUpwork) {
@@ -1742,16 +1836,53 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
                   return true;
                 });
                 if (mod) {
+                  clearedTaskIds.add(staleRec.taskId);
+                  const cleanedStatuses = Array.isArray(staleRec.statuses)
+                    ? staleRec.statuses.filter(
+                        (s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+                      )
+                    : staleRec.statuses;
                   await prisma.$executeRawUnsafe(
-                    `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+                    `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "statuses" = $2::text[], "updatedAt" = NOW() WHERE "taskId" = $3`,
                     JSON.stringify(filteredRevs),
+                    cleanedStatuses || [],
                     staleRec.taskId
                   );
+                  await prisma.task.updateMany({
+                    where: { id: staleRec.taskId, status: 'IN PROGRESS' },
+                    data: { status: 'PENDING' },
+                  }).catch(() => { });
                   await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
                   const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
                   io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
-                  io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
+                  io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg, statuses: cleanedStatuses });
                 }
+              }
+
+              // Also revert active task in Redis if its TaskMapRecord had no SHEET_PROGRESS entry yet
+              if (currentActiveObj?.taskId && matchesActiveRow && !clearedTaskIds.has(currentActiveObj.taskId)) {
+                const activeTaskId = String(currentActiveObj.taskId);
+                const rec = await prisma.taskMapRecord.findUnique({
+                  where: { taskId: activeTaskId },
+                  select: { statuses: true },
+                }).catch(() => null);
+                if (rec && Array.isArray(rec.statuses)) {
+                  const cleanedStatuses = rec.statuses.filter(
+                    (s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+                  );
+                  if (cleanedStatuses.length !== rec.statuses.length) {
+                    await prisma.taskMapRecord.update({
+                      where: { taskId: activeTaskId },
+                      data: { statuses: cleanedStatuses },
+                    }).catch(() => { });
+                  }
+                }
+                await prisma.task.updateMany({
+                  where: { id: activeTaskId, status: 'IN PROGRESS' },
+                  data: { status: 'PENDING' },
+                }).catch(() => { });
+                await invalidateCache(`task:${activeTaskId}`, 'task_map:*');
+                io.emit('task_map:updated', { taskId: activeTaskId, progress: null });
               }
             } catch (cleanErr) {
               console.warn('[Sheets] Failed to clean up deleted row progress for MA:', cleanErr);
@@ -1824,10 +1955,6 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
           console.warn('[Sheets] Failed to upsert DailySheetLog (unmatched):', err);
           return null;
         });
-        if (savedUnmatchedLog) {
-          io.emit('daily_sheet_log:updated', { log: savedUnmatchedLog });
-        }
-
         if (!isOlderRowEdit) {
           // Hold user's last inputted session throughout the day until 12:00 AM rollover
           await setMaActiveSession(maKey, sessionData).catch(() => { });
@@ -1838,78 +1965,88 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
             maSession: sessionData,
           });
         }
-
-        // Clean up any task that was previously linked to this same sheet_row for this MA,
-        // and close older unclosed sessions so they never linger in "Live Working"
-        try {
-          const staleRecords = await prisma.taskMapRecord.findMany({
-            where: { pmReviews: { not: null as any } },
-            select: { id: true, taskId: true, pmReviews: true },
-          });
-          for (const staleRec of staleRecords) {
-            let revs = staleRec.pmReviews;
-            if (typeof revs === 'string') {
-              try { revs = JSON.parse(revs); } catch { revs = []; }
-            }
-            if (!Array.isArray(revs)) continue;
-
-            let mod = false;
-            const filteredRevs = revs.filter((r: any) => {
-              if (r.type === 'SHEET_PROGRESS') {
-                const matchesMa = r.maName && r.maName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
-                const matchesRow = sheet_row && Number(r.sheetRow) === Number(sheet_row);
-                if (matchesMa && matchesRow) {
-                  mod = true;
-                  if (r.isUpwork) {
-                    if (isRedisReady()) {
-                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
-                    }
-                    io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
-                  }
-                  return false;
-                }
-                const isOlderRow = sheet_row && r.sheetRow && incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum;
-                if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
-                  r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
-                  mod = true;
-                  if (r.isUpwork) {
-                    if (isRedisReady()) {
-                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
-                    }
-                    io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
-                  }
-                }
-              }
-              if (r.type === 'UPWORK_SESSION' && r.active) {
-                const matchesMa = r.userName && r.userName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
-                if (matchesMa) {
-                  r.active = false;
-                  r.stoppedAt = r.stoppedAt || new Date().toISOString();
-                  mod = true;
-                  if (isRedisReady()) {
-                    redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
-                  }
-                  io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
-                }
-              }
-              return true;
-            });
-
-            if (mod) {
-              await prisma.$executeRawUnsafe(
-                `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
-                JSON.stringify(filteredRevs),
-                staleRec.taskId
-              );
-              await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
-              const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
-              io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
-              io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
-            }
-          }
-        } catch (cleanErr) {
-          console.warn('[Sheets] Failed to clean up stale unlinked sessions for MA:', cleanErr);
+        if (savedUnmatchedLog) {
+          io.emit('daily_sheet_log:updated', { log: savedUnmatchedLog });
         }
+
+        // Clean up any task that was previously linked to this same sheet_row for this MA in the background
+        // (targeted SQL filter instead of full-table scan so live webhook broadcast is never delayed)
+        void (async () => {
+          try {
+            const maLikePattern = `%${maNameStr.trim()}%`;
+            const staleRecords = await prisma.$queryRawUnsafe<Array<{ id: string; taskId: string; pmReviews: any }>>(
+              `SELECT "id", "taskId", "pmReviews"
+               FROM "TaskMapRecord"
+               WHERE "pmReviews" IS NOT NULL
+                 AND "pmReviews"::text ILIKE $1
+                 AND ("pmReviews"::text LIKE '%SHEET_PROGRESS%' OR "pmReviews"::text LIKE '%UPWORK_SESSION%')`,
+              maLikePattern
+            );
+            for (const staleRec of staleRecords) {
+              let revs = staleRec.pmReviews;
+              if (typeof revs === 'string') {
+                try { revs = JSON.parse(revs); } catch { revs = []; }
+              }
+              if (!Array.isArray(revs)) continue;
+
+              let mod = false;
+              const filteredRevs = revs.filter((r: any) => {
+                if (r.type === 'SHEET_PROGRESS') {
+                  const matchesMa = r.maName && r.maName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
+                  const matchesRow = sheet_row && Number(r.sheetRow) === Number(sheet_row);
+                  if (matchesMa && matchesRow) {
+                    mod = true;
+                    if (r.isUpwork) {
+                      if (isRedisReady()) {
+                        redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
+                      }
+                      io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
+                    }
+                    return false;
+                  }
+                  const isOlderRow = sheet_row && r.sheetRow && incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum;
+                  if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
+                    r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
+                    mod = true;
+                    if (r.isUpwork) {
+                      if (isRedisReady()) {
+                        redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
+                      }
+                      io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
+                    }
+                  }
+                }
+                if (r.type === 'UPWORK_SESSION' && r.active) {
+                  const matchesMa = r.userName && r.userName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
+                  if (matchesMa) {
+                    r.active = false;
+                    r.stoppedAt = r.stoppedAt || new Date().toISOString();
+                    mod = true;
+                    if (isRedisReady()) {
+                      redis.hdel('task_map:upwork_active', staleRec.taskId).catch(() => { });
+                    }
+                    io.emit('upwork:status_changed', { taskId: staleRec.taskId, active: false, userName: maNameStr });
+                  }
+                }
+                return true;
+              });
+
+              if (mod) {
+                await prisma.$executeRawUnsafe(
+                  `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+                  JSON.stringify(filteredRevs),
+                  staleRec.taskId
+                );
+                await invalidateCache(`task:${staleRec.taskId}`, 'task_map:*');
+                const newProg = filteredRevs.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+                io.emit('task:progress_updated', { taskId: staleRec.taskId, progress: newProg });
+                io.emit('task_map:updated', { taskId: staleRec.taskId, progress: newProg });
+              }
+            }
+          } catch (cleanErr) {
+            console.warn('[Sheets] Failed to clean up stale unlinked sessions for MA:', cleanErr);
+          }
+        })();
 
         return res.status(200).json({
           success: true,
@@ -1937,7 +2074,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     );
     const isWorkflowOrReviewTask = existingRecordStatuses.some((s) => {
       const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-      return ['TOREVIEW', 'INREVIEW', 'CHECKING', 'INCHECKING', 'WAITING', 'READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+      return [
+        'TOREVIEW',
+        'INREVIEW',
+        'REVIEW',
+        'CHECKING',
+        'INCHECKING',
+        'DESIGNAUDIT',
+        'UIUXAUDIT',
+        'INSTRUCTIONAUDIT',
+        'FUNNELAUDIT',
+        'WAITING',
+        'SENTBUTWAITING',
+        'READYTOSEND',
+        'TOSEND',
+        'ASKCLIENT',
+      ].includes(sn);
     });
     const isResumableFromSheet = existingRecordStatuses.some((s) => {
       const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
@@ -2116,8 +2268,10 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
     reviewsList.push(progressObj);
 
     // Persist this livework/sheet submission into DailySheetLog as historical data for that day
+    // (Emit daily_sheet_log:updated AFTER TaskMapRecord & maActiveSession commit so frontend reloads never see stale state)
+    let savedMatchedLog: any = null;
     if (maNameStr) {
-      const savedLog = await upsertDailySheetLog({
+      savedMatchedLog = await upsertDailySheetLog({
         date: date ? String(date).trim() : getManilaDateStr(),
         maName: maNameStr,
         ...(sheetOwner ? { userId: sheetOwner.id, spreadsheetId: String(sheetSpreadsheetId) } : {}),
@@ -2140,97 +2294,101 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         console.warn('[Sheets] Failed to upsert DailySheetLog:', err);
         return null;
       });
-      if (savedLog) {
-        io.emit('daily_sheet_log:updated', { log: savedLog });
-      }
     }
 
-    // Clean up any other task that was previously linked to the same sheet_row for this MA (in case row was replaced)
-    // and close any previous open sessions (timeIn without timeOut) for this MA so old tasks never linger as "Live Working"
-    if (maNameStr) {
-      try {
-        const otherRecords = await prisma.taskMapRecord.findMany({
-          where: {
-            taskId: { not: target.taskId },
-            pmReviews: { not: null as any },
-          },
-          select: { id: true, taskId: true, pmReviews: true },
-        });
+    // Background cleanup of older open sessions / reassigned sheet_row on other tasks for this MA
+    // (runs asynchronously with a targeted SQL filter so live progress emits immediately without full-table scan delay)
+    const cleanupOtherMaTaskRecords = () => {
+      if (!maNameStr) return;
+      void (async () => {
+        try {
+          const maLikePattern = `%${maNameStr.trim()}%`;
+          const otherRecords = await prisma.$queryRawUnsafe<Array<{ id: string; taskId: string; pmReviews: any }>>(
+            `SELECT "id", "taskId", "pmReviews"
+             FROM "TaskMapRecord"
+             WHERE "taskId" <> $1
+               AND "pmReviews" IS NOT NULL
+               AND "pmReviews"::text ILIKE $2
+               AND ("pmReviews"::text LIKE '%SHEET_PROGRESS%' OR "pmReviews"::text LIKE '%UPWORK_SESSION%')`,
+            target.taskId,
+            maLikePattern
+          );
 
-        for (const otherRec of otherRecords) {
-          let otherReviews = otherRec.pmReviews;
-          if (typeof otherReviews === 'string') {
-            try { otherReviews = JSON.parse(otherReviews); } catch { otherReviews = []; }
-          }
-          if (!Array.isArray(otherReviews)) continue;
+          for (const otherRec of otherRecords) {
+            let otherReviews = otherRec.pmReviews;
+            if (typeof otherReviews === 'string') {
+              try { otherReviews = JSON.parse(otherReviews); } catch { otherReviews = []; }
+            }
+            if (!Array.isArray(otherReviews)) continue;
 
-          let modified = false;
-          const updatedReviews = otherReviews.filter((r: any) => {
-            if (r.type === 'SHEET_PROGRESS') {
-              const matchesMa = r.maName && r.maName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
-              const matchesRow = sheet_row && Number(r.sheetRow) === Number(sheet_row);
-              // If the same row was reassigned to the new task, remove the stale progress from the old task
-              if (matchesMa && matchesRow) {
-                modified = true;
-                if (r.isUpwork) {
+            let modified = false;
+            const updatedReviews = otherReviews.filter((r: any) => {
+              if (r.type === 'SHEET_PROGRESS') {
+                const matchesMa = r.maName && r.maName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
+                const matchesRow = sheet_row && Number(r.sheetRow) === Number(sheet_row);
+                // If the same row was reassigned to the new task, remove the stale progress from the old task
+                if (matchesMa && matchesRow) {
+                  modified = true;
+                  if (r.isUpwork) {
+                    if (isRedisReady()) {
+                      redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
+                    }
+                    io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
+                  }
+                  return false;
+                }
+                // If this MA had an open unclosed session on an older task, close it
+                const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
+                const isOlderRow = !r.sheetRow || (incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum);
+                if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
+                  r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
+                  modified = true;
+                  if (r.isUpwork) {
+                    if (isRedisReady()) {
+                      redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
+                    }
+                    io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
+                  }
+                }
+              }
+              if (r.type === 'UPWORK_SESSION' && r.active) {
+                const matchesMa = r.userName && r.userName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
+                if (matchesMa) {
+                  r.active = false;
+                  r.stoppedAt = r.stoppedAt || new Date().toISOString();
+                  modified = true;
                   if (isRedisReady()) {
                     redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
                   }
                   io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
                 }
-                return false;
               }
-              // If this MA had an open unclosed session on an older task, close it
-              const incomingRowNum = sheet_row ? Number(sheet_row) : -1;
-              const isOlderRow = !r.sheetRow || (incomingRowNum > 0 && Number(r.sheetRow) < incomingRowNum);
-              if (matchesMa && r.timeIn && !r.timeOut && isOlderRow) {
-                r.timeOut = cleanTimeIn || cleanTimeOut || '11:59 PM';
-                modified = true;
-                if (r.isUpwork) {
-                  if (isRedisReady()) {
-                    redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
-                  }
-                  io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
-                }
-              }
-            }
-            if (r.type === 'UPWORK_SESSION' && r.active) {
-              const matchesMa = r.userName && r.userName.toLowerCase().trim() === maNameStr.toLowerCase().trim();
-              if (matchesMa) {
-                r.active = false;
-                r.stoppedAt = r.stoppedAt || new Date().toISOString();
-                modified = true;
-                if (isRedisReady()) {
-                  redis.hdel('task_map:upwork_active', otherRec.taskId).catch(() => { });
-                }
-                io.emit('upwork:status_changed', { taskId: otherRec.taskId, active: false, userName: maNameStr });
-              }
-            }
-            return true;
-          });
+              return true;
+            });
 
-          if (modified) {
-            await prisma.$executeRawUnsafe(
-              `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
-              JSON.stringify(updatedReviews),
-              otherRec.taskId
-            );
-            await invalidateCache(`task:${otherRec.taskId}`, 'task_map:*');
-            const newProgress = updatedReviews.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
-            io.emit('task:progress_updated', {
-              taskId: otherRec.taskId,
-              progress: newProgress,
-            });
-            io.emit('task_map:updated', {
-              taskId: otherRec.taskId,
-              progress: newProgress,
-            });
+            if (modified) {
+              await prisma.$executeRawUnsafe(
+                `UPDATE "TaskMapRecord" SET "pmReviews" = $1::jsonb, "updatedAt" = NOW() WHERE "taskId" = $2`,
+                JSON.stringify(updatedReviews),
+                otherRec.taskId
+              );
+              await invalidateCache(`task:${otherRec.taskId}`, 'task_map:*');
+              const newProgress = updatedReviews.find((r: any) => r.type === 'SHEET_PROGRESS') || null;
+              io.emit('task:progress_updated', {
+                taskId: otherRec.taskId,
+                progress: newProgress,
+              });
+              io.emit('task_map:updated', {
+                taskId: otherRec.taskId,
+                progress: newProgress,
+              });
+            }
           }
+        } catch (err) {
+          console.warn('[Sheets] Failed to clean up / close previous sessions for MA:', err);
         }
-      } catch (err) {
-        console.warn('[Sheets] Failed to clean up / close previous sessions for MA:', err);
-      }
-    }
+      })();
+    };
 
     // Also update MA's latest active session in Redis/memory for Task Map display
     if (maNameStr) {
@@ -2263,13 +2421,22 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       }
 
       if (!isOlderRowEdit && (!isHandedOverTask || Boolean(cleanTimeOut))) {
+        const preservedSessionSubStatuses = Array.isArray(record.statuses)
+          ? record.statuses.filter((s: string) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS')
+          : [];
         const maSession = {
           maName: maNameStr,
           taskId: target.taskId,
           listId: targetTaskMeta?.listId || target.listId || clientList?.id || null,
           taskStatus: targetTaskMeta?.status || null,
           priority: targetTaskMeta?.priority || null,
-          subStatuses: incomingIsLive ? ['In progress'] : (cleanTimeOut ? ['Hand-over'] : (Array.isArray(record.statuses) ? record.statuses : undefined)),
+          subStatuses: incomingIsLive
+            ? ['In progress']
+            : preservedSessionSubStatuses.length > 0
+              ? preservedSessionSubStatuses
+              : cleanTimeOut
+                ? ['Hand-over']
+                : undefined,
           timeIn: cleanTimeIn,
           timeOut: cleanTimeOut,
           client: clientStr || 'General',
@@ -2540,16 +2707,87 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         nextHandedOver = false;
       }
     } else if (cleanTimeOut) {
-      // Time-Out: auto Hand-over unless MA changed it to To Review / completed / CRM
-      const isAlreadyReviewedOrFinished =
-        ['DONE', 'CLOSED', 'CRM', 'WAITING'].includes(currentTaskStatusNorm) ||
-        (statusStr && ['TO REVIEW', 'TO_REVIEW', 'DONE', 'CLOSED'].includes(statusStr.toUpperCase())) ||
+      // Time-Out: auto Hand-over ONLY if the task is not already in a preserved/review/paused/finished state.
+      // Never clobber parent task status/assignee when timing out a subtask row.
+      const normalizedIncomingSheetStatus = (statusStr || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const shouldPreserveStatusOnTimeout =
+        Boolean(target.subtaskId) ||
+        [
+          'DONE',
+          'CLOSED',
+          'COMPLETED',
+          'COMPLETE',
+          'RESOLVED',
+          'CANCELLED',
+          'CRM',
+          'WAITING',
+          'SENT',
+          'INREVIEW',
+          'TOREVIEW',
+          'REVIEW',
+          'CHECKING',
+          'INCHECKING',
+          'ONHOLD',
+          'REVISION',
+          'REVISIONS',
+        ].includes(currentTaskStatusNorm) ||
+        [
+          'TOREVIEW',
+          'INREVIEW',
+          'REVIEW',
+          'CHECKING',
+          'INCHECKING',
+          'DONE',
+          'CLOSED',
+          'COMPLETED',
+          'COMPLETE',
+          'RESOLVED',
+          'PAUSED',
+          'ONHOLD',
+          'AVAILABLETASK',
+          'WAITING',
+          'CRM',
+          'REVISION',
+          'REVISIONS',
+        ].includes(normalizedIncomingSheetStatus) ||
         existingRecordStatuses.some((s) => {
           const sn = s.trim().toUpperCase().replace(/[\s_-]+/g, '');
-          return ['READYTOSEND', 'TOSEND', 'ASKCLIENT'].includes(sn);
+          return [
+            'PAUSED',
+            'AVAILABLETASK',
+            'ONHOLD',
+            'TOREVIEW',
+            'INREVIEW',
+            'REVIEW',
+            'CHECKING',
+            'INCHECKING',
+            'DESIGNAUDIT',
+            'UIUXAUDIT',
+            'INSTRUCTIONAUDIT',
+            'FUNNELAUDIT',
+            'READYTOSEND',
+            'TOSEND',
+            'ASKCLIENT',
+            'SENTBUTWAITING',
+            'WAITING',
+            'CRM',
+            'REVISION',
+            'REVISIONS',
+            'CLOSED',
+            'DONE',
+          ].includes(sn);
         });
 
-      if (!isAlreadyReviewedOrFinished) {
+      if (shouldPreserveStatusOnTimeout) {
+        if (!target.subtaskId) {
+          const withoutInProgress = existingRecordStatuses.filter(
+            (s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') !== 'INPROGRESS'
+          );
+          if (withoutInProgress.length !== existingRecordStatuses.length && withoutInProgress.length > 0) {
+            nextRecordStatuses = withoutInProgress;
+          }
+        }
+      } else {
         const wasAlreadyHandedOver =
           Boolean(record.handedOver) &&
           existingRecordStatuses.some((s) => s.trim().toUpperCase().replace(/[\s_-]+/g, '') === 'HANDOVER');
@@ -2693,6 +2931,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
       taskId: effectiveTargetId,
       progress: progressObj,
     });
+    if (savedMatchedLog) {
+      io.emit('daily_sheet_log:updated', { log: savedMatchedLog });
+    }
 
     if (isUpwork) {
       io.emit('upwork:status_changed', {
@@ -2705,6 +2946,9 @@ export const handleSheetProgress = async (req: Request, res: Response) => {
         startedAt: progressObj.updatedAt,
       });
     }
+
+    // Run secondary stale-session cleanup on other tasks in the background after emitting live progress
+    cleanupOtherMaTaskRecords();
 
     return res.status(200).json({
       success: true,

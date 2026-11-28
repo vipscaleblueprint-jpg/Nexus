@@ -17,6 +17,7 @@ import { randomBytes } from 'crypto';
 import { prisma } from '../../config/prisma';
 import { logger, errMsg } from '../../config/logger';
 import { getManilaHourAndMinute } from '../auditAutoAssign';
+import { getManilaClock, worksToday } from '../../utils/workSchedule';
 import { resolveEffectiveTaskMapOwnerId } from '../../utils/taskMapPermissions';
 import { invokeHandler } from './invokeHandler';
 import {
@@ -25,6 +26,7 @@ import {
   planDailyDistribution,
   type CheckpointPlan,
   type ClientHistory,
+  taskHistoryKey,
   type Decision,
   type DailyPlan,
   type PickFn,
@@ -39,6 +41,8 @@ import {
   isBoardItemStarted,
   isMaWorkItem,
   isStillMovable,
+  queueTier,
+  compareQueuePriority,
   remainingShiftHours,
   resolveTaskRoles,
   usersInGroup,
@@ -86,39 +90,135 @@ async function loadBoard(actor: ActorUser): Promise<{ pool: BoardItem[]; items: 
   }
   const pool: BoardItem[] = board.body.availablePool || [];
   const items: BoardItem[] = board.body.tasks || [];
-  const parentRoles = await loadParentRoles([...pool, ...items]);
-  const resolve = (it: BoardItem) => resolveTaskRoles(it, it.parentTaskId ? parentRoles.get(it.parentTaskId) : null);
-  return { pool: pool.map(resolve), items: items.map(resolve) };
+  const parents = await loadParentInfo([...pool, ...items]);
+  const resolve = (it: BoardItem) => {
+    const parent = it.isSubtask && it.parentTaskId ? parents.get(it.parentTaskId) : undefined;
+    const resolved = resolveTaskRoles(it, parent?.roles);
+    return parent?.waiting ? { ...resolved, parentWaiting: true } : resolved;
+  };
+  const resolvedPool = pool.map(resolve);
+  const resolvedItems = items.map(resolve);
+  await attachTrackerCollaborators([...resolvedPool, ...resolvedItems.filter(isMaWorkItem)]);
+  return { pool: resolvedPool, items: resolvedItems };
 }
 
-/** Roles of the parent tasks of role-less subtasks (a subtask with no role inherits its parent's). */
-async function loadParentRoles(items: BoardItem[]): Promise<Map<string, string[]>> {
-  const ids = [
-    ...new Set(
-      items
-        .filter((it) => it.isSubtask && it.parentTaskId && !(it.assigneeRoleRestrictions || []).length)
-        .map((it) => it.parentTaskId!)
-    ),
-  ];
+/**
+ * Sets trackerCollaboratorIds on each item: everyone tagged IsRole = "Collaborator" in the MA daily
+ * tracker on the item's task family (the parent task or any of its subtasks).
+ *
+ * One query for the whole board (AuditLog is indexed on entity + entityId). Per person and per
+ * scope (parent task / each subtask) only their latest IsRole counts, so a row switched to
+ * "Auditor" drops them for that scope. Unlike the audit block, Revisions do not reset this: whoever
+ * worked the task before is still the best person to pick it back up.
+ */
+async function attachTrackerCollaborators(items: BoardItem[]): Promise<void> {
+  const familyOf = (it: BoardItem) => (it.isSubtask ? it.parentTaskId : it.id) || null;
+  const familyIds = [...new Set(items.map(familyOf).filter((id): id is string => Boolean(id)))];
+  if (!familyIds.length) return;
+
+  const [logs, users] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: {
+        entity: 'TASK',
+        entityId: { in: familyIds },
+        action: { in: ['STATUS_CHANGE', 'MA_UPDATE'] },
+        OR: [
+          { details: { path: ['isCollaborated'], equals: true } },
+          { details: { path: ['isAuditRole'], equals: true } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { entityId: true, userId: true, details: true, user: { select: { name: true } } },
+    }),
+    prisma.user.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
+  ]);
+  const idByName = new Map(users.map((u) => [(u.name || '').trim().toLowerCase(), u.id]));
+  const byNameToId = (n: unknown) => (typeof n === 'string' ? idByName.get(n.trim().toLowerCase()) : undefined);
+
+  // family -> person -> scope -> latest role is Collaborator (logs are newest first)
+  const latest = new Map<string, Map<string, Map<string, boolean>>>();
+  for (const log of logs) {
+    const d = (log.details as any) || {};
+    const people = new Set<string>();
+    if (d.movedById) people.add(d.movedById);
+    const named = byNameToId(d.movedByName);
+    if (named) people.add(named);
+    if (Array.isArray(d.maUpdaterIds)) d.maUpdaterIds.forEach((id: string) => id && people.add(id));
+    if (Array.isArray(d.maUpdaterNames)) d.maUpdaterNames.forEach((n: string) => { const id = byNameToId(n); if (id) people.add(id); });
+    if (d.movedByName && log.user?.name && !log.user.name.toUpperCase().includes('VIPSCALE')) people.add(log.userId);
+    if (!people.size) continue;
+
+    const scope = d.subtaskId || '';
+    const isCollab = d.isCollaborated === true;
+    let fam = latest.get(log.entityId);
+    if (!fam) latest.set(log.entityId, (fam = new Map()));
+    for (const person of people) {
+      let scopes = fam.get(person);
+      if (!scopes) fam.set(person, (scopes = new Map()));
+      if (!scopes.has(scope)) scopes.set(scope, isCollab);
+    }
+  }
+
+  const collaboratorsByFamily = new Map<string, string[]>();
+  for (const [familyId, fam] of latest) {
+    const ids = [...fam].filter(([, scopes]) => [...scopes.values()].some(Boolean)).map(([id]) => id);
+    if (ids.length) collaboratorsByFamily.set(familyId, ids);
+  }
+  for (const it of items) {
+    const ids = collaboratorsByFamily.get(familyOf(it) || '');
+    if (ids) it.trackerCollaboratorIds = ids;
+  }
+}
+
+/**
+ * Parent-task info for subtasks: roles (a subtask with no role inherits its parent's) and whether
+ * the parent is waiting (task status or any Task Map status contains WAITING). Subtasks of a waiting
+ * parent are never auto-assigned, whatever their own status (even In Review).
+ */
+async function loadParentInfo(items: BoardItem[]): Promise<Map<string, { roles: string[]; waiting: boolean }>> {
+  const ids = [...new Set(items.filter((it) => it.isSubtask && it.parentTaskId).map((it) => it.parentTaskId!))];
   if (!ids.length) return new Map();
-  const parents = await prisma.task.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, assigneeRoleRestrictions: true },
-  });
-  return new Map(parents.map((p) => [p.id, p.assigneeRoleRestrictions || []]));
+  const [parents, records] = await Promise.all([
+    prisma.task.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, status: true, assigneeRoleRestrictions: true },
+    }),
+    prisma.taskMapRecord.findMany({
+      where: { taskId: { in: ids } },
+      select: { taskId: true, statuses: true },
+    }),
+  ]);
+  const isWaiting = (v?: string | null) => (v || '').toUpperCase().replace(/[^A-Z]/g, '').includes('WAITING');
+  const recordStatuses = new Map(records.map((r) => [r.taskId, r.statuses || []]));
+  return new Map(
+    parents.map((p) => [
+      p.id,
+      {
+        roles: p.assigneeRoleRestrictions || [],
+        waiting: isWaiting(p.status as any) || (recordStatuses.get(p.id) || []).some(isWaiting),
+      },
+    ])
+  );
 }
 
 async function loadPeople(): Promise<{ users: QueueUser[]; shifts: ShiftWindow[] }> {
   const [users, shifts] = await Promise.all([
     prisma.user.findMany({
-      where: { isActive: true, autoQueueExcluded: false },
+      // No Shift Schedule = not working, so those users are skipped in the query itself
+      where: { isActive: true, autoQueueExcluded: false, shiftTime: { isNot: null } },
       select: {
         id: true, name: true, email: true, roles: true, systemRole: true, isActive: true, starRating: true, teamId: true,
+        shiftTime: { select: { schedule: true } },
       },
     }),
     prisma.auditShiftConfig.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
   ]);
-  return { users: users as QueueUser[], shifts: shifts as ShiftWindow[] };
+  // Day off per the user's Shift Schedule (e.g. M-F people on Sat/Sun) = not queued at all.
+  const clock = getManilaClock();
+  const working = users
+    .filter((u) => worksToday(u.shiftTime?.schedule, clock))
+    .map(({ shiftTime: _s, ...u }) => u);
+  return { users: working as QueueUser[], shifts: shifts as ShiftWindow[] };
 }
 
 const HISTORY_DAYS = 180;
@@ -141,6 +241,7 @@ async function loadClientHistory(botId: string): Promise<ClientHistory> {
     seen.add(key);
     const byClient = history.get(r.userId) || new Map<string, number>();
     byClient.set(listId, (byClient.get(listId) || 0) + 1);
+    byClient.set(taskHistoryKey(r.taskId), 1); // worked on this exact task (or its subtasks) before
     history.set(r.userId, byClient);
   }
   return history;
@@ -406,9 +507,9 @@ export interface DailyResult {
 }
 
 async function runGroupDistribution(
-  group: ShiftGroup,
-  label: '5am' | '5pm',
-  opts: { modeOverride?: AutoQueueMode } = {}
+  group: ShiftGroup | ShiftGroup[],
+  label: string,
+  opts: { modeOverride?: AutoQueueMode; requireInProgress?: boolean } = {}
 ): Promise<DailyResult> {
   const config = getAutoQueueConfig();
   const mode = opts.modeOverride || config.mode;
@@ -429,6 +530,7 @@ async function runGroupDistribution(
     defaultHours: config.defaultHours,
     pick: aiPicker(),
     clientHistory,
+    requireInProgress: opts.requireInProgress ?? false,
   });
   const decisions = await applyDecisions({
     decisions: plan.decisions,
@@ -439,18 +541,30 @@ async function runGroupDistribution(
     label,
   });
   logger.info(
-    `[AutoQueue][${label}] ${decisions.filter((d) => d.applied).length}/${plan.decisions.length} queued to ${plan.scheduledMaCount} ${group} MAs; ${plan.skipped.length} left in pool`
+    `[AutoQueue][${label}] ${decisions.filter((d) => d.applied).length}/${plan.decisions.length} queued to ${plan.scheduledMaCount} ${Array.isArray(group) ? group.join('/') : group} MAs; ${plan.skipped.length} left in pool`
   );
   return { mode, decisions, skippedTasks: plan.skipped, scheduledMaCount: plan.scheduledMaCount, summary: plan.summary };
 }
 
-export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode } = {}): Promise<DailyResult> {
+export async function runDailyAutoQueue(opts: { modeOverride?: AutoQueueMode; requireInProgress?: boolean } = {}): Promise<DailyResult> {
   const config = getAutoQueueConfig();
   const mode = opts.modeOverride || config.mode;
   if (mode === 'off') {
     return { mode, skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
   }
-  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', opts));
+  return exclusive('5 AM plan', () => runGroupDistribution('morning', '5am', { ...opts, requireInProgress: opts.requireInProgress ?? false }));
+}
+
+/** Active shift triggers (10am, 3pm, 8pm) in case there are late or newly clocked-in workers. */
+export async function runActiveShiftQueue(
+  group: ShiftGroup | ShiftGroup[],
+  label: '10am' | '3pm' | '8pm' | '10pm'
+): Promise<DailyResult> {
+  const config = getAutoQueueConfig();
+  if (config.mode === 'off') {
+    return { mode: 'off', skipped: 'AUTO_QUEUE_MODE is off', decisions: [], skippedTasks: [], scheduledMaCount: 0, summary: [] };
+  }
+  return exclusive(`${label} queue`, () => runGroupDistribution(group, label, { requireInProgress: true }));
 }
 
 // ---------------------------------------------------------------------------
@@ -484,8 +598,8 @@ export async function runCheckpoint(
       loadClientHistory(bot.id),
     ]);
     const { hour, minute } = getManilaHourAndMinute();
-    const from: ShiftGroup = kind === '1pm' ? 'morning' : 'noon';
-    const to: ShiftGroup = kind === '1pm' ? 'noon' : 'night';
+    const from: ShiftGroup | ShiftGroup[] = kind === '1pm' ? 'morning' : ['morning', 'noon'];
+    const to: ShiftGroup | ShiftGroup[] = kind === '1pm' ? 'noon' : ['noon', 'night'];
 
     const plan = await planCheckpoint({
       boardItems: items,
@@ -499,6 +613,8 @@ export async function runCheckpoint(
       judge: aiJudge(),
       pick: aiPicker(),
       clientHistory,
+      morningSigningOut: kind === '5pm',
+      requireInProgress: true,
     });
 
     const dryRun = mode === 'dry_run';
@@ -528,7 +644,7 @@ export async function runCheckpoint(
       await addCheckpointComment(item, bot.id, kind, h.userName, h.reason);
     }
 
-    const { updateTaskStatuses } = await taskMapHandlers();
+    const { updateTaskStatuses, assignTaskMapTask } = await taskMapHandlers();
     const returned: CheckpointResult['returned'] = [];
     for (const r of plan.returned) {
       if (dryRun) {
@@ -543,6 +659,16 @@ export async function runCheckpoint(
           returned.push({ ...r, applied: false, error: 'Changed or started meanwhile' });
           continue;
         }
+        // First unassign from the signing-out MA so it leaves their Task Map column and returns to Available tasks
+        const assignRes = await invokeHandler(assignTaskMapTask, {
+          params: { id: r.taskId },
+          body: { assigneeId: null, mode: 'QUEUE' },
+          user: bot,
+        });
+        if (assignRes.status !== 200 || !assignRes.body?.success) {
+          logger.warn(`[AutoQueue][${kind}] failed unassigning returned task "${r.taskTitle}": ${assignRes.body?.error || `HTTP ${assignRes.status}`}`);
+        }
+        // Then set Hand-over status tag
         const res = await invokeHandler(updateTaskStatuses, {
           params: { id: r.taskId },
           body: { statuses: ['Hand-over'] },
@@ -579,7 +705,7 @@ export async function runCheckpoint(
 
     let nightFill: DailyResult | undefined;
     if (kind === '5pm') {
-      nightFill = await runGroupDistribution('night', '5pm', { modeOverride: mode });
+      nightFill = await runGroupDistribution(['noon', 'night'], '5pm', { modeOverride: mode, requireInProgress: false });
     }
 
     logger.info(
@@ -732,4 +858,54 @@ export async function setAutoQueueExcluded(userId: string, excluded: boolean, ac
   logger.info(
     `[AutoQueue] ${user.name} ${excluded ? 'excluded from' : 'included in'} the auto-queue by ${actor.name || actor.email || actor.id}`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Work order: MAs start their To Do in hierarchy order
+// ---------------------------------------------------------------------------
+
+let workOrderActor: ActorUser | null = null;
+
+const TIER_LABEL = ['Hand-over Urgent', 'Urgent', 'Hand-over High', 'High', 'Hand-over', 'Normal'];
+
+/**
+ * The higher-priority task an MA must start before `targetId`, or null when `targetId` is next in line.
+ * Order: hand-over urgent, urgent, hand-over high, high, hand-over, the rest. Fails open (returns null)
+ * if the board can't be read, so a Task Map hiccup never blocks work.
+ */
+export async function findHigherPriorityQueued(
+  userId: string,
+  targetId: string
+): Promise<{ id: string; title: string; tier: string } | null> {
+  try {
+    // Hot path on every MA start: reuse the bot id and skip role resolution (tier/owner don't need it).
+    // getTaskMapData serves from its Redis cache, which every Task Map change invalidates.
+    if (!workOrderActor) {
+      const bot = await getOrCreateAutoQueueUser();
+      workOrderActor = { id: bot.id, name: bot.name, email: bot.email };
+    }
+    const { getTaskMapData } = await taskMapHandlers();
+    const board = await invokeHandler(getTaskMapData, { query: { shift: 'ALL' }, user: workOrderActor });
+    if (board.status !== 200 || !board.body?.success) return null;
+    const items: BoardItem[] = board.body.tasks || [];
+    const mine = items.filter(
+      (it) => isMaWorkItem(it) && !isBoardItemStarted(it) && getBoardItemOwnerId(it) === userId
+    );
+    const target = mine.find((it) => it.id === targetId);
+    if (!target) return null;
+    // Same tier (e.g. all Urgent): the one due soonest goes first.
+    const blocker = mine
+      .filter((it) => it.id !== targetId && compareQueuePriority(it, target) < 0)
+      .sort(compareQueuePriority)[0];
+    if (!blocker) return null;
+    const label = TIER_LABEL[queueTier(blocker)];
+    return {
+      id: blocker.id,
+      title: blocker.title,
+      tier: queueTier(blocker) === queueTier(target) ? `${label}, due sooner` : label,
+    };
+  } catch (err) {
+    logger.warn(`[AutoQueue] Work-order check skipped: ${errMsg(err)}`);
+    return null;
+  }
 }

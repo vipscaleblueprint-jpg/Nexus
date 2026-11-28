@@ -358,7 +358,7 @@ export const CommentEditor = React.forwardRef<CommentEditorRef, CommentEditorPro
         const text = event.clipboardData?.getData('text/plain')?.trim();
         if (text) {
           const nexus = parseNexusTaskLink(text);
-          if (nexus) {
+          if (nexus && !nexus.commentId) {
             event.preventDefault();
             insertNexusTaskMention(view, nexus);
             return true;
